@@ -1,13 +1,12 @@
-import { desc } from "drizzle-orm"
-import { useDB } from "../../database"
-import { recipes, normalizeSections } from "../../database/schema"
+import { z } from "zod"
+import { listRecipes } from "../../lib/recipes"
 
-export default defineEventHandler(() => {
-  const db = useDB()
-  const all = db.select().from(recipes).orderBy(desc(recipes.createdAt)).all()
-  return all.map((r) => {
-    r.ingredients = normalizeSections(r.ingredients)
-    r.instructions = normalizeSections(r.instructions)
-    return r
-  })
+const query = z.object({
+  q: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+})
+
+export default defineEventHandler(async (event) => {
+  const { q, limit } = await getValidatedQuery(event, query.parse)
+  return listRecipes({ q, limit })
 })

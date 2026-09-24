@@ -1,2 +1,24 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media print {
+  header,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+}

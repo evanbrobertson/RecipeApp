@@ -1,5 +1,8 @@
 import * as cheerio from "cheerio"
-import type { NewRecipe, RecipeSection } from "../database/schema"
+import type { RecipeFields, RecipeSection } from "#shared/utils/recipe"
+import { normalizeSections } from "#shared/utils/recipe"
+
+export type ScrapedRecipe = RecipeFields & { url: string }
 
 interface JsonLdNutrition {
   "@type"?: string
@@ -10,7 +13,7 @@ interface JsonLdRecipe {
   "@type"?: string | string[]
   name?: string
   description?: string
-  image?: string | string[] | { url: string }
+  image?: string | Array<string | { url: string }> | { url: string }
   author?: string | { name: string } | Array<string | { name: string }>
   prepTime?: string
   cookTime?: string
@@ -19,7 +22,7 @@ interface JsonLdRecipe {
   recipeCategory?: string | string[]
   recipeCuisine?: string | string[]
   recipeIngredient?: string[]
-  recipeInstructions?: string | JsonLdInstruction[] | JsonLdSection[]
+  recipeInstructions?: string | Array<string | JsonLdInstruction | JsonLdSection>
   nutrition?: JsonLdNutrition
   [key: string]: unknown
 }
@@ -38,25 +41,77 @@ interface JsonLdSection {
   text?: string
 }
 
-export async function scrapeRecipe(url: string): Promise<Omit<NewRecipe, "id" | "createdAt">> {
-  const html = await $fetch<string>(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  })
+export async function scrapeRecipe(url: string): Promise<ScrapedRecipe> {
+  const parsed = new URL(url)
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw createError({ statusCode: 400, statusMessage: "Only http(s) links are supported." })
+  }
+
+  let html: string
+  try {
+    html = await $fetch<string>(url, {
+      timeout: 15_000,
+      responseType: "text",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    })
+  } catch (err: any) {
+    const status = err?.response?.status
+    throw createError({
+      statusCode: 502,
+      statusMessage: status
+        ? `The site responded with ${status}. Try copying the recipe text and pasting it instead.`
+        : "Couldn't reach that site. Try copying the recipe text and pasting it instead.",
+    })
+  }
 
   const $ = cheerio.load(html)
 
-  // Strategy 1: JSON-LD
-  const recipe = extractJsonLd($)
-  if (recipe) {
-    return normalizeJsonLd(recipe, url, $)
+  // Strategy 1: JSON-LD, Strategy 2: HTML microdata/selectors fallback
+  const jsonLd = extractJsonLd($)
+  const recipe = jsonLd ? normalizeJsonLd(jsonLd, url, $) : extractFromHtml($, url)
+
+  recipe.ingredients = normalizeSections(recipe.ingredients.map(decodeSection))
+  recipe.instructions = normalizeSections(recipe.instructions.map(decodeSection))
+  recipe.title = decodeText(recipe.title) || "Untitled recipe"
+  recipe.description = recipe.description ? decodeText(recipe.description) : null
+  recipe.image = absoluteUrl(recipe.image, url)
+
+  if (recipe.ingredients.length === 0 && recipe.instructions.length === 0) {
+    throw createError({
+      statusCode: 422,
+      statusMessage:
+        "Couldn't find a recipe on that page. Try copying the recipe text and pasting it instead.",
+    })
   }
 
-  // Strategy 2: HTML microdata/selectors fallback
-  return extractFromHtml($, url)
+  return recipe
+}
+
+/** Decodes HTML entities and strips any stray markup from scraped strings. */
+function decodeText(value: string): string {
+  if (!/[<&]/.test(value)) return value.replace(/\s+/g, " ").trim()
+  return cheerio.load(`<body>${value}</body>`)("body").text().replace(/\s+/g, " ").trim()
+}
+
+function decodeSection(section: RecipeSection): RecipeSection {
+  return {
+    name: section.name ? decodeText(section.name) : null,
+    items: section.items.map(decodeText),
+  }
+}
+
+function absoluteUrl(value: string | null | undefined, base: string): string | null {
+  if (!value) return null
+  try {
+    return new URL(value, base).toString()
+  } catch {
+    return null
+  }
 }
 
 function extractJsonLd($: cheerio.CheerioAPI): JsonLdRecipe | null {
@@ -106,14 +161,10 @@ function findRecipeInJsonLd(data: unknown): JsonLdRecipe | null {
   return null
 }
 
-function normalizeJsonLd(
-  recipe: JsonLdRecipe,
-  url: string,
-  $: cheerio.CheerioAPI,
-): Omit<NewRecipe, "id" | "createdAt"> {
+function normalizeJsonLd(recipe: JsonLdRecipe, url: string, $: cheerio.CheerioAPI): ScrapedRecipe {
   // Try JSON-LD flat list first, fall back to HTML ingredient groups
   let ingredients = normalizeIngredientSections(recipe.recipeIngredient)
-  const hasOnlyOneUnnamedSection = ingredients.length === 1 && ingredients[0].name === null
+  const hasOnlyOneUnnamedSection = ingredients.length === 1 && ingredients[0]!.name === null
   if (hasOnlyOneUnnamedSection) {
     const htmlGroups = extractIngredientGroupsFromHtml($)
     if (htmlGroups.length > 0) {
@@ -123,7 +174,7 @@ function normalizeJsonLd(
 
   return {
     url,
-    title: recipe.name || "Untitled Recipe",
+    title: recipe.name || "Untitled recipe",
     description: recipe.description || null,
     image: normalizeImage(recipe.image),
     author: normalizeAuthor(recipe.author),
@@ -144,7 +195,7 @@ function normalizeJsonLd(
 function normalizeImage(image: JsonLdRecipe["image"]): string | null {
   if (!image) return null
   if (typeof image === "string") return image
-  if (Array.isArray(image)) return image[0] || null
+  if (Array.isArray(image)) return normalizeImage(image[0] as JsonLdRecipe["image"])
   if (typeof image === "object" && "url" in image) return image.url
   return null
 }
@@ -188,7 +239,7 @@ function extractIngredientGroupsFromHtml($: cheerio.CheerioAPI): RecipeSection[]
         })
       if (items.length > 0) sections.push({ name, items })
     })
-    if (sections.length > 1 || (sections.length === 1 && sections[0].name)) {
+    if (sections.length > 1 || (sections.length === 1 && sections[0]!.name)) {
       return sections
     }
     sections.length = 0
@@ -391,7 +442,7 @@ function formatMinutes(minutes: number): string {
   const parts = []
   if (h) parts.push(`${h}h`)
   if (m) parts.push(`${m}m`)
-  return parts.join(" ") || null!
+  return parts.join(" ")
 }
 
 function computeAdditionalTime(
@@ -405,7 +456,7 @@ function computeAdditionalTime(
   if (!total) return null
   const additional = total - prep - cook
   if (additional <= 0) return null
-  return formatMinutes(additional)
+  return formatMinutes(additional) || null
 }
 
 function formatDuration(iso: string | undefined): string | null {
@@ -418,12 +469,12 @@ function formatDuration(iso: string | undefined): string | null {
   return parts.length > 0 ? parts.join(" ") : null
 }
 
-function extractFromHtml($: cheerio.CheerioAPI, url: string): Omit<NewRecipe, "id" | "createdAt"> {
+function extractFromHtml($: cheerio.CheerioAPI, url: string): ScrapedRecipe {
   const title =
     $('[itemprop="name"]').first().text().trim() ||
     $("h1").first().text().trim() ||
     $("title").text().trim() ||
-    "Untitled Recipe"
+    "Untitled recipe"
 
   const description = $('[itemprop="description"]').first().text().trim() || null
   const image =

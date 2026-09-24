@@ -1,63 +1,61 @@
 <script setup lang="ts">
-import type { Recipe } from "~~/server/database/schema"
-
-type RecipeData = Omit<Recipe, "createdAt"> & { createdAt: string | Date }
-
 defineProps<{
-  recipe: RecipeData
+  recipe: {
+    id: number
+    title: string
+    image: string | null
+    totalTime: string | null
+    recipeCategory: string | null
+    recipeCuisine: string | null
+  }
   selectable?: boolean
   selected?: boolean
 }>()
 
-const emit = defineEmits<{
-  toggle: [id: number]
-}>()
+const emit = defineEmits<{ toggle: [id: number] }>()
+const NuxtLink = resolveComponent("NuxtLink")
+const imageFailed = ref(false)
 </script>
 
 <template>
   <component
-    :is="selectable ? 'div' : NuxtLink"
+    :is="selectable ? 'button' : NuxtLink"
     :to="selectable ? undefined : `/recipes/${recipe.id}`"
-    class="group block"
-    :class="selectable ? 'cursor-pointer' : ''"
-    @click="selectable ? emit('toggle', recipe.id) : undefined"
+    :type="selectable ? 'button' : undefined"
+    class="group border-default bg-default focus-visible:ring-primary relative flex flex-col overflow-hidden rounded-xl border text-left transition focus-visible:ring-2 focus-visible:outline-none"
+    :class="selected ? 'ring-primary ring-2' : 'hover:shadow-md'"
+    @click="selectable && emit('toggle', recipe.id)"
   >
-    <UCard
-      class="h-full transition-shadow"
-      :class="[selected ? 'ring-primary ring-2' : 'group-hover:shadow-lg']"
-    >
-      <div class="flex flex-col gap-3">
-        <div class="relative">
-          <img
-            v-if="recipe.image"
-            :src="recipe.image"
-            :alt="recipe.title"
-            class="h-40 w-full rounded-md object-cover"
-          />
-          <div v-else class="bg-muted flex h-40 w-full items-center justify-center rounded-md">
-            <UIcon name="i-lucide-chef-hat" class="text-muted size-10" />
-          </div>
-          <div
-            v-if="selectable"
-            class="absolute top-2 left-2"
-            @click.stop="emit('toggle', recipe.id)"
-          >
-            <UCheckbox :model-value="selected" tabindex="-1" />
-          </div>
-        </div>
-        <h3 class="line-clamp-2 font-semibold">{{ recipe.title }}</h3>
-        <div class="text-muted flex flex-wrap gap-2 text-sm">
-          <UBadge v-if="recipe.totalTime" variant="subtle" color="neutral">
-            {{ recipe.totalTime }}
-          </UBadge>
-          <UBadge v-if="recipe.recipeCategory" variant="subtle" color="neutral">
-            {{ recipe.recipeCategory }}
-          </UBadge>
-          <UBadge v-if="recipe.recipeCuisine" variant="subtle" color="neutral">
-            {{ recipe.recipeCuisine }}
-          </UBadge>
-        </div>
+    <div class="bg-elevated relative aspect-[4/3] w-full overflow-hidden">
+      <img
+        v-if="recipe.image && !imageFailed"
+        :src="recipe.image"
+        :alt="recipe.title"
+        loading="lazy"
+        decoding="async"
+        referrerpolicy="no-referrer"
+        class="size-full object-cover transition duration-300 group-hover:scale-[1.03]"
+        @error="imageFailed = true"
+      />
+      <div v-else class="flex size-full items-center justify-center">
+        <UIcon name="i-lucide-cooking-pot" class="text-dimmed size-10" />
       </div>
-    </UCard>
+      <UCheckbox
+        v-if="selectable"
+        :model-value="selected"
+        class="bg-default/90 pointer-events-none absolute top-2 left-2 rounded p-1"
+        tabindex="-1"
+      />
+    </div>
+    <div class="flex flex-1 flex-col gap-2 p-3">
+      <h3 class="line-clamp-2 leading-snug font-semibold">{{ recipe.title }}</h3>
+      <div class="text-muted mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span v-if="recipe.totalTime" class="flex items-center gap-1">
+          <UIcon name="i-lucide-clock" class="size-3.5" />{{ recipe.totalTime }}
+        </span>
+        <span v-if="recipe.recipeCategory" class="truncate">{{ recipe.recipeCategory }}</span>
+        <span v-if="recipe.recipeCuisine" class="truncate">{{ recipe.recipeCuisine }}</span>
+      </div>
+    </div>
   </component>
 </template>

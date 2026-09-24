@@ -19,9 +19,13 @@ logs
 .idea
 
 # Database
-sqlite.db
+
 
 # Local env files
 .env
 .env.*
 !.env.example
+
+# Database
+*.db
+*.db-*

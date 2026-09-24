@@ -1,17 +1,9 @@
 import { z } from "zod"
-import { inArray } from "drizzle-orm"
-import { useDB } from "../../database"
-import { recipes } from "../../database/schema"
+import { deleteRecipes } from "../../lib/recipes"
 
-const schema = z.object({
-  ids: z.array(z.number().int().positive()).min(1),
-})
+const schema = z.object({ ids: z.array(z.number().int().positive()).min(1).max(1000) })
 
 export default defineEventHandler(async (event) => {
-  const { ids } = await readValidatedBody(event, (b) => schema.parse(b))
-
-  const db = useDB()
-  const deleted = db.delete(recipes).where(inArray(recipes.id, ids)).returning().all()
-
-  return { deleted: deleted.length }
+  const { ids } = await readValidatedBody(event, schema.parse)
+  return { deleted: deleteRecipes(ids) }
 })
