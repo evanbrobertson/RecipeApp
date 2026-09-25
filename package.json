@@ -23,7 +23,7 @@
     "@nuxt/ui": "^4",
     "@nuxtjs/seo": "^3",
     "@vueuse/nuxt": "^14",
-    "better-sqlite3": "^11",
+    "better-sqlite3": "^12",
     "cheerio": "^1",
     "drizzle-orm": "^0.44",
     "nuxt": "^4.3.1",
@@ -36,6 +36,9 @@
     "drizzle-kit": "^0.31",
     "oxfmt": "latest",
     "oxlint": "latest"
+  },
+  "engines": {
+    "node": "22.x"
   },
   "overrides": {
     "vite": "npm:rolldown-vite@latest"
