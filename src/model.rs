@@ -377,7 +377,7 @@ impl RecipeFields {
         })
     }
 
-    /// Re-applies the schema rules to fields built in code (scraper, parsers, Claude).
+    /// Re-applies the schema rules to fields built in code (scraper, parsers, Wee Chef).
     pub fn validate(mut self) -> AppResult<Self> {
         self.title = title(&Value::String(self.title))?;
         let trim = |v: Option<String>| v.map(|s| s.trim().to_string());

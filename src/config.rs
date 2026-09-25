@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use axum::http::HeaderMap;
 
-/// Which AI API parses pasted text and writes suggestion blurbs.
+/// Which AI API powers Wee Chef (parsing pasted text, Try next blurbs and ideas).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmProvider {
     Anthropic,
@@ -53,14 +53,18 @@ impl LlmProvider {
                 &["OPENAI_API_KEY"],
                 &["OPENAI_MODEL"],
                 "OPENAI_BASE_URL",
-                "gpt-5-mini",
+                // gpt-5-mini shuts down 2026-12-11. OpenAI's listed replacement (gpt-5.6-terra)
+                // costs about 8x more; Luna (the nano successor) reads images and does
+                // structured output for less than gpt-5-mini did
+                "gpt-5.6-luna",
                 "https://api.openai.com/v1",
             ),
             Self::DeepSeek => (
                 &["DEEPSEEK_API_KEY"],
                 &["DEEPSEEK_MODEL"],
                 "DEEPSEEK_BASE_URL",
-                "deepseek-chat",
+                // The legacy deepseek-chat name is gone; Flash is also the only one that takes images
+                "deepseek-flash",
                 "https://api.deepseek.com",
             ),
         }
@@ -74,6 +78,9 @@ pub struct LlmConfig {
     pub model: String,
     /// No trailing slash. Anthropic's is the host; OpenAI-style ones include the version path.
     pub base_url: String,
+    /// `VISION_MODEL`: the model that reads recipe photos, when it isn't the default
+    /// (see [`LlmConfig::vision_model`]).
+    pub vision_model: Option<String>,
 }
 
 impl LlmConfig {
@@ -85,6 +92,40 @@ impl LlmConfig {
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
+            vision_model: None,
+        }
+    }
+
+    /// The model that reads recipe photos: `VISION_MODEL`, else the main model, except on
+    /// DeepSeek, where only the Flash model takes images.
+    pub fn vision_model(&self) -> &str {
+        match (&self.vision_model, self.provider) {
+            (Some(model), _) => model,
+            (None, LlmProvider::DeepSeek) => "deepseek-flash",
+            (None, _) => &self.model,
+        }
+    }
+}
+
+/// TypeSafe's Jev classifier, behind Wee Chef's import checks (`src/checks.rs`).
+#[derive(Debug, Clone)]
+pub struct TypesafeConfig {
+    pub api_key: String,
+    /// No trailing slash; requests go to `{base_url}/v1/systemone`.
+    pub base_url: String,
+    /// Pinned: the confidence thresholds in `checks.rs` are tuned for this version.
+    pub model: String,
+}
+
+impl TypesafeConfig {
+    pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
+    pub const DEFAULT_MODEL: &str = "jev-1.13.0";
+
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: Self::DEFAULT_BASE_URL.into(),
+            model: Self::DEFAULT_MODEL.into(),
         }
     }
 }
@@ -97,8 +138,14 @@ pub struct Config {
     pub llm: Option<LlmConfig>,
     /// Model for "Try next" blurbs; defaults to the provider's model.
     pub suggest_model: Option<String>,
-    /// AI re-ranking of "Try next" (on whenever an AI API is configured, unless SUGGESTIONS_AI=off).
+    /// Wee Chef's re-ranking of "Try next" (on whenever an AI API is configured, unless
+    /// SUGGESTIONS_AI=off).
     pub suggestions_ai: bool,
+    /// Wee Chef's recipe idea (a dish not in the box) joins Try next on about one day in
+    /// this many; 0 never. Not an env var: tests set 1 to see it every day.
+    pub idea_one_in: u32,
+    /// Wee Chef's import checks: on with a TYPESAFE_API_KEY, unless CHECKS_AI=off.
+    pub typesafe: Option<TypesafeConfig>,
     pub site_url: Option<String>,
     pub railway_domain: Option<String>,
     pub web_dist: PathBuf,
@@ -116,6 +163,8 @@ impl Default for Config {
             llm: None,
             suggest_model: None,
             suggestions_ai: true,
+            idea_one_in: 3,
+            typesafe: None,
             site_url: None,
             railway_domain: None,
             web_dist: PathBuf::from("web/dist"),
@@ -131,6 +180,24 @@ fn env(keys: &[&str]) -> Option<String> {
         .filter_map(|k| std::env::var(k).ok())
         .map(|v| v.trim().to_string())
         .find(|v| !v.is_empty())
+}
+
+fn switched_off(key: &str) -> bool {
+    env(&[key]).is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "off" | "false" | "0"))
+}
+
+fn typesafe_from_env() -> Option<TypesafeConfig> {
+    if switched_off("CHECKS_AI") {
+        return None;
+    }
+    let mut ts = TypesafeConfig::new(env(&["TYPESAFE_API_KEY"])?);
+    if let Some(url) = env(&["TYPESAFE_BASE_URL"]) {
+        ts.base_url = url.trim_end_matches('/').to_string();
+    }
+    if let Some(model) = env(&["TYPESAFE_MODEL"]) {
+        ts.model = model;
+    }
+    Some(ts)
 }
 
 /// `LLM_PROVIDER` picks the provider; without it, the first provider with a key wins
@@ -162,6 +229,7 @@ fn llm_from_env() -> Option<LlmConfig> {
         if let Some(url) = env(&[base]) {
             llm.base_url = url.trim_end_matches('/').to_string();
         }
+        llm.vision_model = env(&["VISION_MODEL"]);
         Some(llm)
     })
 }
@@ -173,8 +241,9 @@ impl Config {
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),
-            suggestions_ai: env(&["SUGGESTIONS_AI"])
-                .is_none_or(|v| !matches!(v.to_ascii_lowercase().as_str(), "off" | "false" | "0")),
+            suggestions_ai: !switched_off("SUGGESTIONS_AI"),
+            idea_one_in: d.idea_one_in,
+            typesafe: typesafe_from_env(),
             site_url: env(&["SITE_URL", "NUXT_PUBLIC_SITE_URL"]),
             railway_domain: env(&["RAILWAY_PUBLIC_DOMAIN"]),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),

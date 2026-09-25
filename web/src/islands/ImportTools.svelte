@@ -7,6 +7,7 @@
   import FileUp from "@lucide/svelte/icons/file-up"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { api, errorMessage } from "../lib/api"
+  import { importPhotos, isPhoto, MAX_PHOTOS, shrink } from "../lib/photos"
   import { autosize } from "../lib/autosize"
   import { toast } from "../lib/toast"
 
@@ -72,6 +73,8 @@
     created: { id: number; title: string }[]
     duplicates: number
     message?: string
+    /** Open the editor: the recipe was read by OCR and needs checking. */
+    edit?: boolean
   }
   interface ImportSummary {
     file: string
@@ -83,10 +86,40 @@
   let fileJobs = $state<FileJob[]>([])
   let dragging = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
-  const ACCEPT = ".pdf,.paprikarecipes,.paprikarecipe,.json,.html,.htm,.txt,.md,.zip"
+  const ACCEPT = ".pdf,.paprikarecipes,.paprikarecipe,.json,.html,.htm,.txt,.md,.zip,image/*"
+
+  /** Photos chosen together are the pages of one recipe (up to six). */
+  async function uploadPhotos(photos: File[]) {
+    const n = Math.min(photos.length, MAX_PHOTOS)
+    fileJobs.unshift({
+      name: n === 1 ? photos[0]!.name : `${n} photos`,
+      state: "working",
+      created: [],
+      duplicates: 0,
+    })
+    const job = fileJobs[0]!
+    try {
+      if (photos.length > MAX_PHOTOS)
+        throw new Error(`Up to ${MAX_PHOTOS} photos at a time, all pages of one recipe`)
+      const pages = await Promise.all(photos.map(async (p) => (await shrink(p)).blob))
+      const res = await importPhotos(pages, { status: (s) => (job.message = s) })
+      Object.assign(job, {
+        state: "done",
+        created: res.isNew ? [{ id: res.id, title: res.title }] : [],
+        duplicates: res.isNew ? 0 : 1,
+        message: res.onDevice ? "Read on this device: check the amounts" : undefined,
+        edit: res.onDevice,
+      })
+    } catch (e) {
+      Object.assign(job, { state: "failed", message: errorMessage(e) })
+    }
+  }
 
   async function uploadFiles(list: FileList | null | undefined) {
-    for (const file of list ?? []) {
+    const all = [...(list ?? [])]
+    const photos = all.filter(isPhoto)
+    if (photos.length) await uploadPhotos(photos)
+    for (const file of all.filter((f) => !isPhoto(f))) {
       fileJobs.unshift({ name: file.name, state: "working", created: [], duplicates: 0 })
       const job = fileJobs[0]!
       try {
@@ -103,23 +136,23 @@
   }
 </script>
 
+<div class="space-y-8">
 <!-- Links -->
 <section class="min-w-0">
-  <h2 class="section-title">Paste links</h2>
-  <p class="text-ink-muted mt-1.5 text-sm">
-    One per line, or any text with links in it. Already-saved recipes are skipped.
-  </p>
+  <h2 class="settings-heading" id="links-title">Links</h2>
   <textarea
     use:autosize
     bind:value={linksText}
     rows="5"
-    class="input mt-3.5 max-h-80 font-mono text-sm"
-    aria-label="Links to import"
-    placeholder={"https://www.justtherecipe.com/?url=https://…\nhttps://cooking.site/recipe/…"}
+    class="input max-h-80 font-mono text-sm"
+    aria-labelledby="links-title"
+    placeholder={"https://…\nhttps://…"}
   ></textarea>
   <div class="mt-3 flex items-center justify-between gap-3">
-    <span class="text-ink-muted text-sm">
-      {parsedLinks.length} link{parsedLinks.length === 1 ? "" : "s"} found
+    <span class="meta">
+      {parsedLinks.length
+        ? `${parsedLinks.length} link${parsedLinks.length === 1 ? "" : "s"} found`
+        : "One per line, or any text with links in it"}
     </span>
     <button
       type="button"
@@ -162,16 +195,11 @@
 
 <!-- Files -->
 <section class="min-w-0">
-  <h2 class="section-title">Upload files</h2>
-  <p class="text-ink-muted mt-1.5 text-sm">
-    Just the Recipe PDFs · Paprika (<code>.paprikarecipes</code>) · Mealie / schema.org JSON · saved
-    web pages · text files (separate recipes with <code>---</code>) · a <code>.zip</code> of any of
-    these · a backup from Crumb.
-  </p>
+  <h2 class="settings-heading">Files</h2>
   <button
     type="button"
     class={[
-      "rounded-ui bg-paper mt-3.5 flex w-full flex-col items-center justify-center gap-2 border-2 border-dashed px-6 py-10 transition",
+      "rounded-ui bg-paper flex w-full flex-col items-center justify-center gap-1.5 border-2 border-dashed px-6 py-8 transition",
       dragging ? "border-tile bg-tint" : "border-line-strong hover:border-tile",
     ]}
     onclick={() => fileInput?.click()}
@@ -186,9 +214,11 @@
       void uploadFiles(e.dataTransfer?.files)
     }}
   >
-    <span class="well mb-1"><FileUp /></span>
-    <span class="text-[17px] font-bold">Drop files here or tap to choose</span>
-    <span class="meta">Up to 50 MB each</span>
+    <FileUp class="settings-icon mb-1 size-6" />
+    <span class="font-bold">Drop files or tap to choose</span>
+    <span class="meta"
+      >PDF, Paprika, Mealie JSON, web pages, text, .zip, a Crumb backup, or photos of a recipe</span
+    >
   </button>
   <input
     bind:this={fileInput}
@@ -198,6 +228,10 @@
     class="hidden"
     onchange={(e) => uploadFiles(e.currentTarget.files)}
   />
+  <p class="hint mt-2 px-4">
+    Up to 50 MB each. In text files, put <code>---</code> between recipes. Photos chosen together
+    are read as the pages of one recipe (up to {MAX_PHOTOS}).
+  </p>
   {#if fileJobs.length}
     <ul class="mt-4 space-y-2">
       {#each fileJobs as job, i (i)}
@@ -217,11 +251,15 @@
               </span>
             {/if}
           </div>
-          {#if job.message}<p class="text-error mt-1 text-[13px]">{job.message}</p>{/if}
+          {#if job.message}
+            <p class={["mt-1 text-[13px]", job.state === "failed" ? "text-error" : "text-ink-muted"]}>
+              {job.message}
+            </p>
+          {/if}
           {#if job.created.length}
             <div class="mt-2.5 flex flex-wrap gap-2">
               {#each job.created.slice(0, 12) as r (r.id)}
-                <a href={`/recipes/${r.id}`} class="chip bg-tint text-primary h-11 hover:underline">
+                <a href={`/recipes/${r.id}${job.edit ? "/edit" : ""}`} class="chip bg-tint text-primary h-11 hover:underline">
                   {r.title}
                 </a>
               {/each}
@@ -235,3 +273,4 @@
     </ul>
   {/if}
 </section>
+</div>

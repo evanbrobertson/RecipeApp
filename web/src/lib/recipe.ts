@@ -61,10 +61,64 @@ export interface CookbookDetail extends Omit<Cookbook, "recipeCount"> {
 export interface ConnectorInfo {
   mcpUrl: string
   authEnabled: boolean
+  /** Wee Chef (the AI helper) is on: an AI key is configured. */
+  weeChef: boolean
+  /** Older name for `weeChef`. */
   claudeParsing: boolean
-  /** "Claude", "OpenAI" or "DeepSeek" when an AI API is configured. */
+  /** The API behind Wee Chef, for diagnostics only: the UI always says "Wee Chef". */
   aiProvider: string | null
+  /** Wee Chef reads recipe photos; without it the browser runs OCR itself. */
+  vision: boolean
   browserScraping: boolean
+  /** Wee Chef checks imported recipes (the server has a key for it). */
+  weeChefChecks?: boolean
+}
+
+/** One line Wee Chef looked at twice: fixed on import, or left for the cook to review. */
+export interface CheckFlag {
+  id: number
+  /** "recipe" for the one-off clean-up of stray symbols, codes and repeats. */
+  field: "ingredients" | "instructions" | "recipe"
+  /** The line as it was when checked (flags follow the text, not the position). */
+  itemText: string
+  kind:
+    | "heading"
+    | "junk"
+    | "fragment"
+    | "not_instruction"
+    | "merged"
+    | "step"
+    | "ingredient"
+    | "tidy"
+  state: "fixed" | "review"
+  detail: {
+    p?: number
+    fix?: "heading" | "removed" | "notes" | "joined" | "tidy"
+    /** For "tidy": how many small things were cleaned up. */
+    count?: number
+    heading?: string
+    with?: string
+  } | null
+}
+
+/** Wee Chef's check of an imported recipe. */
+export interface RecipeChecks {
+  status: "pending" | "done" | "failed"
+  /** The fixes can still be undone (the recipe wasn't edited since). */
+  canUndo: boolean
+  flags: CheckFlag[]
+}
+
+/** Progress of "Check all recipes" on the More page. */
+export interface ChecksStatus {
+  enabled: boolean
+  eligible: number
+  checked: number
+  pending: number
+  failed: number
+  tidied: number
+  toCheck: number
+  queued?: number
 }
 
 export interface CookStats {
@@ -87,13 +141,23 @@ export interface Suggestion {
   recipe: RecipeSummary
   reason: string
   reasonKind: ReasonKind
-  /** The reason was written by the AI layer. */
+  /** The reason was written by Wee Chef. */
   ai: boolean
+}
+
+/** A dish Wee Chef thinks you'd like that isn't in the box yet. */
+export interface RecipeIdea {
+  title: string
+  why: string
+  /** A web search for the recipe, to find a page to add. */
+  searchUrl: string
 }
 
 export interface Suggestions {
   items: Suggestion[]
   ai: "ready" | "pending" | "off"
+  /** Some days, one idea from Wee Chef, shown after the items. */
+  idea?: RecipeIdea | null
 }
 
 export const nutritionLabels: Record<string, string> = {

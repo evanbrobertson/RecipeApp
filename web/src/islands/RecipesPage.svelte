@@ -73,7 +73,7 @@
 
   let category = $state("all")
   const categories = $derived(
-    [...new Set(recipes.map((r) => r.recipeCategory).filter((c): c is string => !!c))].toSorted(
+    [...new Set(recipes.map((r) => r.recipeCategory).filter((c): c is string => !!c))].sort(
       (a, b) => a.localeCompare(b),
     ),
   )

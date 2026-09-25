@@ -3,6 +3,11 @@
 Crumb is a single Rust binary serving a static Astro frontend and an SQLite file, so it needs one Railway service and one volume.
 The repo includes a `Dockerfile` and `railway.json` (health check on `/api/health`).
 
+These steps deploy straight from the GitHub repo, which is the simplest setup for your own copy. The hosted
+Crumb instead runs prebuilt images from GHCR, with a dev environment and a manual promotion to production:
+see [docs/RELEASING.md](./docs/RELEASING.md). With an image source, `railway.json` is not read, so its health
+check is set on the service instead.
+
 ## 1. Create the service
 
 - **Dashboard:** New Project → Deploy from GitHub repo → pick this repo.
@@ -28,7 +33,7 @@ Railway's filesystem is wiped on every deploy. Add a volume to the service (righ
 | Variable                 | Value                                                                 |
 | ------------------------ | --------------------------------------------------------------------- |
 | `APP_PASSWORD`      | A long password. **Required**: without it the app is public           |
-| `ANTHROPIC_API_KEY` | Optional. Claude parses pasted text instead of the heuristic parser   |
+| `ANTHROPIC_API_KEY` | Optional. Turns on Wee Chef: it parses pasted text instead of the heuristic parser |
 | `SITE_URL`          | Only needed with a custom domain (e.g. `https://recipes.example.com`) |
 
 The older `NUXT_APP_PASSWORD`, `NUXT_ANTHROPIC_API_KEY`, `NUXT_ANTHROPIC_MODEL` and
@@ -54,8 +59,10 @@ Claude under **Settings → Connectors → Add custom connector**. Approve with 
 - **Backups:** Railway volumes support backups. SQLite runs in WAL mode, so back up `recipes.db`,
   `recipes.db-wal` and `recipes.db-shm` together, or run `sqlite3 recipes.db ".backup backup.db"`.
 - **Changing the password** signs out every browser. Claude's connector keeps working until you remove it.
-- **Sites that block scrapers:** the image includes Chromium, and the app retries blocked or
-  JavaScript-rendered pages in a real headless browser. This gets past simple bot filters, but big
+- **Sites that block scrapers:** pages are fetched with Firefox's and then Safari's TLS and HTTP/2
+  fingerprint, which most bot filters accept (from a home connection; datacenter IPs are judged more
+  harshly). The image also includes Chromium, and the app retries pages that are still blocked, or
+  JavaScript-rendered, in a real headless browser. This gets past simple bot filters, but big
   bot-protection services (Cloudflare, DataDome) can still spot headless browsers and datacenter IPs. When
   that happens, paste the recipe text instead or ask Claude to save it. Chromium adds about 250 MB to the
   image and briefly uses 200–300 MB of RAM per blocked import. To skip it, set the Docker build arg

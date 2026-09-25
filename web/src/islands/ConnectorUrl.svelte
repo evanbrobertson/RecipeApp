@@ -28,8 +28,8 @@
 </script>
 
 {#if part === "url"}
-  <div class="card space-y-3 p-4 sm:p-5">
-    <label class="label mb-0" for="mcp-url">Connector URL</label>
+  <div class="card p-4">
+    <label class="label mb-2" for="mcp-url">Connector URL</label>
     <div class="flex gap-2">
       <input
         id="mcp-url"
@@ -43,16 +43,13 @@
       </button>
     </div>
     {#if info && !info.authEnabled}
-      <div class="bg-tint rounded-ctl flex gap-3 p-3">
-        <ShieldAlert class="text-error mt-0.5 size-5 shrink-0" />
-        <div>
-          <p class="font-bold">No password set</p>
-          <p class="text-ink-muted text-sm">
-            Anyone with this URL can read and change your recipes. Set APP_PASSWORD before you
-            deploy.
-          </p>
-        </div>
-      </div>
+      <p class="text-ink-muted mt-3 flex gap-2 text-sm">
+        <ShieldAlert class="text-error mt-px size-4 shrink-0" />
+        <span>
+          <strong class="text-ink">No password set.</strong> Anyone with this URL can change your recipes.
+          Set APP_PASSWORD before you deploy.
+        </span>
+      </p>
     {/if}
   </div>
 {:else}

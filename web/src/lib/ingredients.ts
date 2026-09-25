@@ -57,8 +57,9 @@ const aliasToUnit = new Map<string, string>()
 for (const [unit, aliases] of Object.entries(UNITS)) {
   for (const alias of aliases) aliasToUnit.set(alias, unit)
 }
+// Spread and sort rather than toSorted, which Safari only has from 16
 const unitPattern = [...aliasToUnit.keys()]
-  .toSorted((a, b) => b.length - a.length)
+  .sort((a, b) => b.length - a.length)
   .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")
 
@@ -70,7 +71,7 @@ const LEADING = new RegExp(
 const BARE_UNIT = new RegExp(
   `^(${[...aliasToUnit.keys()]
     .filter((a) => a.length >= 3 && /^[a-z]+$/.test(a))
-    .toSorted((a, b) => b.length - a.length)
+    .sort((a, b) => b.length - a.length)
     .join("|")})\\s+(?:of\\s+)?(.+)$`,
   "i",
 )
@@ -107,8 +108,11 @@ function splitPrep(rest: string): { name: string; prep: string | null } {
   return { name: name.trim(), prep }
 }
 
+/** Checkbox and bullet glyphs some recipe sites put in front of every line ("▢ 1 cup flour"). */
+const GLYPHS = /^(?:[▢☐□■◻◽◾▪▫☑☒✓✔✅•◦●○∙]\s*|\*\s+)+/
+
 export function parseIngredient(raw: string): ParsedIngredient {
-  const text = raw.replace(/\s+/g, " ").trim()
+  const text = raw.replace(/\s+/g, " ").trim().replace(GLYPHS, "")
   const m = text.match(LEADING)
   if (m && m[4] !== undefined) {
     const split = splitPrep(m[4])
@@ -253,7 +257,7 @@ const ML_PER_UNIT: Record<string, number> = {
 const TO_TASTE =
   /\b(to taste|as needed|for serving|for garnish|optional|for frying|for greasing)\b/i
 const WHOLE_PRODUCE =
-  /\b(onions?|shallots?|carrots?|potato(?:es)?|tomato(?:es)?|peppers?|zucchini|courgettes?|cucumbers?|apples?|lemons?|limes?|oranges?|avocados?|chicken|beef|pork|lamb|fish|salmon|steaks?|breasts?|thighs?|fillets?|cabbage|cauliflower|broccoli|squash|eggplants?|aubergines?|leeks?|celery|mushrooms?|bananas?|mango(?:es)?|mince|ground (?:beef|pork|turkey)|shrimp|prawns?|tofu)\b/i
+  /\b(onions?|shallots?|carrots?|potato(?:es)?|tomato(?:es)?|(?:bell|sweet|red|green|yellow|orange|chil[ei]|jalape[nñ]o) peppers?|jalape[nñ]os?|zucchini|courgettes?|cucumbers?|apples?|lemons?|limes?|oranges?|avocados?|chicken|beef|pork|lamb|fish|salmon|steaks?|breasts?|thighs?|fillets?|cabbage|cauliflower|broccoli|squash|eggplants?|aubergines?|leeks?|celery|mushrooms?|bananas?|mango(?:es)?|mince|ground (?:beef|pork|turkey)|shrimp|prawns?|tofu)\b/i
 const CUT_TASKS: Record<string, string> = {
   chopped: "chop",
   diced: "dice",
@@ -273,6 +277,33 @@ const CUT_TASKS: Record<string, string> = {
   cut: "cut",
 }
 const CUTTING = new RegExp(`\\b(${Object.keys(CUT_TASKS).join("|")})\\b`, "i")
+/** Pantry forms of produce and meat: "onion powder", "chicken broth", "tomato paste",
+ * "red pepper flakes". */
+const PANTRY =
+  /\b(powder|broth|stock|bouillon|paste|pur[eé]e|sauce|ketchup|juice|flakes|extract|seasoning|soup|granules|canned|tinned)\b/i
+/** "Crushed tomatoes" are a can when the line says so or measures them ("28 oz crushed
+ * tomatoes"); counted ("2 diced tomatoes") they're fresh ones to cut. */
+const CUT_TOMATOES = /\b(?:crushed|diced|chopped|stewed) tomato(?:es)?\b/i
+const CONTAINER = /\b(cans?|tins?|canned|tinned|jars?|cartons?)\b/i
+const MEASURED = new Set(["tsp", "tbsp", "cup", "ml", "l", "fl oz", "oz", "lb", "g", "kg", "can"])
+/** Fresh citrus squeezed into a bowl: "juice of 1 lemon", "zest and juice of 2 limes". */
+const JUICE_OF = /\bjuice (?:of|from)\b/i
+/** Knife work; grating, zesting and juicing end up in a bowl. */
+const BOARD_TASKS = new Set([
+  "chop",
+  "dice",
+  "mince",
+  "slice",
+  "julienne",
+  "cube",
+  "halve",
+  "quarter",
+  "trim",
+  "peel",
+  "cut",
+])
+/** Units that count pieces rather than measure them: "3 cloves garlic, minced" is board work. */
+const PIECES = new Set(["clove", "stick", "bunch", "sprig", "piece", "slice", "handful"])
 
 export interface MiseItem extends ParsedIngredient {
   vessel: Vessel
@@ -294,8 +325,17 @@ function vesselFor(volume: number): Vessel {
 export function miseEnPlace(lines: string[]): MiseItem[] {
   return lines.map((line) => {
     const p = parseIngredient(line)
+    if (JUICE_OF.test(line)) {
+      const count = p.quantityMax ?? p.quantity ?? Number(line.match(/\d+/)?.[0] ?? 1)
+      return { ...p, vessel: count <= 1 ? "ramekin" : "small", volume: null, task: "juice" }
+    }
+    const pantry =
+      PANTRY.test(p.name) ||
+      (CUT_TOMATOES.test(p.name) &&
+        (CONTAINER.test(line) || (p.unit !== null && MEASURED.has(p.unit))))
+    const produce = !pantry && WHOLE_PRODUCE.test(p.name)
     const prepText = [p.prep, line].filter(Boolean).join(" ")
-    const cut = prepText.match(CUTTING)?.[1]?.toLowerCase() ?? null
+    const cut = pantry ? null : (prepText.match(CUTTING)?.[1]?.toLowerCase() ?? null)
     const task = cut ? (CUT_TASKS[cut] ?? null) : null
 
     if (p.quantity === null && TO_TASTE.test(line)) {
@@ -303,8 +343,15 @@ export function miseEnPlace(lines: string[]): MiseItem[] {
     }
     const perUnit = p.unit ? ML_PER_UNIT[p.unit] : undefined
     const byWeight = p.unit === "g" || p.unit === "kg" || p.unit === "lb" || p.unit === "oz"
-    // "500g chicken thighs" goes on a board or plate, not in a bowl
-    if (byWeight && WHOLE_PRODUCE.test(p.name)) {
+    // "500g chicken thighs" goes on a board or plate, not in a bowl, and so does anything
+    // weighed or counted in pieces that still needs cutting ("3 lbs onions, sliced",
+    // "2 sticks celery, diced")
+    const knife = task !== null && BOARD_TASKS.has(task)
+    if (
+      (byWeight && (produce || knife)) ||
+      (knife && p.unit !== null && PIECES.has(p.unit)) ||
+      (knife && p.unit === null && p.quantity !== null)
+    ) {
       return { ...p, vessel: "board", volume: null, task }
     }
     if (p.quantity !== null && perUnit !== undefined) {
@@ -312,7 +359,7 @@ export function miseEnPlace(lines: string[]): MiseItem[] {
       return { ...p, vessel: vesselFor(volume), volume, task }
     }
     // Whole items ("2 onions, diced") go on the board; small counts of other things in a bowl
-    if (WHOLE_PRODUCE.test(p.name) || cut) {
+    if (produce || cut) {
       return { ...p, vessel: "board", volume: null, task }
     }
     if (p.quantity !== null) {

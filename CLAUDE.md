@@ -13,9 +13,13 @@ in a clean UI. Also a remote MCP connector for Claude.
   (greetings and the cook's notes only), each with metric-matched fallbacks
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
-- **Scraping:** JSON-LD first, HTML/microdata fallback, headless Chromium over CDP for blocked sites
-- **AI (optional):** Anthropic, OpenAI or DeepSeek (`src/llm.rs`, structured JSON output) parses pasted text and writes "Try next" blurbs; without a key, the heuristic parser and the plain algorithm are used
-- **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium)
+- **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
+  HTML/microdata fallback, headless Chromium over CDP for sites that still block or need JavaScript
+- **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
+- **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
+  Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
+  for `stable` (Railway `production`). See `docs/RELEASING.md`; versions come from conventional commit messages
+- **Errors/tracing:** Sentry, opt-in via `SENTRY_DSN` (`src/telemetry.rs`, `web/src/lib/sentry*.ts`)
 
 ## Commands
 
@@ -39,7 +43,7 @@ bun run format                   # oxfmt
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
-  config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
+  config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
   model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
@@ -50,7 +54,9 @@ src/
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
   suggest.rs      # Try next ranking + Surprise me (pure, unit-tested)
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
+  checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
+  telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
 web/src/
@@ -90,6 +96,9 @@ web/src/
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.
+- **Sentry:** the browser SDK gets its DSN, environment and release from a `Server-Timing` header the server adds
+  to HTML responses, so there is no build-time DSN and one image serves dev and stable. The SDK loads after the
+  page is idle; keep it off the critical path. Never attach recipe contents, bodies, query strings or cookies.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 

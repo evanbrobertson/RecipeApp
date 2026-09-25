@@ -1,0 +1,241 @@
+# Promote a build from master to the beta or stable channel. Nothing is rebuilt: the image
+# master built for that commit is retagged, so what ships is exactly what ran in dev.
+#
+# Stable: next vX.Y.Z from conventional commits, GitHub Release, `stable` image tag,
+# release/stable branch, Sentry release finalized, Railway production deployed.
+# Beta: the same with vX.Y.Z-beta.N (a pre-release) and the `beta` tag; it deploys only once a
+# beta environment with a RAILWAY_TOKEN exists. Re-running for a commit that already has its
+# tag reuses it, which also makes this the rollback button. See docs/RELEASING.md.
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel to promote to
+        required: true
+        type: choice
+        options: [stable, beta]
+      sha:
+        description: Commit on master to promote (default latest master)
+        required: false
+        type: string
+
+# One promotion at a time: versions are computed from the tags the previous one made
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/evanbrobertson/recipeapp
+  SENTRY_ORG: team-evan
+  SENTRY_PROJECT: crumb-recipes
+  RAILWAY_CLI: ghcr.io/railwayapp/cli:5.62.1@sha256:e02abb3fd3d568ba2f5b02de069aacd2160ba7d2d876b36e95f64e984fdacbe1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  promote:
+    name: Promote to ${{ inputs.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.channel }}
+      url: ${{ vars.APP_URL }}
+    permissions:
+      contents: write
+      packages: write
+      # Reading the commit's check runs before promoting it
+      checks: read
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      INPUT_SHA: ${{ inputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      # Optional token that may move branches across workflow-file changes (see RELEASING.md)
+      REF_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'RecipeApp' }}
+      RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_ENVIRONMENT || (inputs.channel == 'stable' && 'production' || inputs.channel) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pick the commit and its image
+        id: build
+        run: |
+          start=$(git rev-parse --verify "${INPUT_SHA:-origin/master}^{commit}")
+          if ! git merge-base --is-ancestor "$start" origin/master; then
+            echo "::error::$start is not on master; only master builds can be promoted"
+            exit 1
+          fi
+          # A docs-only push skips the Main workflow (paths-ignore), so its commit has no
+          # image: fall back to the newest first-parent ancestor that has one
+          sha=
+          for c in $(git rev-list --first-parent --max-count=25 "$start"); do
+            if labels=$(docker buildx imagetools inspect "$IMAGE:sha-${c::7}" --format '{{ json .Image.Config.Labels }}' 2>/dev/null); then
+              sha=$c
+              break
+            fi
+          done
+          if [[ -z $sha ]]; then
+            echo "::error::No image for ${start::7} or its 25 nearest ancestors. Did the Main workflow finish?"
+            exit 1
+          fi
+          if [[ $sha != "$start" ]]; then
+            echo "::notice::${start::7} has no image (docs-only push?); promoting its newest ancestor with one, ${sha::7}"
+          fi
+          echo "Picked $sha ($(git log -1 --format=%s "$sha"))"
+          short=${sha::7}
+          build=$(jq -r '."org.opencontainers.image.version" // empty' <<<"$labels")
+          {
+            echo "sha=$sha"
+            echo "short=$short"
+            echo "build=${build:-sha-$short}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Requested \`${start::7}\`, picked \`$short\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # The image is built in parallel with the checks (so master stays fast), which means
+      # an image can exist for a commit whose checks failed. Only green commits ship.
+      - name: Require the commit's checks to have passed
+        env:
+          SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100&filter=latest" \
+            --jq '[.check_runs[] | select(.name | startswith("Checks / ")) | {name, status, conclusion}]')
+          # The jobs of the shared checks.yml, as "<caller job> / <job name>"
+          if ! jq -e 'any(.[]; .name | startswith("Checks / Rust"))' <<<"$runs" >/dev/null; then
+            echo "::error::No checks ran for ${SHA::7}; promote a commit the Main workflow checked"
+            exit 1
+          fi
+          bad=$(jq -r '.[] | select(.status != "completed" or (.conclusion | IN("success", "skipped", "neutral") | not))
+            | "\(.name): \(.conclusion // .status)"' <<<"$runs")
+          if [[ -n $bad ]]; then
+            echo "::error::The checks for ${SHA::7} did not pass:"
+            echo "$bad"
+            exit 1
+          fi
+          jq -r '.[] | "ok  \(.name)"' <<<"$runs"
+
+      - name: Work out the version
+        id: version
+        env:
+          SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          v=scripts/release/version.sh
+          last=$($v last "$SHA^" 2>/dev/null || true)
+          if [[ $CHANNEL == stable ]]; then
+            tag=$($v stable-at "$SHA")
+            if [[ -z $tag ]]; then
+              newest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+              if [[ -n $newest ]] && ! git merge-base --is-ancestor "$newest" "$SHA"; then
+                echo "::error::$SHA is older than $newest. To roll back, promote a commit that already has a stable tag."
+                exit 1
+              fi
+              tag="v$($v next "$SHA")"
+            fi
+          else
+            tag=$(git tag --points-at "$SHA" --list 'v*-beta.*' --sort=-v:refname | head -n1 || true)
+            if [[ -z $tag ]]; then
+              base=$($v next "$SHA")
+              n=$(git tag --list "v$base-beta.*" | wc -l)
+              tag="v$base-beta.$((n + 1))"
+            fi
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "previous=$last"
+          } >> "$GITHUB_OUTPUT"
+          echo "Promoting \`${SHA::7}\` to **$CHANNEL** as **$tag**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retag the image
+        env:
+          SHORT: ${{ steps.build.outputs.short }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$CHANNEL" --tag "$IMAGE:$VERSION" "$IMAGE:sha-$SHORT"
+          docker buildx imagetools inspect "$IMAGE:$CHANNEL" --format '{{ .Manifest.Digest }}' |
+            sed "s|^|Image \`$IMAGE:$CHANNEL\` = |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag and GitHub Release
+        env:
+          SHA: ${{ steps.build.outputs.sha }}
+          SHORT: ${{ steps.build.outputs.short }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          BUILD: ${{ steps.build.outputs.build }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; reusing it"
+            exit 0
+          fi
+          {
+            scripts/release/version.sh notes "$PREVIOUS" "$SHA"
+            echo "---"
+            echo
+            echo "Image: \`$IMAGE:$VERSION\` (same as \`sha-$SHORT\`, built as \`$BUILD\`)"
+            if [[ -n $PREVIOUS ]]; then
+              echo
+              echo "Full changelog: $REPO_URL/compare/$PREVIOUS...$TAG"
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+          flags=(--latest)
+          [[ $CHANNEL == beta ]] && flags=(--prerelease --latest=false)
+          gh release create "$TAG" --target "$SHA" --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+
+      - name: Move release/${{ inputs.channel }}
+        # The branch is a marker (deploys go by image), so a refusal only warns
+        continue-on-error: true
+        env:
+          SHA: ${{ steps.build.outputs.sha }}
+          GH_TOKEN: ${{ env.REF_TOKEN }}
+        run: |
+          ref="heads/release/$CHANNEL"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/$ref" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/$ref" -f sha="$SHA" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/$ref" -f sha="$SHA" >/dev/null
+          fi || {
+            echo "::warning::Could not move release/$CHANNEL. If the range changes .github/workflows, add a RELEASE_TOKEN secret (see docs/RELEASING.md)."
+            exit 1
+          }
+
+      - name: Sentry release (deploy${{ inputs.channel == 'stable' && ', finalize' || '' }})
+        if: env.SENTRY_AUTH_TOKEN != ''
+        continue-on-error: true
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
+        with:
+          release: ${{ steps.build.outputs.build }}
+          environment: ${{ inputs.channel }}
+          set_commits: skip
+          finalize: ${{ inputs.channel == 'stable' }}
+          disable_telemetry: true
+
+      - name: Deploy to Railway
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -z $RAILWAY_TOKEN ]]; then
+            echo "::warning::No RAILWAY_TOKEN in the $CHANNEL environment; the image is tagged but nothing was deployed"
+            exit 0
+          fi
+          docker run --rm -e RAILWAY_TOKEN "$RAILWAY_CLI" railway redeploy --from-source \
+            --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --yes
+          echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"

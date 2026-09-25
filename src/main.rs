@@ -2,17 +2,33 @@ use axum::extract::Request;
 use tower::Layer;
 use tower_http::normalize_path::NormalizePathLayer;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
-use crumb::{AppState, app, browser::Browser, config::Config, db};
+use crumb::{AppState, app, browser::Browser, config::Config, db, telemetry};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+fn main() -> Result<(), BoxError> {
+    // Sentry starts before the runtime so panics on any thread are reported; the guard flushes
+    // queued events when main returns.
+    let settings = telemetry::Settings::from_env();
+    let sentry = telemetry::init(&settings);
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(filter))
+        .with(sentry.is_some().then(telemetry::tracing_layer))
         .init();
+    tracing::info!("{}", telemetry::describe(&settings, sentry.is_some()));
 
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(serve());
+    drop(sentry);
+    result
+}
+
+async fn serve() -> Result<(), BoxError> {
     let config = Config::from_env();
     let path = db::database_path();
     let database = db::open(&path)?;

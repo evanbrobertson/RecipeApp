@@ -1,6 +1,7 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
   import ChefHat from "@lucide/svelte/icons/chef-hat"
+  import Columns2 from "@lucide/svelte/icons/columns-2"
   import Clock from "@lucide/svelte/icons/clock"
   import Copy from "@lucide/svelte/icons/copy"
   import Dices from "@lucide/svelte/icons/dices"
@@ -22,6 +23,8 @@
   import Modal from "../components/Modal.svelte"
   import Photo from "../components/Photo.svelte"
   import ScaleControl from "../components/ScaleControl.svelte"
+  import WeeChefCard from "../components/WeeChefCard.svelte"
+  import { untrack } from "svelte"
   import { whenActive } from "../lib/active"
   import { api, errorMessage, pathId } from "../lib/api"
   import { bookPalette } from "../lib/books"
@@ -37,9 +40,10 @@
     type Cookbook,
     type CookStats,
     type Recipe,
+    type RecipeChecks,
   } from "../lib/recipe"
   import { randomHref, rememberRandom } from "../lib/random"
-  import { forgetViewed, getScale, rememberViewed, setScale } from "../lib/storage"
+  import { forgetViewed, getScale, read, rememberViewed, setScale, write } from "../lib/storage"
   import { flash, toast } from "../lib/toast"
 
   interface Data {
@@ -47,6 +51,8 @@
     cookbooks: Cookbook[]
     inCookbooks: number[]
     cookStats?: CookStats
+    /** Wee Chef's check of an imported recipe; null when it was never checked. */
+    checks?: RecipeChecks | null
   }
 
   const id = pathId()
@@ -54,18 +60,41 @@
     recipe: await api<Recipe>(`/api/recipes/${id}`),
     cookbooks: await api<Cookbook[]>("/api/cookbooks"),
     inCookbooks: await api<number[]>(`/api/recipes/${id}/cookbooks`),
+    checks: await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null),
   }))
   const recipe = $derived(page.data?.recipe)
 
+  // Just imported: Wee Chef's check runs in the background for a second or so. Pick up
+  // its result (and the tidied recipe) without a reload.
+  let polls = 0
   $effect(() => {
-    if (recipe) {
-      const r = recipe
+    if (page.data?.checks?.status !== "pending") return
+    const timer = setTimeout(async () => {
+      if (++polls > 20 || !page.data) return
+      const checks = await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null)
+      if (!checks || !page.data) return
+      if (checks.status !== "pending" && checks.flags.some((f) => f.state === "fixed")) {
+        const fresh = await api<Recipe>(`/api/recipes/${id}`).catch(() => null)
+        if (fresh) page.data.recipe = fresh
+      }
+      page.data.checks = checks.status === "pending" ? { ...checks } : checks
+    }, 1500)
+    return () => clearTimeout(timer)
+  })
+
+  // Once per recipe: a refreshed copy (after Wee Chef's check, or an undo) isn't a new view
+  $effect(() => {
+    if (recipe?.id === undefined) return
+    untrack(() => {
+      const r = recipe!
       whenActive(() => {
         rememberViewed(r)
         logView(r.id)
       })
-      document.title = `${recipe.title} · Crumb`
-    }
+    })
+  })
+  $effect(() => {
+    if (recipe) document.title = `${recipe.title} · Crumb`
   })
 
   // Landed here from Surprise me: offer another, and don't serve this one again
@@ -89,7 +118,14 @@
   // ─── Scaling & checklists ───
   let scale = $state(getScale(id))
   $effect(() => setScale(id, scale))
+  // Ticks are keyed by position, so they don't carry over to a replaced recipe
   let checked = $state(new Set<string>())
+  $effect.pre(() => {
+    void recipe
+    untrack(() => {
+      if (checked.size) checked = new Set()
+    })
+  })
   function toggle(key: string) {
     const next = new Set(checked)
     if (next.has(key)) next.delete(key)
@@ -122,6 +158,53 @@
     return (recipe?.instructions ?? [])
       .slice(0, sectionIndex)
       .reduce((n, s) => n + s.items.length, 0)
+  }
+
+  // ─── Ingredients / Method split (desktop) ───
+  // One panel is primary and gets most of the width. Clicking or tapping inside a panel, or
+  // keyboard focus entering it, makes it primary. Not hover: a boundary that moves under the
+  // cursor makes the panels flip back and forth, and the text reflows while you read.
+  // Locked, both keep a fixed split and focus changes nothing.
+  type Panel = "ingredients" | "method"
+  const LOCK_KEY = "crumb:recipe-split-locked"
+  let primary = $state<Panel>("method")
+  let locked = $state(read<boolean>(LOCK_KEY, false) === true)
+  function toggleLock() {
+    locked = !locked
+    write(LOCK_KEY, locked)
+  }
+
+  function focusPanel(panel: Panel, target: EventTarget | null) {
+    if (locked || primary === panel) return
+    primary = panel
+    if (target instanceof Element) holdStill(target)
+  }
+  function onPanelClick(panel: Panel, e: MouseEvent) {
+    // Selecting text to copy shouldn't reflow it
+    if (!getSelection()?.isCollapsed) return
+    focusPanel(panel, e.target)
+  }
+  function onPanelFocus(panel: Panel, e: FocusEvent) {
+    // Mouse clicks focus buttons too, but the click handler covers those (after the
+    // click lands, so the row can't move out from under the pointer mid-press)
+    if (e.target instanceof Element && e.target.matches(":focus-visible")) focusPanel(panel, e.target)
+  }
+
+  // Keep what was clicked where it was on screen while the panels resize around it. Stops
+  // early if scrolling doesn't move it (a stuck sticky panel).
+  function holdStill(el: Element) {
+    const top = el.getBoundingClientRect().top
+    const until = performance.now() + 400
+    const tick = () => {
+      const before = el.getBoundingClientRect().top
+      const drift = before - top
+      if (Math.abs(drift) >= 1) {
+        window.scrollBy(0, drift)
+        if (el.getBoundingClientRect().top === before) return
+      }
+      if (performance.now() < until) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
   }
 
   // ─── Actions ───
@@ -185,7 +268,7 @@
 </script>
 
 {#if page.loading}
-  <div class="space-y-4">
+  <div class="recipe-wide space-y-5">
     <div class="skeleton aspect-[4/3] w-full lg:max-w-[640px]"></div>
     <div class="skeleton h-9 w-2/3"></div>
     <div class="skeleton h-4 w-1/2"></div>
@@ -195,13 +278,13 @@
     <a href="/recipes" class="btn btn-soft">Back to recipes</a>
   </EmptyState>
 {:else}
-  <article class="space-y-7">
+  <article class="recipe-wide space-y-12 lg:space-y-16">
     <!-- Hero: photo left, title and actions right on wide screens. Its box matches the
          skeleton in shell/recipe/index.astro so the card photo morphs onto it. -->
     <header
       class={[
-        "grid gap-5",
-        hasHero && "lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-8",
+        "grid gap-6",
+        hasHero && "lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-12",
       ]}
     >
       {#if hasHero}
@@ -217,17 +300,17 @@
         />
       {/if}
 
-      <div class="min-w-0 space-y-4">
+      <div class="min-w-0 space-y-5 lg:py-2">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            {#if sub}<p class="kicker mb-1.5">{sub}</p>{/if}
+            {#if sub}<p class="kicker mb-2">{sub}</p>{/if}
             <h1 class="page-title text-balance">{recipe.title}</h1>
           </div>
           <Menu groups={menu} triggerClass="btn btn-outline btn-icon no-print -mt-1 flex-none" />
         </div>
 
         {#if recipe.author || sourceHost || cooked}
-          <p class="text-ink-muted flex flex-wrap items-center gap-x-1.5 text-sm">
+          <p class="text-ink-muted -mt-2 flex flex-wrap items-center gap-x-1.5 text-sm">
             {#if cooked}
               <span class="text-ink inline-flex items-center gap-1.5 font-bold">
                 <ChefHat class="text-primary size-4" />{cooked}
@@ -250,34 +333,47 @@
         {/if}
 
         {#if recipe.description}
-          <p class="text-ink-muted text-[17px] leading-relaxed text-pretty">
+          <p class="text-ink-muted max-w-[65ch] text-[17px] leading-relaxed text-pretty">
             {recipe.description}
           </p>
         {/if}
 
+        {#if page.data?.checks}
+          <WeeChefCard
+            recipeId={id}
+            checks={page.data.checks}
+            onundo={(r, c) => {
+              if (page.data) {
+                page.data.recipe = r
+                page.data.checks = c
+              }
+            }}
+          />
+        {/if}
+
         {#if meta.length || scaledYield}
-          <dl class="card grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))]">
+          <dl class="card grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] px-1 py-1.5">
             {#each meta as m (m.label)}
-              <div class="px-3 py-3">
+              <div class="px-3.5 py-3">
                 <dt class="meta flex items-center gap-1.5">
                   <m.icon class="text-primary size-4" />{m.label}
                 </dt>
-                <dd class="mt-0.5 font-bold">{m.value}</dd>
+                <dd class="mt-1 font-bold">{m.value}</dd>
               </div>
             {/each}
             {#if scaledYield}
-              <div class="px-3 py-3">
+              <div class="px-3.5 py-3">
                 <dt class="meta flex items-center gap-1.5">
                   <Users class="text-primary size-4" />Serves
                 </dt>
-                <dd class="mt-0.5 font-bold">{scaledYield}</dd>
+                <dd class="mt-1 font-bold">{scaledYield}</dd>
               </div>
             {/if}
           </dl>
         {/if}
 
         <!-- Cooking mode is the one main action here -->
-        <div class="no-print grid grid-cols-2 gap-3 lg:grid-cols-1 2xl:grid-cols-2">
+        <div class="no-print grid grid-cols-2 gap-3 pt-1 lg:grid-cols-1 2xl:grid-cols-2">
           <a href={`/recipes/${id}/cook`} class="btn btn-primary btn-xl" data-no-prerender>
             <Flame /> Cooking mode
           </a>
@@ -297,18 +393,24 @@
       </div>
     </header>
 
-    <div class="grid gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-10">
-      <section>
+    <div class={["split", locked && "locked"]} data-primary={primary}>
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+      <section
+        class="panel"
+        data-secondary={!locked && primary !== "ingredients" ? "" : undefined}
+        onclick={(e) => onPanelClick("ingredients", e)}
+        onfocusin={(e) => onPanelFocus("ingredients", e)}
+      >
         <div class="lg:sticky lg:top-6">
-          <div class="mb-3.5 flex min-h-11 items-center justify-between gap-2">
+          <div class="mb-5 flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <h2 class="section-title">Ingredients</h2>
             {#if ingredientCount}<ScaleControl bind:value={scale} class="no-print" />{/if}
           </div>
           {#if !ingredientCount}<p class="text-ink-muted text-sm">No ingredients listed.</p>{/if}
-          <div class="space-y-5">
+          <div class="space-y-6">
             {#each recipe.ingredients as section, si (si)}
               <div>
-                {#if section.name}<h3 class="kicker mb-2">{section.name}</h3>{/if}
+                {#if section.name}<h3 class="kicker mb-2.5">{section.name}</h3>{/if}
                 <ul class="ingredients list-card">
                   {#each section.items as item, ii (ii)}
                     {@const key = `${si}-${ii}`}
@@ -316,7 +418,7 @@
                     <li class="relative">
                       <button
                         type="button"
-                        class="hover:bg-tint/55 active:bg-tint flex min-h-12 w-full items-start gap-3 px-3.5 py-3 text-left transition-colors"
+                        class="hover:bg-tint/55 active:bg-tint flex min-h-12 w-full items-start gap-3 px-4 py-3 text-left transition-colors"
                         aria-pressed={on}
                         onclick={() => toggle(key)}
                       >
@@ -329,7 +431,10 @@
                           {#if on}<Check class="text-on-tile size-3.5" strokeWidth={3} />{/if}
                         </span>
                         <span
-                          class={["leading-snug transition", on && "text-ink-muted line-through"]}
+                          class={[
+                            "min-w-0 leading-snug break-words transition",
+                            on && "text-ink-muted line-through",
+                          ]}
                         >
                           {scaleIngredient(item, scale)}
                         </span>
@@ -343,14 +448,34 @@
         </div>
       </section>
 
-      <section>
-        <h2 class="section-title mb-3.5 flex min-h-11 items-center">Method</h2>
+      <!-- Desktop only: between the panels -->
+      <div class="gutter no-print">
+        <button
+          type="button"
+          class={["btn btn-icon sticky top-6", locked ? "btn-tile" : "btn-outline text-ink-muted"]}
+          aria-pressed={locked}
+          aria-label="Keep the panels from resizing"
+          title="Keep the panels from resizing"
+          onclick={toggleLock}
+        >
+          <Columns2 class="size-5" />
+        </button>
+      </div>
+
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+      <section
+        class="panel"
+        data-secondary={!locked && primary !== "method" ? "" : undefined}
+        onclick={(e) => onPanelClick("method", e)}
+        onfocusin={(e) => onPanelFocus("method", e)}
+      >
+        <h2 class="section-title mb-5 flex min-h-11 items-center">Method</h2>
         {#if !recipe.instructions.length}<p class="text-ink-muted text-sm">No steps listed.</p>{/if}
-        <div class="space-y-6">
+        <div class="space-y-8">
           {#each recipe.instructions as section, si (si)}
             <div>
-              {#if section.name}<h3 class="kicker mb-3">{section.name}</h3>{/if}
-              <ol class="space-y-5">
+              {#if section.name}<h3 class="kicker mb-4">{section.name}</h3>{/if}
+              <ol class="space-y-6">
                 {#each section.items as step, i (i)}
                   <li class="flex gap-4">
                     <span
@@ -359,7 +484,7 @@
                     >
                       {stepOffset(si) + i + 1}
                     </span>
-                    <p class="pt-0.5 text-[17px] leading-relaxed">
+                    <p class="min-w-0 pt-0.5 text-[17px] leading-relaxed break-words">
                       <span class="sr-only">Step {stepOffset(si) + i + 1}: </span>{step}
                     </p>
                   </li>
@@ -371,7 +496,7 @@
 
         {#if recipe.notes}
           <!-- The cook's own notes are the one place for handwriting -->
-          <div class="card mt-8 p-5">
+          <div class="card mt-10 p-6">
             <h2 class="text-primary flex items-center gap-2 font-bold">
               <StickyNote class="size-[18px]" /> Notes
             </h2>
@@ -380,11 +505,11 @@
         {/if}
 
         {#if recipe.nutrition && Object.keys(recipe.nutrition).length}
-          <div class="mt-8">
-            <h2 class="section-title mb-3.5">Nutrition</h2>
-            <dl class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div class="mt-10">
+            <h2 class="section-title mb-5">Nutrition</h2>
+            <dl class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-3">
               {#each Object.entries(recipe.nutrition) as [key, value] (key)}
-                <div class="card px-3.5 py-3">
+                <div class="card px-4 py-3">
                   <dt class="meta">{nutritionLabels[key] ?? key.replace(/Content$/, "")}</dt>
                   <dd class="mt-0.5 font-bold">{value}</dd>
                 </div>
@@ -397,7 +522,7 @@
 
     {#if page.data?.cookbooks.length}
       <section class="no-print">
-        <h2 class="section-title mb-3.5">On the shelf in</h2>
+        <h2 class="section-title mb-5">On the shelf in</h2>
         <div class="flex flex-wrap gap-2">
           {#each page.data.cookbooks as book (book.id)}
             {@const inBook = page.data.inCookbooks.includes(book.id)}
@@ -434,13 +559,87 @@
 </Modal>
 
 <style>
+  /* About a quarter wider than the layout's column where the screen has room, never
+     narrower, centred on it. The nav rail is 15rem; keep the page's 2rem side padding and
+     1rem for a scrollbar. Same rule as the skeleton in shell/recipe/index.astro. */
+  @media (min-width: 768px) {
+    .recipe-wide {
+      --w: min(88.75rem, max(100%, 100vw - 20rem));
+      width: var(--w);
+      margin-inline: calc((100% - var(--w)) / 2);
+    }
+  }
+
+  /* Ingredients | toggle | Method. Stacked on phones and tablets. */
+  .split {
+    display: grid;
+    gap: 3rem;
+  }
+  .gutter {
+    display: none;
+  }
+  @media (min-width: 1024px) {
+    .split {
+      grid-template-columns: minmax(0, 38fr) 2.75rem minmax(0, 62fr);
+      column-gap: 1.75rem;
+      transition: grid-template-columns 250ms ease;
+    }
+    /* Short ingredient lines don't need as much room as steps do */
+    .split:not(.locked)[data-primary="ingredients"] {
+      grid-template-columns: minmax(0, 56fr) 2.75rem minmax(0, 44fr);
+    }
+    .split.locked {
+      grid-template-columns: minmax(0, 42fr) 2.75rem minmax(0, 58fr);
+    }
+    /* The narrower panel invites a click */
+    .panel[data-secondary] {
+      cursor: pointer;
+    }
+    .gutter {
+      display: block;
+      position: relative;
+    }
+    /* A hairline down the gutter, below the toggle */
+    .gutter::after {
+      content: "";
+      position: absolute;
+      top: 4.25rem;
+      bottom: 0;
+      left: 50%;
+      border-left: 1px solid var(--border);
+    }
+    .gutter > button {
+      z-index: 1;
+    }
+    /* The narrower panel's headings step back; everything stays readable and usable */
+    .panel[data-secondary] .section-title {
+      color: var(--text-muted);
+      transition: color 250ms ease;
+    }
+  }
+  /* Small desktops: a gentler swing, so the narrow panel stays comfortable for long steps */
+  @media (min-width: 1024px) and (max-width: 1279px) {
+    .split {
+      grid-template-columns: minmax(0, 42fr) 2.75rem minmax(0, 58fr);
+    }
+    .split:not(.locked)[data-primary="ingredients"] {
+      grid-template-columns: minmax(0, 54fr) 2.75rem minmax(0, 46fr);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .split,
+    .panel .section-title {
+      transition: none;
+    }
+  }
+
   /* Inset dividers between ingredient rows, as in .list-row */
   .ingredients > li + li::before {
     content: "";
     position: absolute;
     top: 0;
-    left: 0.875rem;
-    right: 0.875rem;
+    left: 1rem;
+    right: 1rem;
     border-top: 1px solid var(--border);
     pointer-events: none;
   }

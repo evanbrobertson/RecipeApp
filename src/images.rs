@@ -40,7 +40,8 @@ const WEBP_QUALITY: f32 = 78.0;
 /// Resized files kept on disk before the oldest are deleted.
 pub const CACHE_CAP_BYTES: u64 = 300 * 1024 * 1024;
 const FAILURE_TTL: Duration = Duration::from_secs(10 * 60);
-const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// `private`: photos sit behind the login, so shared caches and CDNs must not keep them.
+const IMMUTABLE: &str = "private, max-age=31536000, immutable";
 
 /// FNV-1a 32-bit over the UTF-8 bytes, as 8 lowercase hex digits (`imageKey` in img.ts).
 pub fn image_key(image: &str) -> String {
@@ -333,41 +334,108 @@ async fn load_source(
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(format!("unsupported image URL scheme {}", parsed.scheme()));
     }
-    let mut req = http
-        .get(parsed)
-        .timeout(FETCH_TIMEOUT)
-        .header(header::USER_AGENT, crate::scraper::USER_AGENT)
-        .header(
-            header::ACCEPT,
-            "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8",
-        );
     // What a browser on the recipe's page would send; some CDNs refuse hotlinks without it
-    if let Some(r) = referer.filter(|r| r.starts_with("http")) {
-        req = req.header(header::REFERER, r);
+    let referer = referer.filter(|r| r.starts_with("http"));
+    // A browser fingerprint first (some CDNs answer a plain client with an HTML block page).
+    // Plain reqwest only if wreq got no answer at all; an answer (a 404, a page) stands.
+    if let Some(client) = crate::scraper::wreq_client(crate::scraper::Method::Firefox) {
+        match load_with_wreq(client, parsed.as_str(), referer).await {
+            Ok(body) => return Ok(body),
+            Err(Wreq::Answered(err)) => return Err(err),
+            Err(Wreq::NoAnswer(err)) => tracing::debug!(
+                "[img] {}: wreq failed ({err}), trying reqwest",
+                parsed.host_str().unwrap_or("?")
+            ),
+        }
     }
-    let mut res = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("fetch returned {}", res.status()));
+    load_with_reqwest(http, parsed, referer).await
+}
+
+const TOO_LARGE: &str = "image too large";
+/// Image types first, as a browser's `<img>` request asks (no AVIF: it can't be decoded here).
+const IMAGE_ACCEPT: &str = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8";
+
+/// Refuses a response that isn't a usable image before reading its body.
+fn check_response(
+    status: u16,
+    content_type: Option<&str>,
+    length: Option<u64>,
+) -> Result<(), String> {
+    if !(200..300).contains(&status) {
+        return Err(format!("fetch returned {status}"));
     }
-    let kind = res
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let kind = content_type.unwrap_or("").to_ascii_lowercase();
     if kind.starts_with("text/") || kind.contains("json") {
         return Err(format!("not an image ({kind})"));
     }
-    if res
-        .content_length()
-        .is_some_and(|n| n > MAX_SOURCE_BYTES as u64)
-    {
-        return Err("image too large".into());
+    if length.is_some_and(|n| n > MAX_SOURCE_BYTES as u64) {
+        return Err(TOO_LARGE.into());
     }
+    Ok(())
+}
+
+/// How a wreq image fetch failed.
+enum Wreq {
+    /// The server answered, but not with a usable image.
+    Answered(String),
+    /// No response, or the body didn't arrive; worth trying another client.
+    NoAnswer(String),
+}
+
+async fn load_with_wreq(
+    client: &wreq::Client,
+    url: &str,
+    referer: Option<&str>,
+) -> Result<Vec<u8>, Wreq> {
+    // The profile sets the other headers; these two are what an image request differs by
+    let mut req = client
+        .get(url)
+        .timeout(FETCH_TIMEOUT)
+        .header(header::ACCEPT, IMAGE_ACCEPT);
+    if let Some(r) = referer {
+        req = req.header(header::REFERER, r);
+    }
+    let res = req
+        .send()
+        .await
+        .map_err(|e| Wreq::NoAnswer(format!("fetch failed: {e}")))?;
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    check_response(res.status().as_u16(), content_type, res.content_length())
+        .map_err(Wreq::Answered)?;
+    crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
+        .await
+        .map_err(|e| match e {
+            crate::scraper::ReadError::TooLarge => Wreq::Answered(TOO_LARGE.into()),
+            crate::scraper::ReadError::Failed(e) => Wreq::NoAnswer(format!("read failed: {e}")),
+        })
+}
+
+async fn load_with_reqwest(
+    http: &reqwest::Client,
+    url: url::Url,
+    referer: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut req = http
+        .get(url)
+        .timeout(FETCH_TIMEOUT)
+        .header(header::USER_AGENT, crate::scraper::USER_AGENT)
+        .header(header::ACCEPT, IMAGE_ACCEPT);
+    if let Some(r) = referer {
+        req = req.header(header::REFERER, r);
+    }
+    let mut res = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let content_type = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    check_response(res.status().as_u16(), content_type, res.content_length())?;
     let mut body = Vec::new();
     while let Some(chunk) = res.chunk().await.map_err(|e| format!("read failed: {e}"))? {
         if body.len() + chunk.len() > MAX_SOURCE_BYTES {
-            return Err("image too large".into());
+            return Err(TOO_LARGE.into());
         }
         body.extend_from_slice(&chunk);
     }
@@ -383,7 +451,7 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>, String> {
         return Err("data URI isn't a base64 image".into());
     }
     if data.len() > MAX_SOURCE_BYTES / 3 * 4 + 4096 {
-        return Err("image too large".into());
+        return Err(TOO_LARGE.into());
     }
     let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     let data = percent_encoding::percent_decode_str(&data).decode_utf8_lossy();

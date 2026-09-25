@@ -1083,7 +1083,8 @@ async fn mcp_suggest_tools() {
 }
 
 /// A fake AI API: answers Anthropic and OpenAI-style requests by picking the first two
-/// candidates plus one made-up id; under /fail it always errors.
+/// candidates plus one made-up id, and, when asked for an idea, always "Chicken Karaage"
+/// (even when that's in the box); under /fail it always errors.
 async fn fake_ai() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let calls = std::sync::Arc::new(AtomicUsize::new(0));
@@ -1104,12 +1105,21 @@ async fn fake_ai() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
             .iter()
             .map(|c| c["id"].as_i64().unwrap())
             .collect();
-        json!({"picks": [
+        let mut out = json!({"picks": [
             {"id": 424242, "blurb": "Not in your box"},
             {"id": ids[1], "blurb": "Bright and quick for a weeknight"},
             {"id": ids[0], "blurb": "You haven't tried this one yet"}
-        ]})
-        .to_string()
+        ]});
+        if payload.get("idea").is_some() {
+            assert!(payload["idea"]["notTheseTitles"].is_array());
+            let system = body["system"]
+                .as_str()
+                .or_else(|| body["messages"][0]["content"].as_str())
+                .unwrap();
+            assert!(system.contains("notTheseTitles"), "{system}");
+            out["idea"] = json!({"title": "Chicken  Karaage", "why": "You love fried chicken, so try Karaage"});
+        }
+        out.to_string()
     };
     let (c1, c2, c3) = (calls.clone(), calls.clone(), calls.clone());
     let app = axum::Router::new()
@@ -1167,6 +1177,7 @@ async fn ai_suggestions_cache_and_fallback() {
             let mut llm = LlmConfig::new(provider, "test-key");
             llm.base_url = url.clone();
             c.llm = Some(llm);
+            c.idea_one_in = 0;
         });
         for (title, ing) in [
             ("Chicken", "chicken"),
@@ -1189,6 +1200,7 @@ async fn ai_suggestions_cache_and_fallback() {
         assert_eq!(items[1]["reason"], "You haven't tried this one yet");
         assert_eq!(items[2]["ai"], false);
         assert!(items.iter().all(|i| i["recipe"]["id"] != 424242));
+        assert!(s["idea"].is_null(), "not an idea day: {s}");
         // Cached: no second call, and shuffles never call
         t.json("GET", "/api/suggestions", None).await;
         t.json("GET", "/api/suggestions?seed=1", None).await;
@@ -1222,6 +1234,80 @@ async fn ai_suggestions_cache_and_fallback() {
     t.json("GET", "/api/suggestions", None).await;
     // One request plus its single retry, then the failure is remembered
     assert_eq!(calls.load(Ordering::SeqCst), before + 2);
+}
+
+fn idea_app(base: &str) -> TestApp {
+    use crumb::config::{LlmConfig, LlmProvider};
+    TestApp::with_config(|c| {
+        let mut llm = LlmConfig::new(LlmProvider::Anthropic, "test-key");
+        llm.base_url = base.to_string();
+        c.llm = Some(llm);
+        // Every day is an idea day
+        c.idea_one_in = 1;
+    })
+}
+
+#[tokio::test]
+async fn ai_idea_joins_try_next_on_idea_days() {
+    let (base, _) = fake_ai().await;
+    let t = idea_app(&base);
+    for (title, ing) in [
+        ("Chicken tikka masala", "chicken"),
+        ("Beef stew", "beef"),
+        ("Mapo tofu", "tofu"),
+        ("Miso salmon", "salmon"),
+        ("Pork carnitas", "pork"),
+    ] {
+        add_recipe(&t, title, "Main", ing, "30m").await;
+    }
+    t.json("GET", "/api/suggestions", None).await;
+    let s = wait_for_ai(&t).await;
+    assert_eq!(s["ai"], "ready", "{s}");
+    // The idea takes the last card's place
+    assert_eq!(s["items"].as_array().unwrap().len(), 3, "{s}");
+    assert_eq!(s["idea"]["title"], "Chicken Karaage");
+    assert_eq!(s["idea"]["why"], "You love fried chicken, so try Karaage");
+    assert_eq!(
+        s["idea"]["searchUrl"],
+        "https://www.google.com/search?q=Chicken+Karaage+recipe"
+    );
+    let (_, _, html) = t.send(get("/")).await;
+    assert!(html.contains("Chicken Karaage"));
+    // Shuffles are the box only
+    let (_, s) = t.json("GET", "/api/suggestions?seed=1", None).await;
+    assert!(s["idea"].is_null());
+    // The connector reads the cached idea
+    let (out, _) = mcp_call(&t, "suggest_recipes", json!({})).await;
+    assert!(
+        out.contains("idea from Wee Chef: Chicken Karaage") && out.contains("google.com/search"),
+        "{out}"
+    );
+
+    // The model suggested something already in the box: no idea card
+    let t = idea_app(&base);
+    for (title, ing) in [
+        ("Chicken tikka masala", "chicken"),
+        ("Beef stew", "beef"),
+        ("Mapo tofu", "tofu"),
+        ("Easy chicken karaage!", "chicken thighs"),
+        ("Pork carnitas", "pork"),
+    ] {
+        add_recipe(&t, title, "Main", ing, "30m").await;
+    }
+    t.json("GET", "/api/suggestions", None).await;
+    let s = wait_for_ai(&t).await;
+    assert_eq!(s["ai"], "ready", "{s}");
+    assert!(s["idea"].is_null(), "{s}");
+    assert_eq!(s["items"].as_array().unwrap().len(), 4);
+
+    // No key: never an idea
+    let t = TestApp::with_config(|c| c.idea_one_in = 1);
+    for title in ["Chicken", "Beef", "Tofu"] {
+        add_recipe(&t, title, "Main", "salt", "30m").await;
+    }
+    let (_, s) = t.json("GET", "/api/suggestions", None).await;
+    assert_eq!(s["ai"], "off");
+    assert!(s["idea"].is_null());
 }
 
 #[tokio::test]
@@ -1326,7 +1412,7 @@ async fn sized_images_from_data_uris() {
     assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
     assert_eq!(
         headers[header::CACHE_CONTROL],
-        "public, max-age=31536000, immutable"
+        "private, max-age=31536000, immutable"
     );
     // 700 snaps to 768
     assert_eq!(webp_size(&body), (768, 384));
@@ -1543,4 +1629,685 @@ async fn served_html_files_keep_their_validators() {
         .unwrap();
     let (status, _, _) = t.send(again).await;
     assert_eq!(status, StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn gzip_files_are_not_compressed_again() {
+    let t = TestApp::new(None);
+    let dist = &t.state.config.web_dist;
+    std::fs::create_dir_all(dist.join("ocr")).unwrap();
+    let model = vec![7u8; 4096];
+    std::fs::write(dist.join("ocr/eng.traineddata.gz"), &model).unwrap();
+    let req = Request::builder()
+        .uri("/ocr/eng.traineddata.gz")
+        .header(header::ACCEPT_ENCODING, "br, gzip")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/gzip");
+    assert!(headers.get(header::CONTENT_ENCODING).is_none());
+    assert_eq!(body.len(), model.len());
+}
+
+// ─── Recipes from photos ─────────────────────────────────────────────────────
+
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
+
+/// A fake vision API that keeps every request body and always reads the same recipe.
+async fn fake_vision() -> (String, Seen) {
+    let seen: Seen = Default::default();
+    let recipe = json!({"isRecipe": true, "title": "Gran's Scones", "description": null,
+        "author": "Gran", "prepTime": null, "cookTime": "12m", "totalTime": null,
+        "recipeYield": "8 scones", "recipeCategory": null, "recipeCuisine": null,
+        "ingredients": [{"name": null, "items": ["2 cups flour", "½ cup butter [?]"]}],
+        "instructions": [{"name": null, "items": ["Rub in the butter.", "Bake at 425°F."]}],
+        "notes": null})
+    .to_string();
+    let (s1, s2, r1, r2) = (seen.clone(), seen.clone(), recipe.clone(), recipe);
+    let app = axum::Router::new()
+        .route(
+            "/v1/messages",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| async move {
+                s1.lock().unwrap().push(body);
+                axum::Json(json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": r1}]}))
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| async move {
+                s2.lock().unwrap().push(body);
+                axum::Json(json!({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": r2, "refusal": null}}]}))
+            }),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, seen)
+}
+
+fn vision_app(provider: crumb::config::LlmProvider, base: &str) -> TestApp {
+    use crumb::config::{LlmConfig, LlmProvider};
+    let base = base.to_string();
+    TestApp::with_config(move |c| {
+        let mut llm = LlmConfig::new(provider, "test-key");
+        llm.base_url = match provider {
+            LlmProvider::Anthropic => base,
+            _ => format!("{base}/v1"),
+        };
+        c.llm = Some(llm);
+    })
+}
+
+/// A JPEG stored `w`×`h` with EXIF orientation `o`.
+fn exif_jpeg(w: u32, h: u32, o: u16) -> Vec<u8> {
+    let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 90]));
+    let mut plain = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut plain, 80)
+        .encode_image(&img)
+        .unwrap();
+    let mut tiff = b"II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec();
+    tiff.extend_from_slice(&u32::from(o).to_le_bytes());
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend_from_slice(&tiff);
+    let mut out = plain[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(&app1);
+    out.extend_from_slice(&plain[2..]);
+    out
+}
+
+/// POSTs `photos` (and a `text` note) to the photo import as multipart.
+async fn post_photos(t: &TestApp, photos: &[Vec<u8>], text: Option<&str>) -> (StatusCode, Value) {
+    let boundary = "XPHOTOBOUNDARY";
+    let mut body = Vec::new();
+    for (i, photo) in photos.iter().enumerate() {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"p{i}.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(photo);
+        body.extend_from_slice(b"\r\n");
+    }
+    if let Some(text) = text {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{text}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/recipes/import/photos")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+fn decoded_size(b64: &str) -> (u32, u32) {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap();
+    let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).unwrap();
+    (img.width(), img.height())
+}
+
+#[tokio::test]
+async fn photo_import_needs_wee_chef() {
+    let t = TestApp::new(None);
+    let (status, body) = post_photos(&t, &[exif_jpeg(64, 48, 1)], None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["message"].as_str().unwrap().contains("Wee Chef"));
+    let (_, info) = t.json("GET", "/api/connector", None).await;
+    assert_eq!(info["vision"], false);
+}
+
+#[tokio::test]
+async fn photo_import_reads_the_pages_with_the_vision_model() {
+    use crumb::config::LlmProvider;
+    let (base, seen) = fake_vision().await;
+    let t = vision_app(LlmProvider::Anthropic, &base);
+    let (_, info) = t.json("GET", "/api/connector", None).await;
+    assert_eq!(info["vision"], true);
+
+    // Page 1 is a sideways phone photo (stored landscape, EXIF says rotate 90°)
+    let pages = [exif_jpeg(2400, 1800, 6), png_bytes(300, 200)];
+    let (status, res) = post_photos(&t, &pages, Some("The scones, not the jam")).await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["isNew"], true);
+    assert_eq!(res["title"], "Gran's Scones");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(recipe["source"], "photo");
+    assert_eq!(recipe["ingredients"][0]["items"][1], "½ cup butter [?]");
+    assert_eq!(recipe["cookTime"], "12m");
+
+    let bodies = seen.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 1);
+    let body = &bodies[0];
+    assert_eq!(body["model"], "claude-sonnet-5");
+    assert_eq!(body["max_tokens"], 4000);
+    assert!(body["system"].as_str().unwrap().contains("[?]"));
+    let content = body["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 5);
+    assert_eq!(content[0], json!({"type": "text", "text": "Page 1:"}));
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["media_type"], "image/jpeg");
+    let (w, h) = decoded_size(content[1]["source"]["data"].as_str().unwrap());
+    assert!(h > w && h <= 1568, "{w}x{h}");
+    assert_eq!(content[2]["text"], "Page 2:");
+    assert_eq!(
+        decoded_size(content[3]["source"]["data"].as_str().unwrap()),
+        (300, 200)
+    );
+    let text = content[4]["text"].as_str().unwrap();
+    assert!(text.contains("these 2 photos") && text.contains("The scones, not the jam"));
+}
+
+#[tokio::test]
+async fn photo_import_on_openai_style_apis() {
+    use crumb::config::LlmProvider;
+    let (base, seen) = fake_vision().await;
+    let t = vision_app(LlmProvider::OpenAi, &base);
+    let (status, _) = post_photos(&t, &[exif_jpeg(640, 480, 1)], None).await;
+    assert_eq!(status, StatusCode::OK);
+    let t = vision_app(LlmProvider::DeepSeek, &base);
+    let (status, res) = post_photos(&t, &[exif_jpeg(640, 480, 1)], None).await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+
+    let bodies = seen.lock().unwrap().clone();
+    let (openai, deepseek) = (&bodies[0], &bodies[1]);
+    let block = &openai["messages"][1]["content"][1];
+    assert_eq!(block["type"], "image_url");
+    assert_eq!(block["image_url"]["detail"], "high");
+    assert!(
+        block["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,/9j/")
+    );
+    assert_eq!(openai["response_format"]["type"], "json_schema");
+    // DeepSeek reads photos with its Flash model, whatever the main model is
+    assert_eq!(deepseek["model"], "deepseek-flash");
+    assert_eq!(deepseek["messages"][1]["content"][1]["type"], "image_url");
+    assert_eq!(deepseek["response_format"]["type"], "json_object");
+}
+
+#[tokio::test]
+async fn photo_import_refuses_what_it_cant_read() {
+    use crumb::config::LlmProvider;
+    let (base, seen) = fake_vision().await;
+    let t = vision_app(LlmProvider::Anthropic, &base);
+
+    let (status, body) = post_photos(&t, &[], None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let seven: Vec<Vec<u8>> = (0..7).map(|_| exif_jpeg(32, 32, 1)).collect();
+    let (status, body) = post_photos(&t, &seven, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["message"].as_str().unwrap().contains("6 photos"));
+
+    let heic = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic....".to_vec();
+    let (status, body) = post_photos(&t, &[exif_jpeg(32, 32, 1), heic], None).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(body["message"].as_str().unwrap().starts_with("Photo 2: "));
+
+    // Over 40 megapixels, going by the header
+    let mut huge = exif_jpeg(16, 16, 1);
+    let sof = huge.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    huge[sof + 5..sof + 9].copy_from_slice(&[0x27, 0x10, 0x27, 0x10]);
+    let (status, _) = post_photos(&t, &[huge], None).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    // Over the 40 MB upload limit
+    let big = vec![0xFFu8; 41 * 1024 * 1024];
+    let (status, body) = post_photos(&t, &[big], None).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("40 MB"));
+
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+// ─── Wee Chef's import checks ───────────────────────────────────────────────
+
+/// A fake TypeSafe API: labels lines by simple rules (a "Filling"-style line or one
+/// ending in ":" is a heading, "Nutrition Facts" is junk, "1 cup sugar 2 eggs" might be
+/// merged, a lowercase step is a fragment, "Keeps..." is a tip). Under /fail it's a 422.
+async fn fake_jev() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let choice = |ok: &str, label: &str, p: f64| {
+        let mut probs = serde_json::Map::new();
+        probs.insert(ok.into(), json!(if label == ok { p } else { 1.0 - p }));
+        probs.insert(label.into(), json!(p));
+        json!({"type": "choice", "choice": label, "confidence": p, "probabilities": probs})
+    };
+    let (c1, c2) = (calls.clone(), calls.clone());
+    let app = axum::Router::new()
+        .route(
+            "/v1/systemone",
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                    c1.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(headers["authorization"], "Bearer test-key");
+                    assert_eq!(body["model"], "jev-1.13.0");
+                    assert!(body["state"]["ingredients"].is_array());
+                    assert!(body["state"].get("image").is_none());
+                    let mut answers = serde_json::Map::new();
+                    for (id, q) in body["questions"].as_object().unwrap() {
+                        let a = if id.starts_with("ing_") {
+                            let line = q["instructions"]["line"].as_str().unwrap();
+                            if line == "Filling" || line.ends_with(':') {
+                                choice("ingredient", "heading", 1.0)
+                            } else if line == "Nutrition Facts" {
+                                choice("ingredient", "junk", 0.99)
+                            } else if line == "1 cup sugar 2 eggs" {
+                                choice("ingredient", "merged", 0.85)
+                            } else {
+                                choice("ingredient", "ingredient", 1.0)
+                            }
+                        } else if id.starts_with("step_") {
+                            let step = q["instructions"]["step"].as_str().unwrap();
+                            if step.ends_with(':') {
+                                choice("step", "heading", 0.98)
+                            } else if step.starts_with(char::is_lowercase) {
+                                choice("step", "fragment", 0.95)
+                            } else if step.starts_with("Keeps") {
+                                choice("step", "not_instruction", 0.97)
+                            } else {
+                                choice("step", "step", 1.0)
+                            }
+                        } else {
+                            json!({"type": "noul", "noul": 0.2})
+                        };
+                        answers.insert(id.clone(), a);
+                    }
+                    axum::Json(json!({"model": "jev-1.13.0", "answers": answers,
+                        "usage": {"input_tokens": 1234, "output_tokens": 99}}))
+                },
+            ),
+        )
+        .route(
+            "/fail/v1/systemone",
+            axum::routing::post(move || async move {
+                c2.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::UNPROCESSABLE_ENTITY, "bad request")
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, calls)
+}
+
+/// A recipe site serving `/{name}` pages with this JSON-LD.
+async fn recipe_site(pages: Vec<(&'static str, Value)>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let mut app = axum::Router::new();
+    for (name, ld) in pages {
+        let html = format!(
+            r#"<html><head><script type="application/ld+json">{ld}</script></head><body></body></html>"#
+        );
+        app = app.route(
+            &format!("/{name}"),
+            axum::routing::get(move || async move { axum::response::Html(html) }),
+        );
+    }
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    base
+}
+
+fn jev_app(base: &str) -> TestApp {
+    let base = base.to_string();
+    TestApp::with_config(move |c| {
+        let mut ts = crumb::config::TypesafeConfig::new("test-key");
+        ts.base_url = base;
+        c.typesafe = Some(ts);
+    })
+}
+
+async fn wait_for_check(t: &TestApp, id: i64) -> Value {
+    for _ in 0..200 {
+        let (_, c) = t
+            .json("GET", &format!("/api/recipes/{id}/checks"), None)
+            .await;
+        if c["status"] != "pending" {
+            return c;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the check never finished");
+}
+
+fn big_mac() -> Value {
+    json!({"@context": "https://schema.org", "@type": "Recipe", "name": "Big Mac Sauce",
+    "prepTime": "PT10M", "cookTime": "PT20M",
+    "recipeIngredient": ["▢ 1 cup mayo", "Nutrition Facts", "Filling", "▢ 1 lb beef", "1 cup sugar 2 eggs"],
+    "recipeInstructions": [
+        {"@type": "HowToStep", "text": "Sauce:"},
+        {"@type": "HowToStep", "text": "Whisk the mayo and"},
+        {"@type": "HowToStep", "text": "relish together."},
+        {"@type": "HowToStep", "text": "Keeps for a week in the fridge."},
+        {"@type": "HowToStep", "text": "Don&amp;#039;t skip the pickles."}
+    ]})
+}
+
+#[tokio::test]
+async fn wee_chef_checks_tidy_imports_and_undo() {
+    let (jev, calls) = fake_jev().await;
+    let site = recipe_site(vec![
+        ("big-mac", big_mac()),
+        (
+            "toast",
+            json!({"@type": "Recipe",
+        "name": "Toast", "recipeIngredient": ["1 slice bread", "1 cup sugar 2 eggs"],
+        "recipeInstructions": ["Toast the bread."]}),
+        ),
+    ])
+    .await;
+    let t = jev_app(&jev);
+    let (_, info) = t.json("GET", "/api/connector", None).await;
+    assert_eq!(info["weeChefChecks"], true);
+
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/big-mac")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let id = res["id"].as_i64().unwrap();
+
+    let checks = wait_for_check(&t, id).await;
+    assert_eq!(checks["status"], "done", "{checks}");
+    assert_eq!(checks["canUndo"], true);
+    let flags = checks["flags"].as_array().unwrap();
+    let of = |state: &str| {
+        flags
+            .iter()
+            .filter(|f| f["state"] == state)
+            .map(|f| (f["itemText"].as_str().unwrap(), f["kind"].as_str().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        of("fixed"),
+        [
+            ("Nutrition Facts", "junk"),
+            ("Filling", "heading"),
+            ("Sauce:", "heading"),
+            ("relish together.", "fragment"),
+            ("Keeps for a week in the fridge.", "not_instruction"),
+        ]
+    );
+    assert_eq!(of("review"), [("1 cup sugar 2 eggs", "merged")]);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Tidied at import (no AI): glyphs, entities, total time. Then Wee Chef's fixes.
+    let (_, r) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(r["totalTime"], "30m");
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["1 cup mayo"]},
+               {"name": "Filling", "items": ["1 lb beef", "1 cup sugar 2 eggs"]}])
+    );
+    assert_eq!(
+        r["instructions"],
+        json!([{"name": "Sauce", "items": ["Whisk the mayo and relish together.", "Don't skip the pickles."]}])
+    );
+    assert_eq!(r["notes"], "Keeps for a week in the fridge.");
+
+    // The recipe page carries the check, so there's no extra request
+    let (_, _, html) = t.send(get(&format!("/recipes/{id}"))).await;
+    assert!(
+        html.contains(r#""checks":{"status":"done","canUndo":true"#),
+        "{html}"
+    );
+
+    // Keep as is: gone now, and remembered
+    let flag = flags.iter().find(|f| f["state"] == "review").unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let (status, after) = t
+        .json(
+            "POST",
+            &format!("/api/recipes/{id}/flags/{flag}/dismiss"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        after["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["state"] != "review")
+    );
+    let (status, err) = t
+        .json(
+            "POST",
+            &format!("/api/recipes/{id}/flags/{flag}/dismiss"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(err["statusCode"], 404);
+
+    // Undo puts back the imported version (still tidied, no AI fixes)
+    let (status, undone) = t
+        .json("POST", &format!("/api/recipes/{id}/checks/undo"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    assert_eq!(undone["checks"]["canUndo"], false);
+    assert_eq!(undone["checks"]["flags"], json!([]));
+    assert_eq!(
+        undone["recipe"]["ingredients"][0]["items"],
+        json!([
+            "1 cup mayo",
+            "Nutrition Facts",
+            "Filling",
+            "1 lb beef",
+            "1 cup sugar 2 eggs"
+        ])
+    );
+    assert_eq!(undone["recipe"]["instructions"][0]["items"][0], "Sauce:");
+    assert_eq!(undone["recipe"]["notes"], Value::Null);
+    let (status, _) = t
+        .json("POST", &format!("/api/recipes/{id}/checks/undo"), None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // A second import: fixed, then edited, so Undo would lose the edit
+    let (_, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/toast")})),
+        )
+        .await;
+    let toast = res["id"].as_i64().unwrap();
+    let checks = wait_for_check(&t, toast).await;
+    assert_eq!(checks["flags"][0]["kind"], "merged");
+    assert_eq!(checks["canUndo"], false); // nothing was fixed
+    // Editing the flagged line away resolves the flag
+    t.json(
+        "PATCH",
+        &format!("/api/recipes/{toast}"),
+        Some(json!({"ingredients": [{"name": null, "items": ["1 slice bread", "1 cup sugar", "2 eggs"]}]})),
+    )
+    .await;
+    let (_, checks) = t
+        .json("GET", &format!("/api/recipes/{toast}/checks"), None)
+        .await;
+    assert_eq!(checks["flags"], json!([]));
+
+    // Same URL again: the duplicate isn't checked twice
+    t.json(
+        "POST",
+        "/api/recipes/import",
+        Some(json!({"url": format!("{site}/toast")})),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // Recipes the cook writes aren't checked, and "Check all" has nothing left to do
+    let (_, mine) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({"title": "Mine", "ingredients": [{"items": ["Filling"]}]})),
+        )
+        .await;
+    let (_, c) = t
+        .json("GET", &format!("/api/recipes/{}/checks", mine["id"]), None)
+        .await;
+    assert_eq!(c, Value::Null);
+    let (status, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(all["queued"], 0);
+    assert_eq!(all["eligible"], 2);
+    assert_eq!(all["checked"], 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+fn older_recipe() -> crumb::model::RecipeFields {
+    crumb::model::RecipeFields {
+        title: "Older".into(),
+        ingredients: vec![crumb::model::Section {
+            name: None,
+            items: vec!["Filling".into(), "▢ 1 egg".into(), "Nutrition Facts".into()],
+        }],
+        instructions: vec![crumb::model::Section {
+            name: None,
+            items: vec!["Cook it.".into()],
+        }],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn check_all_only_suggests_on_recipes_already_in_the_box() {
+    let (jev, _) = fake_jev().await;
+    let t = jev_app(&jev);
+    let (older, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 1);
+    let c = wait_for_check(&t, older.id).await;
+    assert_eq!(c["status"], "done", "{c}");
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", older.id), None)
+        .await;
+    // Only the checkbox glyph went; the heading and the junk line are suggestions
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["Filling", "1 egg", "Nutrition Facts"]}])
+    );
+    let kinds: Vec<(&str, &str)> = c["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["kind"].as_str().unwrap(), f["state"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [("tidy", "fixed"), ("heading", "review"), ("junk", "review")]
+    );
+    assert_eq!(c["canUndo"], true);
+}
+
+#[tokio::test]
+async fn wee_chef_checks_existing_recipes_and_survive_failures() {
+    let (jev, calls) = fake_jev().await;
+    // A backup restore isn't tidied or checked on the way in
+    let t = jev_app(&format!("{jev}/fail"));
+    let backup = json!({"format": "crumb", "version": 1, "recipes": [
+        {"title": "Restored", "ingredients": [{"name": null, "items": ["▢ Filling", "1 egg"]}],
+         "instructions": [{"name": null, "items": ["Cook it."]}]}
+    ]});
+    let boundary = "XBOUNDARY";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"backup.json\"\r\nContent-Type: application/json\r\n\r\n{backup}\r\n--{boundary}--\r\n"
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/import/files")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (_, r) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(r["ingredients"][0]["items"][0], "▢ Filling");
+    let (_, c) = t.json("GET", "/api/recipes/1/checks", None).await;
+    assert_eq!(c["status"], "skipped");
+    assert_eq!(c["flags"], json!([]));
+    // ...and "Check all" never picks it up either
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 0);
+    assert_eq!(all["eligible"], 0);
+
+    // A recipe from before the checks (the legacy upgrade marked them all 'url')
+    let (older, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
+
+    // "Check all" picks it up; a failing API marks it failed and leaves the recipe alone
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 1);
+    let c = wait_for_check(&t, older.id).await;
+    assert_eq!(c["status"], "failed");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1); // a 422 isn't retried
+    let (_, r2) = t
+        .json("GET", &format!("/api/recipes/{}", older.id), None)
+        .await;
+    assert_eq!(r2["ingredients"][0]["items"][1], "▢ 1 egg");
+    let (_, status) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(status["failed"], 1);
+    // Failed checks are retried by the next "Check all"
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 1);
+    wait_for_check(&t, older.id).await;
+
+    // Without a key the feature is off: nothing queued, no UI
+    let off = TestApp::new(None);
+    let (_, info) = off.json("GET", "/api/connector", None).await;
+    assert_eq!(info["weeChefChecks"], false);
+    let (status, err) = off.json("POST", "/api/checks", None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        err["statusMessage"],
+        "Wee Chef checks aren't set up on this server"
+    );
+    let text = "Toast\nIngredients\n▢ 1 slice bread\nInstructions\n1. Toast the bread.";
+    let (_, res) = off
+        .json("POST", "/api/recipes/import", Some(json!({"text": text})))
+        .await;
+    let (_, r) = off
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    // The clean-up still runs
+    assert_eq!(r["ingredients"][0]["items"][0], "1 slice bread");
+    let (_, c) = off
+        .json("GET", &format!("/api/recipes/{}/checks", res["id"]), None)
+        .await;
+    assert_eq!(c, Value::Null);
 }

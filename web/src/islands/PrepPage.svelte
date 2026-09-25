@@ -63,7 +63,7 @@
         icon: Soup,
         items: items
           .filter((i) => SIZE_ORDER.includes(i.vessel))
-          .toSorted((a, b) => SIZE_ORDER.indexOf(a.vessel) - SIZE_ORDER.indexOf(b.vessel)),
+          .sort((a, b) => SIZE_ORDER.indexOf(a.vessel) - SIZE_ORDER.indexOf(b.vessel)),
       },
       {
         title: "Keep within reach",

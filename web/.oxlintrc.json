@@ -4,6 +4,8 @@
     "suspicious": "warn",
     "perf": "warn"
   },
-  "rules": {},
+  "rules": {
+    "unicorn/no-array-sort": "off"
+  },
   "ignorePatterns": ["node_modules", "dist", ".astro"]
 }
