@@ -27,6 +27,7 @@ impl TestApp {
             ("shell/cookbook/index.html", "cookbook"),
             ("add/index.html", "add"),
             ("login/index.html", "login"),
+            ("suggestions/index.html", "suggestions"),
             ("404.html", "missing"),
         ] {
             let path = dist.path().join(rel);
@@ -2310,4 +2311,68 @@ async fn wee_chef_checks_existing_recipes_and_survive_failures() {
         .json("GET", &format!("/api/recipes/{}/checks", res["id"]), None)
         .await;
     assert_eq!(c, Value::Null);
+}
+
+#[tokio::test]
+async fn suggestions_page_and_nav_hint_follow_open_flags() {
+    let (jev, _) = fake_jev().await;
+    let t = jev_app(&jev);
+    let (older, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
+    t.json("POST", "/api/checks", None).await;
+    let c = wait_for_check(&t, older.id).await;
+    let hint = |headers: &axum::http::HeaderMap| {
+        headers
+            .get_all("server-timing")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with("crumb-review"))
+            .map(String::from)
+    };
+    let page = || {
+        Request::get("/")
+            .header("sec-fetch-dest", "document")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"][0]["id"], older.id);
+    assert_eq!(list["recipes"][0]["count"], 2);
+    assert_eq!(list["recipes"][0]["fields"], json!({"ingredients": 2}));
+
+    let (status, headers, _) = send_raw(&t, page()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"1\""));
+    let tag = headers[header::ETAG].to_str().unwrap().to_string();
+    assert!(tag.ends_with("-r1\""), "{tag}");
+
+    let (status, _, html) = t.send(get("/suggestions")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains(&format!("\"id\":{}", older.id)),
+        "page data inlined"
+    );
+
+    // Settle every suggestion: the hint drops to 0 and the old ETag no longer matches
+    for f in c["flags"].as_array().unwrap() {
+        if f["state"] == "review" {
+            t.json(
+                "POST",
+                &format!("/api/recipes/{}/flags/{}/dismiss", older.id, f["id"]),
+                None,
+            )
+            .await;
+        }
+    }
+    let revalidate = Request::get("/")
+        .header("sec-fetch-dest", "document")
+        .header(header::IF_NONE_MATCH, &tag)
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = send_raw(&t, revalidate).await;
+    assert_eq!(status, StatusCode::OK, "a changed count is never a 304");
+    assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"0\""));
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
 }

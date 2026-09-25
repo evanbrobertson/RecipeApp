@@ -1486,6 +1486,53 @@ pub fn dismiss(conn: &Connection, id: i64, flag: i64) -> AppResult<Value> {
 }
 
 /// Progress for the More page: `{enabled, eligible, checked, pending, failed, tidied, toCheck}`.
+/// How many recipes have suggestions waiting: decides whether the nav shows Suggestions.
+pub fn review_count(conn: &Connection) -> AppResult<i64> {
+    Ok(conn.query_row(
+        "SELECT count(DISTINCT recipe_id) FROM recipe_flags WHERE state = 'review'",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+/// The recipes with suggestions waiting, most recent first, each with how many there are
+/// per field (`{"instructions": 2, "ingredients": 1}`): the Suggestions page.
+pub fn to_review(conn: &Connection) -> AppResult<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.title, r.image, f.field, count(*), max(f.created_at)
+         FROM recipe_flags f JOIN recipes r ON r.id = f.recipe_id
+         WHERE f.state = 'review'
+         GROUP BY r.id, f.field",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, i64>(5)?,
+        ))
+    })?;
+    let mut out: Vec<(i64, Value)> = Vec::new();
+    for row in rows {
+        let (id, title, image, field, n, at) = row?;
+        match out.iter_mut().find(|(_, v)| v["id"] == id) {
+            Some((latest, v)) => {
+                *latest = (*latest).max(at);
+                v["fields"][&field] = json!(n);
+                v["count"] = json!(v["count"].as_i64().unwrap_or(0) + n);
+            }
+            None => out.push((
+                at,
+                json!({"id": id, "title": title, "image": image, "count": n, "fields": {field: n}}),
+            )),
+        }
+    }
+    out.sort_by_key(|r| std::cmp::Reverse(r.0));
+    Ok(out.into_iter().map(|(_, v)| v).collect())
+}
+
 pub fn status(state: &AppState, conn: &Connection) -> AppResult<Value> {
     let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0));
     let marks = CHECKED_SOURCES.map(|s| format!("'{s}'")).join(", ");

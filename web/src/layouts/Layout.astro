@@ -7,7 +7,7 @@
  * one round trip with no follow-up fetch.
  */
 import Icon from "../components/Icon.astro"
-import { House, BookOpenText, LibraryBig, Ellipsis, Plus } from "lucide"
+import { House, BookOpenText, LibraryBig, Sparkles, Ellipsis, Plus } from "lucide"
 import "../styles/app.css"
 import nunito from "../assets/fonts/nunito-sans.woff2?url"
 import dmSerif from "../assets/fonts/dm-serif-display.woff2?url"
@@ -16,7 +16,7 @@ import themeBoot from "../lib/theme-boot.js?raw"
 import transitionsBoot from "../lib/transitions-boot.js?raw"
 import TimerDock from "../islands/TimerDock.svelte"
 
-export type Section = "kitchen" | "recipes" | "shelf" | "more" | "add" | null
+export type Section = "kitchen" | "recipes" | "shelf" | "suggestions" | "more" | "add" | null
 
 interface Props {
   title?: string
@@ -45,6 +45,8 @@ const links = [
   { href: "/", label: "Home", key: "kitchen", icon: House },
   { href: "/recipes", label: "Recipes", key: "recipes", icon: BookOpenText },
   { href: "/cookbooks", label: "Shelf", key: "shelf", icon: LibraryBig },
+  // Only while Wee Chef has suggestions waiting (the server's crumb-review hint), or on its page
+  { href: "/suggestions", label: "Suggestions", key: "suggestions", icon: Sparkles },
   { href: "/more", label: "More", key: "more", icon: Ellipsis },
 ] as const
 ---
@@ -80,6 +82,20 @@ const links = [
     <!-- Theme before first paint: light, dark, system, or sunrise/sunset -->
     <script is:inline set:html={themeBoot} />
     <script is:inline set:html={transitionsBoot} />
+    <!-- Wee Chef suggestions waiting? Reveal the nav item (and its count) before first paint -->
+    <script is:inline>
+      try {
+        const hint = performance
+          .getEntriesByType("navigation")[0]
+          ?.serverTiming?.find((t) => t.name === "crumb-review")
+        const n = Number(hint?.description) || 0
+        if (n > 0) {
+          const root = document.documentElement
+          root.dataset.review = ""
+          root.style.setProperty("--review-count", JSON.stringify(n > 99 ? "99+" : String(n)))
+        }
+      } catch {}
+    </script>
   </head>
   <body class={bodyClass}>
     {data && <script type="application/json" id="page-data">null</script>}
@@ -104,9 +120,11 @@ const links = [
                   section === l.key ? "text-butter font-bold" : "text-nav-ink font-semibold",
                 ]}
                 aria-current={section === l.key ? "page" : undefined}
+                data-review-nav={l.key === "suggestions" && section !== l.key ? "" : undefined}
               >
                 <Icon icon={l.icon} class="size-[22px]" />
                 {l.label}
+                {l.key === "suggestions" && <span class="review-badge ml-auto" aria-hidden="true" />}
               </a>
             ))}
             <a href="/add" class="btn btn-primary mt-6">
@@ -126,18 +144,24 @@ const links = [
             style="view-transition-name: nav"
             aria-label="Tabs"
           >
-            <div class="grid grid-cols-4">
+            <div
+              class:list={["tab-grid grid", section === "suggestions" ? "grid-cols-5" : "grid-cols-4"]}
+            >
               {links.map((l) => (
                 <a
                   href={l.href}
                   class:list={[
-                    "flex h-[52px] flex-col items-center justify-center gap-1 text-[13px] transition",
+                    "relative flex h-[52px] min-w-0 flex-col items-center justify-center gap-1 text-[13px] transition",
                     section === l.key ? "text-butter font-bold" : "text-nav-ink font-semibold",
                   ]}
                   aria-current={section === l.key ? "page" : undefined}
+                  data-review-nav={l.key === "suggestions" && section !== l.key ? "" : undefined}
                 >
                   <Icon icon={l.icon} class="size-[22px]" />
-                  {l.label}
+                  {l.key === "suggestions" ? "Review" : l.label}
+                  {l.key === "suggestions" && (
+                    <span class="review-badge absolute top-0.5 left-1/2 ml-2.5" aria-hidden="true" />
+                  )}
                 </a>
               ))}
             </div>
