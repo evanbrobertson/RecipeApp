@@ -62,6 +62,7 @@ pub fn routes() -> Router<AppState> {
             routing::post(dismiss_flag),
         )
         .route("/api/checks", routing::get(checks_status).post(check_all))
+        .route("/api/checks/review", routing::get(checks_review))
         .route(
             "/api/recipes/{id}/cooked",
             routing::post(recipe_cooked).delete(undo_cooked),
@@ -608,6 +609,12 @@ async fn dismiss_flag(
 
 async fn checks_status(State(state): State<AppState>) -> AppResult<Json<Value>> {
     Ok(Json(checks::status(&state, &state.db.lock())?))
+}
+
+async fn checks_review(State(state): State<AppState>) -> AppResult<Json<Value>> {
+    Ok(Json(
+        json!({"recipes": checks::to_review(&state.db.lock())?}),
+    ))
 }
 
 async fn check_all(State(state): State<AppState>) -> AppResult<Json<Value>> {

@@ -90,6 +90,11 @@ pub fn app(state: AppState) -> Router {
         .merge(images::routes())
         .merge(web::routes())
         .fallback(web::static_files)
+        // Inside the login check, so only signed-in page loads learn the count
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            web::review_hint,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_login,

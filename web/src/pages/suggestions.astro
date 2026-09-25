@@ -1,0 +1,13 @@
+---
+import Layout from "../layouts/Layout.astro"
+import SuggestionsPage from "../islands/SuggestionsPage.svelte"
+---
+
+<Layout title="Suggestions" section="suggestions" data>
+  <SuggestionsPage client:only="svelte">
+    <div slot="fallback" class="mx-auto max-w-[40rem]">
+      <div class="skeleton mb-6 h-10 w-56"></div>
+      <div class="skeleton h-48 w-full"></div>
+    </div>
+  </SuggestionsPage>
+</Layout>

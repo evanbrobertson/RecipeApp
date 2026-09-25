@@ -138,6 +138,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cookbooks", routing::get(cookbook_list))
         .route("/cookbooks/{id}", routing::get(cookbook))
         .route("/more", routing::get(connector_page))
+        .route("/suggestions", routing::get(suggestions_page))
         .route("/connect", routing::get(connector_page))
         .route("/import", routing::get(connector_page))
         .route("/login", routing::get(login))
@@ -303,6 +304,58 @@ async fn connector_page(
     render(&state, &format!("{name}/index.html"), data)
 }
 
+async fn suggestions_page(State(state): State<AppState>) -> Response {
+    match crate::checks::to_review(&state.db.lock()) {
+        Ok(recipes) => render(
+            &state,
+            "suggestions/index.html",
+            json!({"recipes": recipes}),
+        ),
+        Err(err) => err.into_response(),
+    }
+}
+
+/// On page loads, tells the page how many recipes have Wee Chef suggestions waiting
+/// (`Server-Timing: crumb-review;desc="3"`), so the nav can show Suggestions before it
+/// paints. The count is folded into the ETag, so a change is never answered with a 304.
+pub async fn review_hint(
+    State(state): State<AppState>,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let page = req
+        .headers()
+        .get("sec-fetch-dest")
+        .is_some_and(|v| v == "document")
+        || req
+            .headers()
+            .get(header::ACCEPT)
+            .is_some_and(|v| v.to_str().is_ok_and(|a| a.contains("text/html")));
+    let skip = req.uri().path() == "/login";
+    let mut res = next.run(req).await;
+    // A 304 carries no content type, but the browser refreshes its stored headers from it
+    let html = res.status() == StatusCode::NOT_MODIFIED
+        || header_str(res.headers(), header::CONTENT_TYPE)
+            .is_some_and(|v| v.starts_with("text/html"));
+    if !page || skip || !html || !crate::checks::enabled(&state) {
+        return res;
+    }
+    let Ok(count) = crate::checks::review_count(&state.db.lock()) else {
+        return res;
+    };
+    if let Ok(v) = HeaderValue::from_str(&format!("crumb-review;desc=\"{count}\"")) {
+        res.headers_mut().append("server-timing", v);
+    }
+    if let Some(tag) = header_str(res.headers(), header::ETAG).map(String::from)
+        && tag.len() >= 2
+        && tag.ends_with('"')
+        && let Ok(v) = HeaderValue::from_str(&format!("{}-r{count}\"", &tag[..tag.len() - 1]))
+    {
+        res.headers_mut().insert(header::ETAG, v);
+    }
+    res
+}
+
 async fn login(State(state): State<AppState>, req: Request) -> Response {
     if crate::auth::is_logged_in(&state.config, req.headers()) {
         return crate::auth::found("/");
@@ -434,6 +487,11 @@ pub async fn conditional(req: Request, next: axum::middleware::Next) -> Response
         if let Some(v) = res.headers().get(&name) {
             not_modified.headers_mut().insert(name, v.clone());
         }
+    }
+    for v in res.headers().get_all("server-timing") {
+        not_modified
+            .headers_mut()
+            .append("server-timing", v.clone());
     }
     not_modified
 }
