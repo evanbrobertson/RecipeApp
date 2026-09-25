@@ -1,0 +1,9 @@
+---
+import Layout from "../../layouts/Layout.astro"
+import NewRecipePage from "../../islands/NewRecipePage.svelte"
+---
+
+<Layout title="New recipe" section="add">
+  <h1 class="mb-6 font-serif text-2xl font-semibold sm:text-3xl">New recipe</h1>
+  <NewRecipePage client:load />
+</Layout>

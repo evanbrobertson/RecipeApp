@@ -1,0 +1,181 @@
+---
+/**
+ * The page shell: head, fonts, header, mobile tab bar, timers and toasts.
+ *
+ * Pages are static HTML. Anything that depends on your recipes is a Svelte island
+ * that reads the JSON the Rust server inlines as #page-data, so a page paints in
+ * one round trip with no follow-up fetch.
+ */
+import Icon from "../components/Icon.astro"
+import { House, BookOpenText, LibraryBig, Ellipsis, Plus, Moon, Sun } from "lucide"
+import "../styles/app.css"
+import figtree from "../assets/fonts/figtree.woff2?url"
+import fraunces from "../assets/fonts/fraunces.woff2?url"
+import frauncesItalic from "../assets/fonts/fraunces-italic.woff2?url"
+import Logo from "../components/Logo.astro"
+import TimerDock from "../islands/TimerDock.svelte"
+
+export type Section = "kitchen" | "recipes" | "shelf" | "more" | "add" | null
+
+interface Props {
+  title?: string
+  /** Which tab is highlighted. */
+  section?: Section
+  /** No header or tab bar (sign-in, cook mode). */
+  bare?: boolean
+  /** Page-specific theme colour (cook mode is dark). */
+  themeColor?: string
+  /** This page has server-inlined data (see the Rust page-data table). */
+  data?: boolean
+  bodyClass?: string
+}
+
+const { title, section = null, bare = false, themeColor, data = false, bodyClass } = Astro.props
+const fullTitle = title ? `${title} · Crumb` : "Crumb"
+
+const links = [
+  { href: "/", label: "Kitchen", key: "kitchen", icon: House },
+  { href: "/recipes", label: "Recipes", key: "recipes", icon: BookOpenText },
+  { href: "/cookbooks", label: "Shelf", key: "shelf", icon: LibraryBig },
+  { href: "/more", label: "More", key: "more", icon: Ellipsis },
+] as const
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{fullTitle}</title>
+    <meta name="description" content="Recipes, minus the life story." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content={themeColor ?? "#fbf7f1"} media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content={themeColor ?? "#15110d"} media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="preload" href={figtree} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={fraunces} as="font" type="font/woff2" crossorigin />
+    <style
+      set:html={`
+      @font-face{font-family:"Figtree";src:url(${figtree}) format("woff2");font-weight:300 900;font-display:swap}
+      @font-face{font-family:"Fraunces";src:url(${fraunces}) format("woff2");font-weight:100 900;font-display:swap}
+      @font-face{font-family:"Fraunces";src:url(${frauncesItalic}) format("woff2");font-weight:100 900;font-style:italic;font-display:swap}
+    `}
+    />
+    <!-- Theme before first paint: light, dark, or follow the system -->
+    <script is:inline>
+      ;(() => {
+        let pref = "system"
+        try {
+          pref = localStorage.getItem("crumb:theme") || "system"
+        } catch {}
+        const dark =
+          pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.toggle("dark", dark)
+      })()
+    </script>
+  </head>
+  <body class={bodyClass}>
+    {data && <script type="application/json" id="page-data">null</script>}
+    {
+      bare ? (
+        <slot />
+      ) : (
+        <div class="min-h-dvh">
+          <header class="border-line bg-canvas/85 sticky top-0 z-40 border-b backdrop-blur-md">
+            <div class="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4">
+              <a href="/" class="group flex items-center gap-2" aria-label="Crumb, home">
+                <Logo class="size-8 transition group-hover:-rotate-6" />
+                <span class="font-serif text-xl font-semibold tracking-tight">Crumb</span>
+              </a>
+
+              <nav class="hidden items-center gap-1 md:flex" aria-label="Main">
+                {links.map((l) => (
+                  <a
+                    href={l.href}
+                    class:list={[
+                      "btn",
+                      section === l.key ? "bg-primary/10 text-primary" : "btn-ghost",
+                    ]}
+                    aria-current={section === l.key ? "page" : undefined}
+                  >
+                    <Icon icon={l.icon} />
+                    {l.label}
+                  </a>
+                ))}
+                <a href="/add" class="btn btn-primary ml-2">
+                  <Icon icon={Plus} />
+                  Add recipe
+                </a>
+              </nav>
+
+              <button
+                type="button"
+                class="btn btn-ghost btn-icon md:hidden"
+                aria-label="Toggle dark mode"
+                data-theme-toggle
+              >
+                <Icon icon={Moon} class="dark:hidden" />
+                <Icon icon={Sun} class="hidden dark:block" />
+              </button>
+            </div>
+          </header>
+
+          <main class="mx-auto max-w-6xl px-4 pt-5 pb-32 sm:pt-8 md:pb-16">
+            <slot />
+          </main>
+
+          <nav
+            class="border-line bg-canvas/95 fixed inset-x-0 bottom-0 z-40 border-t pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
+            aria-label="Tabs"
+          >
+            <div class="relative grid grid-cols-5 items-end">
+              {links.map((l, i) => (
+                <a
+                  href={l.href}
+                  class:list={[
+                    "flex flex-col items-center gap-0.5 pt-2 pb-2 text-[11px] font-medium transition",
+                    section === l.key ? "text-primary" : "text-ink-muted",
+                  ]}
+                  style={i >= 2 ? `grid-column-start: ${i + 2}` : undefined}
+                  aria-current={section === l.key ? "page" : undefined}
+                >
+                  <Icon icon={l.icon} class="size-6" />
+                  {l.label}
+                </a>
+              ))}
+              <a
+                href="/add"
+                aria-label="Add recipe"
+                class="bg-primary rounded-ui ring-canvas absolute -top-5 left-1/2 grid size-14 -translate-x-1/2 place-items-center text-white shadow-lg ring-4 transition active:scale-95"
+              >
+                <Icon icon={Plus} class="size-7" />
+              </a>
+            </div>
+          </nav>
+        </div>
+      )
+    }
+
+    <!-- Kitchen timers keep ticking on every page -->
+    <div class="pointer-events-none fixed inset-x-0 top-16 z-50 px-4">
+      <TimerDock client:only="svelte" />
+    </div>
+
+    <script>
+      import { showFlash } from "../lib/toast"
+      showFlash()
+      for (const el of document.querySelectorAll("[data-theme-toggle]")) {
+        el.addEventListener("click", () => {
+          const dark = !document.documentElement.classList.contains("dark")
+          document.documentElement.classList.toggle("dark", dark)
+          try {
+            localStorage.setItem("crumb:theme", dark ? "dark" : "light")
+          } catch {}
+        })
+      }
+    </script>
+  </body>
+</html>

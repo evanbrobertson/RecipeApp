@@ -1,0 +1,63 @@
+---
+import Layout from "../layouts/Layout.astro"
+import ConnectorUrl from "../islands/ConnectorUrl.svelte"
+
+const examples = [
+  "Save this recipe to my recipe box: [paste recipe]",
+  "Import the recipe from https://…",
+  "What can I make with chicken thighs and lemons from my saved recipes?",
+  "Double my banana bread recipe and save the changes.",
+  "Add my lasagne and tiramisu to a cookbook called Sunday dinner.",
+]
+---
+
+<Layout title="Connect Claude" section="more" data>
+  <div class="mx-auto max-w-2xl space-y-8">
+    <div>
+      <h1 class="font-serif text-2xl font-semibold sm:text-3xl">Connect to Claude</h1>
+      <p class="text-ink-muted mt-2">
+        Add Crumb as a connector in Claude. Then you can paste recipes into any chat, ask Claude to
+        save them, search your collection, or have Claude adapt a saved recipe.
+      </p>
+    </div>
+
+    <ConnectorUrl client:only="svelte" part="url">
+      <div slot="fallback" class="skeleton h-32"></div>
+    </ConnectorUrl>
+
+    <section>
+      <h2 class="mb-3 font-serif text-xl font-semibold">Claude on the web, desktop and mobile</h2>
+      <ol class="text-ink-muted list-decimal space-y-2 pl-5">
+        <li>In Claude, open <strong class="text-ink">Settings → Connectors</strong>.</li>
+        <li>
+          Choose <strong class="text-ink">Add custom connector</strong>, name it “Crumb” and paste
+          the URL above.
+        </li>
+        <li>
+          Click <strong class="text-ink">Connect</strong>. You'll be sent here to approve it with your
+          app password.
+        </li>
+        <li>In a chat, make sure the connector is switched on in the tools menu, then ask away.</li>
+      </ol>
+      <p class="text-ink-muted mt-3 text-sm">
+        Connectors you add on claude.ai are also available in the Claude mobile apps. On Team and
+        Enterprise plans an owner may need to add the connector for the organisation first.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="mb-3 font-serif text-xl font-semibold">Claude Code</h2>
+      <ConnectorUrl client:only="svelte" part="code">
+        <div slot="fallback" class="skeleton h-12"></div>
+      </ConnectorUrl>
+      <p class="text-ink-muted mt-2 text-sm">Then run <code>/mcp</code> in Claude Code to sign in.</p>
+    </section>
+
+    <section>
+      <h2 class="mb-3 font-serif text-xl font-semibold">Things to try</h2>
+      <ul class="space-y-2">
+        {examples.map((ex) => <li class="card px-3 py-2 text-sm">“{ex}”</li>)}
+      </ul>
+    </section>
+  </div>
+</Layout>

@@ -1,0 +1,10 @@
+---
+import Layout from "../../layouts/Layout.astro"
+import ShelfPage from "../../islands/ShelfPage.svelte"
+---
+
+<Layout title="Shelf" section="shelf" data>
+  <ShelfPage client:only="svelte">
+    <div slot="fallback" class="skeleton h-64 w-full"></div>
+  </ShelfPage>
+</Layout>

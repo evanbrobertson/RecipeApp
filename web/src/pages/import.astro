@@ -1,0 +1,54 @@
+---
+import Icon from "../components/Icon.astro"
+import { Info } from "lucide"
+import Layout from "../layouts/Layout.astro"
+import ImportTools from "../islands/ImportTools.svelte"
+---
+
+<Layout title="Import" section="more" data>
+  <div class="mx-auto max-w-3xl space-y-10">
+    <div>
+      <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Bring your recipes over</h1>
+      <p class="text-ink-muted mt-1">
+        From Just the Recipe, Paprika, Mealie, or a folder of saved pages.
+      </p>
+    </div>
+
+    <section class="rounded-ui bg-amber-50 p-5 sm:p-6 dark:bg-amber-950/25">
+      <div class="flex items-center gap-2">
+        <Icon icon={Info} class="size-5 text-amber-700 dark:text-amber-300" />
+        <h2 class="font-semibold text-amber-900 dark:text-amber-200">Moving from Just the Recipe</h2>
+      </div>
+      <p class="mt-2 text-sm text-amber-900/80 dark:text-amber-100/80">
+        Just the Recipe doesn't have a “download everything” button, so pick whichever of these is
+        easiest:
+      </p>
+      <ol class="mt-3 space-y-2 text-sm text-amber-950/90 dark:text-amber-50/90">
+        <li class="flex gap-2">
+          <span class="font-bold">1.</span>
+          <span>
+            <strong>Links (best):</strong> open each saved recipe, tap <em>Share</em> and copy the link
+            (or open the original site and copy its address), and paste them all below. Share links are
+            unwrapped to the original page automatically.
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-bold">2.</span>
+          <span>
+            <strong>PDFs:</strong> with Premium, use <em>Print → Save as PDF</em> on each recipe and drop
+            the PDFs in the box further down. Handy for recipes you edited or typed in yourself.
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <span class="font-bold">3.</span>
+          <span>
+            <strong>Text:</strong> copy a recipe's text and paste it on the
+            <a href="/add" class="font-semibold underline">Add</a> page.
+          </span>
+        </li>
+      </ol>
+    </section>
+
+    <ImportTools client:only="svelte" />
+  </div>
+</Layout>

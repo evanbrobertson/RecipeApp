@@ -1,0 +1,11 @@
+---
+/* Served at /recipes/:id/edit with the recipe inlined as #page-data. */
+import Layout from "../../../layouts/Layout.astro"
+import EditPage from "../../../islands/EditPage.svelte"
+---
+
+<Layout title="Edit recipe" section="recipes" data>
+  <EditPage client:only="svelte">
+    <div slot="fallback" class="skeleton mx-auto h-64 max-w-4xl"></div>
+  </EditPage>
+</Layout>

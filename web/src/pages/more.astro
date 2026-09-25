@@ -1,0 +1,59 @@
+---
+import Icon from "../components/Icon.astro"
+import { Plug, FileDown, PenLine, Archive, ChevronRight, Download } from "lucide"
+import Layout from "../layouts/Layout.astro"
+import MoreSettings from "../islands/MoreSettings.svelte"
+
+const links = [
+  {
+    href: "/connect",
+    icon: Plug,
+    title: "Connect to Claude",
+    text: "Save, search and tweak recipes from any Claude chat",
+  },
+  {
+    href: "/import",
+    icon: FileDown,
+    title: "Import recipes",
+    text: "From Just the Recipe, Paprika, Mealie, files or links",
+  },
+  { href: "/recipes/new", icon: PenLine, title: "Write a recipe", text: "Type one in from scratch" },
+]
+---
+
+<Layout title="More" section="more" data>
+  <div class="mx-auto max-w-2xl space-y-8">
+    <h1 class="font-serif text-3xl font-semibold sm:text-4xl">More</h1>
+
+    <div class="space-y-2">
+      {
+        links.map((l) => (
+          <a href={l.href} class="card hover:bg-raised flex items-center gap-4 p-4 transition">
+            <span class="bg-primary/10 text-primary rounded-ui grid size-11 shrink-0 place-items-center">
+              <Icon icon={l.icon} class="size-5" />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="block font-semibold">{l.title}</span>
+              <span class="text-ink-muted text-sm">{l.text}</span>
+            </span>
+            <Icon icon={ChevronRight} class="text-ink-dim size-5" />
+          </a>
+        ))
+      }
+      <a href="/api/export" download class="card hover:bg-raised flex items-center gap-4 p-4 transition">
+        <span class="bg-primary/10 text-primary rounded-ui grid size-11 shrink-0 place-items-center">
+          <Icon icon={Archive} class="size-5" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block font-semibold">Download a backup</span>
+          <span class="text-ink-muted text-sm">
+            All recipes and cookbooks as one JSON file (re-import it any time)
+          </span>
+        </span>
+        <Icon icon={Download} class="text-ink-dim size-5" />
+      </a>
+    </div>
+
+    <MoreSettings client:only="svelte" />
+  </div>
+</Layout>

@@ -1,0 +1,14 @@
+---
+import Layout from "../../layouts/Layout.astro"
+import RecipesPage from "../../islands/RecipesPage.svelte"
+import GridSkeleton from "../../components/GridSkeleton.svelte"
+---
+
+<Layout title="Recipes" section="recipes" data>
+  <RecipesPage client:only="svelte">
+    <div slot="fallback">
+      <h1 class="mb-5 font-serif text-3xl font-semibold sm:text-4xl">Recipes</h1>
+      <GridSkeleton />
+    </div>
+  </RecipesPage>
+</Layout>

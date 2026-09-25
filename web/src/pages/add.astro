@@ -1,0 +1,67 @@
+---
+import Icon from "../components/Icon.astro"
+import { Link, ClipboardType, List, PenLine, FileDown } from "lucide"
+import Layout from "../layouts/Layout.astro"
+import AddRecipeBox from "../islands/AddRecipeBox.svelte"
+
+const tips = [
+  {
+    icon: Link,
+    title: "A link",
+    text: "Most recipe sites work. If one blocks us, a real browser has a go.",
+  },
+  {
+    icon: ClipboardType,
+    title: "Any recipe text",
+    text: "From an email, notes, a PDF or a photo's text. Headings help but aren't required.",
+  },
+  {
+    icon: List,
+    title: "Lots of links",
+    text: "Paste several at once and they're imported one after another.",
+  },
+]
+---
+
+<Layout title="Add a recipe" section="add">
+  <div class="mx-auto max-w-2xl">
+    <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Add a recipe</h1>
+    <p class="text-ink-muted mt-1">Paste a link or the recipe itself.</p>
+    <div class="mt-5"><AddRecipeBox client:load autofocus /></div>
+
+    <div class="mt-8 grid gap-3 sm:grid-cols-3">
+      {
+        tips.map((tip) => (
+          <div class="card p-4">
+            <Icon icon={tip.icon} class="text-primary size-5" />
+            <p class="mt-2 text-sm font-semibold">{tip.title}</p>
+            <p class="text-ink-muted mt-0.5 text-sm">{tip.text}</p>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="mt-6 grid gap-3 sm:grid-cols-2">
+      <a
+        href="/recipes/new"
+        class="border-line hover:border-primary rounded-ui flex items-center gap-3 border p-4 transition"
+      >
+        <Icon icon={PenLine} class="text-primary size-6 shrink-0" />
+        <span>
+          <span class="block font-semibold">Write from scratch</span>
+          <span class="text-ink-muted text-sm">Grandma's card, your own creation</span>
+        </span>
+      </a>
+      <a
+        href="/import"
+        class="border-line hover:border-primary rounded-ui flex items-center gap-3 border p-4 transition"
+      >
+        <Icon icon={FileDown} class="text-primary size-6 shrink-0" />
+        <span>
+          <span class="block font-semibold">Import from another app</span>
+          <span class="text-ink-muted text-sm">Just the Recipe, Paprika, Mealie…</span>
+        </span>
+      </a>
+    </div>
+  </div>
+</Layout>

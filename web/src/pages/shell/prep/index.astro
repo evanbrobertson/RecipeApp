@@ -1,0 +1,11 @@
+---
+/* Served at /recipes/:id/prep with the recipe inlined as #page-data. */
+import Layout from "../../../layouts/Layout.astro"
+import PrepPage from "../../../islands/PrepPage.svelte"
+---
+
+<Layout title="Mise en place" section="recipes" data>
+  <PrepPage client:only="svelte">
+    <div slot="fallback" class="skeleton mx-auto h-64 max-w-5xl"></div>
+  </PrepPage>
+</Layout>

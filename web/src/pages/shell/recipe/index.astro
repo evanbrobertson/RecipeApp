@@ -1,0 +1,14 @@
+---
+/* Served by the Rust server at /recipes/:id with the recipe inlined as #page-data. */
+import Layout from "../../../layouts/Layout.astro"
+import RecipePage from "../../../islands/RecipePage.svelte"
+---
+
+<Layout title="Recipe" section="recipes" data>
+  <RecipePage client:only="svelte">
+    <div slot="fallback" class="mx-auto max-w-4xl space-y-4">
+      <div class="skeleton aspect-[16/8] w-full"></div>
+      <div class="skeleton h-10 w-2/3"></div>
+    </div>
+  </RecipePage>
+</Layout>

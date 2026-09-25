@@ -1,0 +1,11 @@
+---
+/* Served at /recipes/:id/cook with the recipe inlined as #page-data. */
+import Layout from "../../../layouts/Layout.astro"
+import CookPage from "../../../islands/CookPage.svelte"
+---
+
+<Layout title="Cooking" bare themeColor="#15110d" data bodyClass="overflow-hidden">
+  <CookPage client:only="svelte">
+    <div slot="fallback" class="dark bg-canvas fixed inset-0"></div>
+  </CookPage>
+</Layout>

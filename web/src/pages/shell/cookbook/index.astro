@@ -1,0 +1,11 @@
+---
+/* Served at /cookbooks/:id with the cookbook inlined as #page-data. */
+import Layout from "../../../layouts/Layout.astro"
+import CookbookPage from "../../../islands/CookbookPage.svelte"
+---
+
+<Layout title="Cookbook" section="shelf" data>
+  <CookbookPage client:only="svelte">
+    <div slot="fallback" class="skeleton h-64 w-full"></div>
+  </CookbookPage>
+</Layout>

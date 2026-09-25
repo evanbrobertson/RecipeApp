@@ -1,6 +1,6 @@
 # Deploying to Railway
 
-The app is a single Node server with an SQLite file, so it needs one Railway service and one volume.
+Crumb is a single Rust binary serving a static Astro frontend and an SQLite file, so it needs one Railway service and one volume.
 The repo includes a `Dockerfile` and `railway.json` (health check on `/api/health`).
 
 ## 1. Create the service
@@ -27,12 +27,15 @@ Railway's filesystem is wiped on every deploy. Add a volume to the service (righ
 
 | Variable                 | Value                                                                 |
 | ------------------------ | --------------------------------------------------------------------- |
-| `NUXT_APP_PASSWORD`      | A long password. **Required**: without it the app is public           |
-| `NUXT_ANTHROPIC_API_KEY` | Optional. Claude parses pasted text instead of the heuristic parser   |
-| `NUXT_PUBLIC_SITE_URL`   | Only needed with a custom domain (e.g. `https://recipes.example.com`) |
+| `APP_PASSWORD`      | A long password. **Required**: without it the app is public           |
+| `ANTHROPIC_API_KEY` | Optional. Claude parses pasted text instead of the heuristic parser   |
+| `SITE_URL`          | Only needed with a custom domain (e.g. `https://recipes.example.com`) |
+
+The older `NUXT_APP_PASSWORD`, `NUXT_ANTHROPIC_API_KEY`, `NUXT_ANTHROPIC_MODEL` and
+`NUXT_PUBLIC_SITE_URL` names are still read as fallbacks.
 
 ```bash
-railway variables --set NUXT_APP_PASSWORD='something-long-and-random'
+railway variables --set APP_PASSWORD='something-long-and-random'
 ```
 
 ## 4. Generate a domain

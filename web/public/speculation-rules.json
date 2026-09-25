@@ -1,0 +1,21 @@
+{
+  "prerender": [
+    {
+      "source": "document",
+      "where": {
+        "and": [
+          { "href_matches": "/*" },
+          {
+            "not": { "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/*/cook", "/*.*"] }
+          },
+          {
+            "not": {
+              "selector_matches": "a[href^='#'], a[target='_blank'], a[download], [data-no-prerender]"
+            }
+          }
+        ]
+      },
+      "eagerness": "moderate"
+    }
+  ]
+}

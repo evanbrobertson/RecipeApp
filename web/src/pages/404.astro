@@ -1,0 +1,16 @@
+---
+import Layout from "../layouts/Layout.astro"
+import Logo from "../components/Logo.astro"
+---
+
+<Layout title="Not found">
+  <div class="card mx-auto flex max-w-lg flex-col items-center px-6 py-14 text-center">
+    <Logo class="size-16" />
+    <h1 class="mt-4 font-serif text-2xl font-semibold">Just crumbs here</h1>
+    <p class="text-ink-muted mt-1 text-sm">That page doesn't exist, or it was eaten.</p>
+    <div class="mt-5 flex gap-2">
+      <a href="/" class="btn btn-primary">Back to the kitchen</a>
+      <a href="/recipes" class="btn btn-soft">All recipes</a>
+    </div>
+  </div>
+</Layout>

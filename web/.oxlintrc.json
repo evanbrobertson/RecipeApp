@@ -1,0 +1,9 @@
+{
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {},
+  "ignorePatterns": ["node_modules", "dist", ".astro"]
+}
