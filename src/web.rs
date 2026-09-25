@@ -159,6 +159,8 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Response {
             "cookbooks": recipes::to_value(&recipes::list_cookbooks(&conn)?),
             "suggestions": recipes::to_value(&suggested),
             "recipeCount": conn.query_row("SELECT count(*) FROM recipes", [], |r| r.get::<_, i64>(0))?,
+            // The Add box's photo mode: Wee Chef reads them, or OCR runs in the browser
+            "vision": crate::llm::available(&state),
         }))
     })();
     page(&state, "index.html", data)
@@ -229,6 +231,7 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
             "cookbooks": recipes::to_value(&recipes::list_cookbooks(&conn)?),
             "inCookbooks": recipes::recipe_cookbook_ids(&conn, id)?,
             "cookStats": recipes::to_value(&recipes::cook_stats(&conn, id)?),
+            "checks": crate::checks::for_recipe(&conn, id)?,
         }))
     })();
     let mut res = page(&state, "shell/recipe/index.html", data);
@@ -254,7 +257,11 @@ async fn recipe_view(
     };
     let data = (|| {
         let conn = state.db.lock();
-        Ok(json!({"recipe": recipes::to_value(&recipes::require_recipe(&conn, id)?)}))
+        let mut data = json!({"recipe": recipes::to_value(&recipes::require_recipe(&conn, id)?)});
+        if view == "edit" {
+            data["checks"] = crate::checks::for_recipe(&conn, id)?;
+        }
+        Ok(data)
     })();
     page(&state, &format!("shell/{view}/index.html"), data)
 }
@@ -286,7 +293,13 @@ async fn connector_page(
     req: Request,
 ) -> Response {
     let name = req.uri().path().trim_matches('/').to_string();
-    let data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    let mut data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    if name == "more" && crate::checks::enabled(&state) {
+        match crate::checks::status(&state, &state.db.lock()) {
+            Ok(status) => data["checks"] = status,
+            Err(err) => return err.into_response(),
+        }
+    }
     render(&state, &format!("{name}/index.html"), data)
 }
 

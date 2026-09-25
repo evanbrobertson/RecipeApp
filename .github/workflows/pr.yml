@@ -1,0 +1,58 @@
+# Pull request gates: the shared checks, plus a Docker build (no push) when the change
+# touches something only the image build exercises. See docs/RELEASING.md.
+name: PR
+
+on:
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Checks
+    uses: ./.github/workflows/checks.yml
+
+  docker:
+    name: Docker build (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # A full release build (fat LTO, one codegen unit) takes several minutes, and code-only
+      # changes are already covered by the cargo and bun checks. Only build the image when the
+      # Dockerfile or the dependency manifests it installs from change.
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE...$HEAD")
+          if grep -qxE 'Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|web/package\.json|web/bun\.lock|web/astro\.config\.mjs' <<<"$files"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Image inputs unchanged; skipping the Docker build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          provenance: false
+          # Read master's layer cache; never write it from a pull request
+          cache-from: type=gha,scope=image

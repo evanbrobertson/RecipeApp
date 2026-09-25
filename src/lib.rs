@@ -3,6 +3,7 @@
 pub mod api;
 pub mod auth;
 pub mod browser;
+pub mod checks;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -13,10 +14,12 @@ pub mod markdown;
 pub mod mcp;
 pub mod model;
 pub mod oauth;
+pub mod photos;
 pub mod recipes;
 pub mod scraper;
 pub mod suggest;
 pub mod suggestions;
+pub mod telemetry;
 pub mod text_parser;
 pub mod web;
 
@@ -26,6 +29,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::http::{HeaderName, HeaderValue};
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
@@ -42,6 +46,8 @@ pub struct AppState {
     pub ai: Arc<suggestions::AiState>,
     /// Sized recipe photos: disk cache and failure memory.
     pub images: Arc<images::Images>,
+    /// Wee Chef's import checks: the background queue.
+    pub checks: Arc<checks::Checks>,
 }
 
 impl AppState {
@@ -63,6 +69,7 @@ impl AppState {
             browser: Arc::new(browser),
             zone: Arc::default(),
             ai: Arc::default(),
+            checks: Arc::default(),
         }
     }
 }
@@ -87,7 +94,10 @@ pub fn app(state: AppState) -> Router {
             state.clone(),
             auth::require_login,
         ))
-        .layer(CompressionLayer::new())
+        // Not the gzipped OCR model (/ocr/eng.traineddata.gz): it's already compressed
+        .layer(CompressionLayer::new().compress_when(
+            DefaultPredicate::new().and(NotForContentType::const_new("application/gzip")),
+        ))
         // Outside compression, so it sees (and tags) the encoding actually sent
         .layer(axum::middleware::from_fn(web::conditional))
         .layer(security_header("x-content-type-options", "nosniff"))
@@ -101,5 +111,7 @@ pub fn app(state: AppState) -> Router {
             "camera=(), microphone=(), geolocation=(self)",
         ))
         .layer(TraceLayer::new_for_http())
+        // Outermost: request transactions and the browser's Sentry hint (no-op without SENTRY_DSN)
+        .layer(axum::middleware::from_fn(telemetry::middleware))
         .with_state(state)
 }

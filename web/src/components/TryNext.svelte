@@ -1,6 +1,12 @@
 <script lang="ts">
-  /** "What should I cook next?": four recipes worth cooking soon, with Shuffle. */
+  /**
+   * "What should I cook next?": four recipes worth cooking soon, with Shuffle. Some days
+   * the last card is an idea from Wee Chef for a dish that isn't in the box yet.
+   */
+  import ChefHat from "@lucide/svelte/icons/chef-hat"
+  import ExternalLink from "@lucide/svelte/icons/external-link"
   import Shuffle from "@lucide/svelte/icons/shuffle"
+  import Sparkles from "@lucide/svelte/icons/sparkles"
   import { onMount } from "svelte"
   import GridSkeleton from "./GridSkeleton.svelte"
   import RecipeCard from "./RecipeCard.svelte"
@@ -73,7 +79,7 @@
         .finally(() => (loading = false))
       return
     }
-    // The AI is still writing blurbs: pick them up when they're ready
+    // Wee Chef is still writing blurbs: pick them up when they're ready
     if (initial.ai !== "pending") return
     let tries = 0
     const timer = setInterval(async () => {
@@ -103,6 +109,36 @@
           sizes="(min-width: 1200px) 17rem, (min-width: 640px) 24vw, 50vw"
         />
       {/each}
+      {#if data.idea}
+        {@const idea = data.idea}
+        <a
+          href={idea.searchUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-no-prerender
+          class="group relative flex flex-col text-left"
+          aria-label={`${idea.title}: an idea from Wee Chef, not in your box yet. Search the web for a recipe`}
+        >
+          <div
+            class="rounded-ctl bg-tint text-primary border-line-strong flex aspect-[4/3] w-full flex-col items-center justify-center gap-1.5 overflow-hidden border border-dashed"
+          >
+            <ChefHat
+              class="size-11 transition duration-500 group-hover:-rotate-6"
+              strokeWidth={1.5}
+            />
+            <span class="inline-flex items-center gap-1 text-[0.8125rem] font-bold whitespace-nowrap">
+              <Sparkles class="size-3.5" /> Idea from Wee Chef
+            </span>
+          </div>
+          <div class="pt-2.5">
+            <h3 class="line-clamp-2 text-base leading-tight font-bold">{idea.title}</h3>
+            <p class="text-ink-muted mt-1 line-clamp-2 text-sm">{idea.why}</p>
+            <p class="link mt-1 inline-flex items-center gap-1 text-sm group-hover:underline">
+              Find it <ExternalLink class="size-3.5" />
+            </p>
+          </div>
+        </a>
+      {/if}
     </div>
   {/if}
   {#if total > COUNT}

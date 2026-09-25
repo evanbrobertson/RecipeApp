@@ -1,139 +1,106 @@
 <script lang="ts">
-  import { bookPalette, bookSize, spineBands, type ShelfBook } from "../lib/books"
+  import {
+    bookLean,
+    bookPalette,
+    bookSize,
+    edgeShadow,
+    spineBands,
+    type ShelfBook,
+  } from "../lib/books"
 
-  let { book, pulled = false, onopen }: { book: ShelfBook; pulled?: boolean; onopen: () => void } =
-    $props()
+  interface Props {
+    book: ShelfBook
+    /** At the foot of its tower, so it sits flatter on the plank */
+    atFoot?: boolean
+    pulled?: boolean
+    onopen: () => void
+  }
+  let { book, atFoot = false, pulled = false, onopen }: Props = $props()
 
   const palette = $derived(bookPalette(book.color))
   const size = $derived(bookSize(book))
-  // Only six cover colours, so some spines get bands to keep the shelf from looking cloned
+  const lean = $derived(bookLean(book, atFoot))
+  // Only six cover colours, so some spines get bands to keep the stack from looking cloned
   const bands = $derived(spineBands(book))
 </script>
 
+<!-- A book lying flat with its spine to the viewer: the title reads left to right -->
 <button
   type="button"
-  class={["book", pulled && "pulled"]}
-  style:--w={`${size.width}px`}
-  style:--h={`${size.height}px`}
-  style:--d={`${size.depth}px`}
+  class={["book", pulled && "pulled", bands && "banded"]}
+  style:--len={size.length}
+  style:--title={`${size.title}px`}
+  style:--thick={`${size.thickness}px`}
+  style:--tilt={`${lean.tilt}deg`}
+  style:--nudge={`${lean.nudge}px`}
   style:--cloth={palette.cloth}
   style:--shade={palette.shade}
   style:--foil={palette.foil}
-  style:--edge={palette.border}
+  style:--edge={edgeShadow(palette)}
   style:--band={bands ?? "transparent"}
   aria-label={`Open ${book.name}, ${book.recipeCount} recipes`}
   onclick={onopen}
 >
-  <span class={["face spine", bands && "banded"]}>
-    <span class="title font-serif">{book.name}</span>
-  </span>
-  <span class="face cover">
-    <span class="cover-title font-serif">{book.name}</span>
-  </span>
-  <span class="face back"></span>
-  <span class="face pages-top"></span>
+  <span class="title font-serif">{book.name}</span>
 </button>
 
 <style>
   .book {
     position: relative;
-    width: var(--w);
-    height: var(--h);
+    display: flex;
+    align-items: center;
+    /* Its own length, stretched to fit the title, but never much past the tower's longest */
+    width: min(
+      calc(var(--tower-len, 180px) * 1.06),
+      max(calc(var(--tower-len, 180px) * var(--len)), var(--title))
+    );
+    height: var(--thick);
     flex: none;
-    transform-style: preserve-3d;
-    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+    padding: 0 14px;
+    /* Square board edges, the boards a shade darker than the spine cloth */
+    border-radius: 3px;
+    color: var(--foil);
+    background: var(--cloth);
+    /* A faint hairline in the text colour keeps dark covers visible on a dark shelf */
+    box-shadow:
+      var(--edge),
+      inset 0 -3px 0 var(--shade),
+      inset 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent);
+    transform: translateX(var(--nudge)) rotate(var(--tilt));
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
     cursor: pointer;
     outline: none;
   }
+  .book.banded {
+    padding: 0 26px;
+    /* Two 2px bands, 10px in from each end */
+    background:
+      linear-gradient(var(--band), var(--band)) 10px 0 / 2px 100% no-repeat,
+      linear-gradient(var(--band), var(--band)) calc(100% - 10px) 0 / 2px 100% no-repeat,
+      var(--cloth);
+  }
+  /* Slide out of the stack a little, towards the reader's hand */
   .book:hover,
   .book:focus-visible {
-    transform: translateZ(30px) translateY(-8px) rotateY(-22deg);
+    z-index: 1;
+    transform: translateX(calc(var(--nudge) + 14px)) rotate(calc(var(--tilt) * 0.4));
   }
-  .book:focus-visible .spine {
+  .book:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
   .book.pulled {
-    transform: translateZ(120px) translateY(-32px) rotateY(-70deg);
-  }
-
-  .face {
-    position: absolute;
-    backface-visibility: hidden;
-    /* Only the spine takes the pointer, so a turned book never blocks its neighbours */
-    pointer-events: none;
-  }
-
-  /* The spine faces the viewer: flat cloth, square at the foot */
-  .spine {
-    pointer-events: auto;
-    inset: 0;
-    transform: translateZ(calc(var(--d) / 2));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 0;
-    border-radius: 3px 3px 0 0;
-    color: var(--foil);
-    background: var(--cloth);
-    box-shadow: var(--edge);
-  }
-  /* Two 2px bands, 10px in from the top and bottom */
-  .spine.banded {
-    padding: 22px 0;
-    background:
-      linear-gradient(var(--band), var(--band)) 0 10px / 100% 2px no-repeat,
-      linear-gradient(var(--band), var(--band)) 0 calc(100% - 10px) / 100% 2px no-repeat,
-      var(--cloth);
+    z-index: 1;
+    transform: translateX(calc(var(--nudge) + 40px)) rotate(0deg);
   }
   .title {
-    /* Vertical, reading bottom to top */
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
+    min-width: 0;
     font-size: 14px;
-    line-height: 1.1;
+    line-height: 1.15;
+    /* Sit a hair above the darker board edge */
+    padding-bottom: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-height: 100%;
-  }
-
-  /* Front cover: revealed as the book turns */
-  .cover {
-    top: 0;
-    left: calc((var(--w) - var(--d)) / 2);
-    width: var(--d);
-    height: var(--h);
-    transform: rotateY(90deg) translateZ(calc(var(--w) / 2));
-    background: var(--cloth);
-    box-shadow: var(--edge);
-    display: grid;
-    place-items: center;
-    padding: 12px;
-    border-radius: 0 3px 0 0;
-  }
-  .cover-title {
-    color: var(--foil);
-    font-size: 15px;
-    line-height: 1.15;
-    text-align: center;
-  }
-  .back {
-    top: 0;
-    left: calc((var(--w) - var(--d)) / 2);
-    width: var(--d);
-    height: var(--h);
-    transform: rotateY(-90deg) translateZ(calc(var(--w) / 2));
-    background: var(--shade);
-  }
-  /* Page edges seen from above */
-  .pages-top {
-    left: 0;
-    top: calc((var(--h) - var(--d)) / 2);
-    width: var(--w);
-    height: var(--d);
-    transform: rotateX(90deg) translateZ(calc(var(--h) / 2));
-    background: repeating-linear-gradient(90deg, #f8f3e6 0 2px, #e3dfd0 2px 3px);
-    border: 2px solid var(--cloth);
   }
 </style>

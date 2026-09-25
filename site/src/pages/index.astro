@@ -1,0 +1,513 @@
+---
+import {
+  ArrowRight,
+  ChefHat,
+  Cloud,
+  CodeXml,
+  FileInput,
+  Image,
+  LibraryBig,
+  ListChecks,
+  Search,
+  Sparkles,
+} from "lucide"
+import Icon from "../components/Icon.astro"
+import Kitchen from "../components/Kitchen.astro"
+import "../styles/site.css"
+import caveat from "../assets/fonts/caveat.woff2?url"
+import dmSerif from "../assets/fonts/dm-serif-display.woff2?url"
+import nunito from "../assets/fonts/nunito-sans.woff2?url"
+
+const repo = "https://github.com/evanbrobertson/RecipeApp"
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/")
+
+// Every way into the box that the importer handles today (src/importers.rs, TopBox.svelte),
+// plus photos, which ship in the same release as this page.
+const sources = [
+  "Links",
+  "Pasted text",
+  "Photos",
+  "PDFs",
+  "Saved web pages",
+  "Text and Markdown files",
+  "Crumb backups",
+  "Just the Recipe exports",
+  "Paprika",
+  "Mealie",
+  "Claude, via the connector",
+]
+
+const features = [
+  {
+    id: "cookbook",
+    icon: LibraryBig,
+    title: "Your recipes in a virtual cookbook",
+    text: "Group recipes into books and browse them on a 3D bookshelf.",
+  },
+  {
+    id: "sources",
+    icon: FileInput,
+    title: "Add recipes from 10+ sources",
+    text: "Paste a link or a recipe, drop in a file, or send one from Claude.",
+  },
+  {
+    id: "search",
+    icon: Search,
+    title: "Search every recipe instantly",
+    text: "Find any recipe by title, ingredient or category as you type.",
+  },
+  {
+    id: "mise",
+    icon: ListChecks,
+    title: "Mise en place mode",
+    text: "Every ingredient laid out as a bowl or a board, checked off one by one.",
+  },
+  {
+    id: "cook",
+    icon: ChefHat,
+    title: "Cooking mode",
+    text: "One step at a time, full screen, with that step's ingredients and the screen kept awake.",
+  },
+  {
+    id: "next",
+    icon: Sparkles,
+    title: "What to cook next",
+    text: "Four ideas drawn from what you cook, or one surprise pick.",
+  },
+  {
+    id: "open",
+    icon: CodeXml,
+    title: "Open source — host it yourself",
+    text: "A small Rust server and one SQLite file, packaged as a Docker image.",
+  },
+  {
+    id: "hosted",
+    icon: Cloud,
+    title: "Paid hosting — coming soon",
+    text: "A hosted Crumb for people who'd rather not run a server.",
+    soon: true,
+  },
+]
+
+const shots = ["Home", "Recipe", "Mise en place", "Cooking mode"]
+const spines = [
+  { c: "clay", h: 60 },
+  { c: "tile", h: 72 },
+  { c: "butter", h: 54 },
+  { c: "forest", h: 66 },
+  { c: "sage", h: 58 },
+  { c: "cream", h: 70 },
+]
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crumb — a private recipe box</title>
+    <meta name="description" content="Crumb is an open-source private recipe box you can host yourself." />
+    <meta name="theme-color" content="#2f6b4f" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1f3d2e" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    <link rel="preload" href={nunito} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={dmSerif} as="font" type="font/woff2" crossorigin />
+    <style
+      is:inline
+      set:html={`
+      @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
+      @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Caveat";src:url(${caveat}) format("woff2");font-weight:700;font-display:swap}
+    `}
+    />
+  </head>
+  <body>
+    <a class="skip" href="#features">Skip to features</a>
+
+    <header class="hero tile-surface">
+      <nav class="wrap topbar" aria-label="Site">
+        <span class="mark">Crumb</span>
+        <ul>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#screenshots">Screenshots</a></li>
+          <li><a href={repo}>GitHub</a></li>
+        </ul>
+      </nav>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <h1>Crumb</h1>
+          <p class="tagline placeholder">Tagline goes here</p>
+          <div class="ctas">
+            <a class="btn btn-primary" href={repo}>
+              Get started (self-host)
+              <Icon icon={ArrowRight} />
+            </a>
+            <button class="btn btn-soon" type="button" disabled>Hosted — coming soon</button>
+          </div>
+        </div>
+        <div class="hero-art">
+          <Kitchen />
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="wrap">
+          <h2 id="features-title" class="section-title">Features</h2>
+          <ul class="features">
+            {
+              features.map((f) => (
+                <li class={`card feature-${f.id}`}>
+                  <div class="well">
+                    <Icon icon={f.icon} />
+                  </div>
+                  <h3>
+                    {f.title}
+                    {f.soon && <span class="pill">Coming soon</span>}
+                  </h3>
+                  <p>{f.text}</p>
+                  {f.id === "cookbook" && (
+                    <div class="mini-shelf" aria-hidden="true">
+                      {spines.map((s) => (
+                        <span class={`spine ${s.c}`} style={`height:${s.h}px`} />
+                      ))}
+                    </div>
+                  )}
+                  {f.id === "sources" && (
+                    <ul class="sources" aria-label="Supported sources">
+                      {sources.map((s) => (
+                        <li class="pill">{s}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </section>
+
+      <section id="screenshots" class="section alt" aria-labelledby="shots-title">
+        <div class="wrap">
+          <h2 id="shots-title" class="section-title">Screenshots</h2>
+          <ul class="shots">
+            {
+              shots.map((s) => (
+                <li class="shot">
+                  <Icon icon={Image} />
+                  <span>Screenshot: {s}</span>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-row">
+        <span class="mark">Crumb</span>
+        <ul>
+          <li><a href={repo}>GitHub</a></li>
+          <li><a href={`${repo}/blob/master/LICENSE`}>MIT License</a></li>
+        </ul>
+        <p class="made placeholder">
+          Made with <span role="img" aria-label="bread">🍞</span>
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style>
+  /* Hero */
+  .hero {
+    position: relative;
+    overflow: hidden;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 72px;
+  }
+  .topbar ul {
+    display: flex;
+    gap: 4px;
+    padding: 0;
+    list-style: none;
+  }
+  .topbar a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 10px;
+    color: var(--on-tile);
+    font-size: 15px;
+    text-decoration: none;
+    border-radius: var(--r-ctl);
+  }
+  .topbar a:hover {
+    text-decoration: underline;
+  }
+  .mark {
+    font: 400 26px/1 var(--serif);
+  }
+  /* On phones the big wordmark sits right below, so the bar only carries links */
+  @media (max-width: 599px) {
+    .topbar .mark {
+      display: none;
+    }
+    .topbar ul {
+      margin-left: auto;
+    }
+  }
+  .hero-grid {
+    display: grid;
+    gap: 28px;
+    padding-top: 28px;
+  }
+  .hero h1 {
+    font: 400 72px/0.95 var(--serif);
+    letter-spacing: -0.01em;
+  }
+  .tagline {
+    margin-top: 12px;
+    font: 700 36px/1.1 var(--hand);
+  }
+  .placeholder {
+    display: inline-block;
+    padding: 2px 12px 6px;
+    border: 1.5px dashed currentColor;
+    border-radius: var(--r-ctl);
+  }
+  .ctas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 28px;
+  }
+  .hero-art {
+    /* Pull the art to the gutters on phones so the counter reads edge to edge */
+    margin: 0 -8px;
+  }
+  @media (min-width: 900px) {
+    .hero-grid {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+      align-items: end;
+      gap: 32px;
+      padding-top: 24px;
+    }
+    .hero-copy {
+      align-self: start;
+      padding-top: 16px;
+      /*
+       * Stay above the counter, which crosses under this column. The art is 2/3 of the
+       * content width and the counter and cabinets are 134/400 of its height.
+       */
+      padding-bottom: calc((min(100vw, 1200px) - 112px) * 0.667 * 0.335 + 28px);
+    }
+    .hero h1 {
+      font-size: clamp(80px, 8vw, 112px);
+    }
+    .tagline {
+      font-size: 44px;
+    }
+    .hero-art {
+      margin: 0;
+    }
+  }
+
+  /* Features */
+  .features {
+    display: grid;
+    gap: 16px;
+    padding: 0;
+    list-style: none;
+  }
+  @media (min-width: 640px) {
+    .features {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .feature-cookbook,
+    .feature-sources {
+      grid-column: span 2;
+    }
+  }
+  @media (min-width: 1000px) {
+    .features {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .feature-cookbook {
+      grid-column: auto;
+    }
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 20px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--r-ui);
+  }
+  .well {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 6px;
+    border-radius: var(--r-ctl);
+    background: var(--tint);
+    color: var(--primary);
+  }
+  .well :global(svg) {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.8;
+  }
+  .card h3 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font: 700 18px/1.3 var(--sans);
+  }
+  .card p {
+    color: var(--muted);
+    font-size: 15px;
+  }
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 0;
+    list-style: none;
+  }
+  .mini-shelf {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    margin-top: auto;
+    padding: 14px 16px 0;
+    border-radius: var(--r-ctl);
+    background: var(--tint);
+    border-bottom: 8px solid var(--tile);
+  }
+  .spine {
+    width: 20px;
+    border-radius: 3px 3px 0 0;
+    background: var(--c);
+    box-shadow: inset 0 8px 0 -6px var(--b), inset 0 -8px 0 -6px var(--b);
+  }
+  .spine.clay {
+    --c: #a55a40;
+    --b: #f3da8b;
+  }
+  .spine.tile {
+    --c: #2f6b4f;
+    --b: #fffdf8;
+  }
+  .spine.butter {
+    --c: #f3da8b;
+    --b: #a55a40;
+  }
+  .spine.forest {
+    --c: #1c2b22;
+    --b: #f3da8b;
+  }
+  .spine.sage {
+    --c: #a9c4ae;
+    --b: #1c2b22;
+  }
+  .spine.cream {
+    --c: #f8f3e6;
+    --b: #2f6b4f;
+    outline: 1px solid rgb(28 43 34 / 0.22);
+    outline-offset: -1px;
+  }
+
+  /* Screenshots */
+  .alt {
+    background: var(--paper);
+    border-block: 1px solid var(--line);
+  }
+  .shots {
+    display: grid;
+    gap: 16px;
+    padding: 0;
+    list-style: none;
+  }
+  @media (min-width: 640px) {
+    .shots {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .shot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    aspect-ratio: 16 / 10;
+    border: 1.5px dashed var(--muted);
+    border-radius: var(--r-ui);
+    background: repeating-linear-gradient(
+      135deg,
+      var(--tint) 0 14px,
+      var(--paper) 14px 28px
+    );
+    color: var(--text);
+    font-weight: 700;
+  }
+  .shot span {
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--paper);
+  }
+  .shot :global(svg) {
+    width: 28px;
+    height: 28px;
+    color: var(--primary);
+  }
+
+  /* Footer */
+  .footer {
+    background: var(--nav);
+    color: var(--nav-ink);
+    padding: 32px 0;
+  }
+  .footer-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px 24px;
+  }
+  .footer .mark {
+    color: #fffdf8;
+  }
+  .footer ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    padding: 0;
+    list-style: none;
+  }
+  .footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--nav-ink);
+  }
+  .footer a:focus-visible {
+    outline-color: var(--butter);
+  }
+  .made {
+    font: 700 26px/1 var(--hand);
+  }
+</style>

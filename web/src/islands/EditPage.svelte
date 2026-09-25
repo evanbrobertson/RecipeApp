@@ -5,14 +5,30 @@
   import RecipeEditor from "../components/RecipeEditor.svelte"
   import { api, errorMessage, pathId } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
-  import type { Recipe, RecipeFields } from "../lib/recipe"
+  import type { CheckFlag, Recipe, RecipeChecks, RecipeFields } from "../lib/recipe"
   import { flash, toast } from "../lib/toast"
 
   const id = pathId()
-  const page = pageState<{ recipe: Recipe }>(async () => ({
+  const page = pageState<{ recipe: Recipe; checks?: RecipeChecks | null }>(async () => ({
     recipe: await api<Recipe>(`/api/recipes/${id}`),
+    checks: await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null),
   }))
   let saving = $state(false)
+
+  // "Keep as is" is remembered, so Wee Chef won't raise that line again
+  let flags = $state<CheckFlag[]>(page.data?.checks?.flags ?? [])
+  $effect(() => {
+    if (page.data?.checks) flags = page.data.checks.flags
+  })
+  async function dismiss(flag: CheckFlag) {
+    flags = flags.filter((f) => f.id !== flag.id)
+    try {
+      await api(`/api/recipes/${id}/flags/${flag.id}/dismiss`, { method: "POST" })
+    } catch (e) {
+      flags = [...flags, flag]
+      toast({ title: "Couldn't save that", description: errorMessage(e), tone: "error" })
+    }
+  }
 
   async function save(fields: RecipeFields) {
     saving = true
@@ -50,6 +66,8 @@
     <RecipeEditor
       initial={page.data.recipe}
       {saving}
+      {flags}
+      ondismiss={dismiss}
       onsave={save}
       oncancel={() => (location.href = `/recipes/${id}`)}
     />

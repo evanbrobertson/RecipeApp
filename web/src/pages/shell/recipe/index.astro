@@ -9,8 +9,8 @@ import RecipePage from "../../../islands/RecipePage.svelte"
     <!-- Same box as the island's hero, so a card photo can morph onto it at pagereveal,
          before the island mounts (mounting clears this fallback, so only one
          [data-photo-hero] exists at a time). -->
-    <div slot="fallback" class="space-y-7">
-      <div class="grid gap-5 lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-8">
+    <div slot="fallback" class="recipe-wide">
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-12">
         <div
           id="hero-skeleton"
           data-photo-hero
@@ -36,7 +36,7 @@ import RecipePage from "../../../islands/RecipePage.svelte"
             el.style.backgroundImage = `url(/img/${r.id}/${w}?v=${h.toString(16).padStart(8, "0")})`
           })()
         </script>
-        <div class="space-y-4">
+        <div class="space-y-5 lg:py-2">
           <div class="skeleton h-9 w-2/3"></div>
           <div class="skeleton h-4 w-1/2"></div>
           <div class="skeleton h-14 w-full"></div>
@@ -45,3 +45,14 @@ import RecipePage from "../../../islands/RecipePage.svelte"
     </div>
   </RecipePage>
 </Layout>
+
+<style>
+  /* Same box as .recipe-wide in RecipePage.svelte */
+  @media (min-width: 768px) {
+    .recipe-wide {
+      --w: min(88.75rem, max(100%, 100vw - 20rem));
+      width: var(--w);
+      margin-inline: calc((100% - var(--w)) / 2);
+    }
+  }
+</style>

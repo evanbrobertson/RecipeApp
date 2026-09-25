@@ -1,21 +1,252 @@
-//! Recipe scraping: JSON-LD first, then recipe-plugin markup and microdata.
+//! Recipe scraping: fetch the page, then JSON-LD first, then recipe-plugin markup and microdata.
+//!
+//! Pages are fetched with `wreq`, which sends a real browser's TLS and HTTP/2 fingerprint and
+//! headers. Many recipe sites (behind Cloudflare, Akamai, PerimeterX and the like) refuse a
+//! plain Rust client on its fingerprint alone, whatever its User-Agent says. The order is
+//! Firefox, then Safari when the site blocks it, then headless Chromium when installed.
 
+use http_body_util::BodyExt;
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{Map, Value};
-use std::sync::LazyLock;
+use std::future::Future;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::model::{RecipeFields, Section, normalize_sections};
 
+/// The User-Agent for the plain `reqwest` image fallback (wreq's profiles set their own).
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
 
-/// Scrapes a recipe page. Plain HTTP first (fast, cheap); if the site blocks it or the
-/// recipe is rendered by JavaScript, retries in headless Chromium when it's installed.
+const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest recipe page read; real ones are well under 2 MB.
+pub const MAX_PAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// How a page was fetched, in the order they're tried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Method {
+    Firefox,
+    Safari,
+    Browser,
+}
+
+impl Method {
+    /// The name in the log line for an import.
+    pub fn label(self) -> &'static str {
+        match self {
+            Method::Firefox => "wreq-firefox",
+            Method::Safari => "wreq-safari",
+            Method::Browser => "browser",
+        }
+    }
+}
+
+/// What one fetch attempt got back.
+#[derive(Debug)]
+pub enum Fetched {
+    /// A response. The body is only read for a 2xx.
+    Page { status: u16, html: String },
+    /// No response (DNS, connection, TLS, timeout); the reason is for the log.
+    Unreachable(String),
+}
+
+/// The shared browser-profile client for `method` (Firefox or Safari). Built on first use;
+/// `None` if it can't be built (logged once), and then that step is skipped.
+pub fn wreq_client(method: Method) -> Option<&'static wreq::Client> {
+    static FIREFOX: OnceLock<Option<wreq::Client>> = OnceLock::new();
+    static SAFARI: OnceLock<Option<wreq::Client>> = OnceLock::new();
+    let (cell, emulation) = match method {
+        Method::Firefox => (&FIREFOX, wreq_util::Emulation::Firefox151),
+        Method::Safari => (&SAFARI, wreq_util::Emulation::Safari26_4),
+        Method::Browser => return None,
+    };
+    cell.get_or_init(|| {
+        wreq::Client::builder()
+            .emulation(emulation)
+            .cookie_store(true)
+            // wreq doesn't follow redirects unless told to
+            .redirect(wreq::redirect::Policy::limited(10))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(PAGE_TIMEOUT)
+            .pool_idle_timeout(Duration::from_secs(60))
+            .pool_max_idle_per_host(2)
+            .build()
+            .inspect_err(|e| {
+                tracing::error!(
+                    "[scraper] couldn't build the {} client: {e}",
+                    method.label()
+                )
+            })
+            .ok()
+    })
+    .as_ref()
+}
+
+/// Why a body read stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReadError {
+    TooLarge,
+    Failed(String),
+}
+
+/// Reads a wreq response body, giving up once it passes `cap` bytes.
+pub async fn read_capped(mut res: wreq::Response, cap: usize) -> Result<Vec<u8>, ReadError> {
+    if res.content_length().is_some_and(|n| n > cap as u64) {
+        return Err(ReadError::TooLarge);
+    }
+    let mut body = Vec::new();
+    while let Some(frame) = res.frame().await {
+        let frame = frame.map_err(|e| ReadError::Failed(e.to_string()))?;
+        if let Ok(chunk) = frame.into_data() {
+            if body.len() + chunk.len() > cap {
+                return Err(ReadError::TooLarge);
+            }
+            body.extend_from_slice(&chunk);
+        }
+    }
+    Ok(body)
+}
+
+/// Fetches a page with one of the wreq browser profiles. The profile sets every header.
+pub async fn fetch_wreq(method: Method, url: &str) -> Fetched {
+    let Some(client) = wreq_client(method) else {
+        return Fetched::Unreachable("client unavailable".into());
+    };
+    let res = match client.get(url).send().await {
+        Ok(res) => res,
+        Err(e) => return Fetched::Unreachable(e.to_string()),
+    };
+    let status = res.status().as_u16();
+    if !res.status().is_success() {
+        return Fetched::Page {
+            status,
+            html: String::new(),
+        };
+    }
+    match read_capped(res, MAX_PAGE_BYTES).await {
+        Ok(body) => Fetched::Page {
+            status,
+            html: String::from_utf8_lossy(&body).into_owned(),
+        },
+        Err(ReadError::TooLarge) => Fetched::Unreachable("page too large".into()),
+        Err(ReadError::Failed(e)) => Fetched::Unreachable(e),
+    }
+}
+
+static CHALLENGE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)just a moment|attention required|access denied|access to this page has been denied|verify you are human|are you a robot|not a robot|pardon our interruption|security check",
+    )
+    .unwrap()
+});
+
+static TITLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
+
+/// Page markers that only bot-check and block pages carry.
+const CHALLENGE_MARKERS: [&str; 6] = [
+    "px-captcha",              // PerimeterX / HUMAN
+    "_Incapsula_Resource",     // Imperva
+    "window._cf_chl_opt",      // Cloudflare challenge
+    "cf-browser-verification", // Cloudflare (older)
+    "captcha-delivery.com",    // DataDome
+    "errors.edgesuite.net",    // Akamai "Access Denied" reference
+];
+
+/// Whether a page title is a bot check ("Just a moment...") rather than the page.
+pub fn is_challenge_title(title: &str) -> bool {
+    CHALLENGE_TITLE.is_match(title)
+}
+
+/// Whether HTML is a bot check or block page. Only asked of pages with no recipe, so a
+/// false positive costs one retry, never a lost recipe.
+pub fn is_challenge_page(html: &str) -> bool {
+    TITLE
+        .captures(html)
+        .is_some_and(|c| is_challenge_title(&c[1]))
+        || CHALLENGE_MARKERS.iter().any(|m| html.contains(m))
+}
+
+/// Statuses bot protection answers with; another browser profile may get through.
+fn is_block_status(status: u16) -> bool {
+    matches!(status, 403 | 429 | 503)
+}
+
+enum Verdict {
+    Recipe(Box<RecipeFields>),
+    /// Refused or challenged: worth another profile.
+    Blocked(String),
+    /// Anything else that didn't give a recipe.
+    Failed(String),
+}
+
+fn judge(fetched: Fetched, url: &str) -> Verdict {
+    match fetched {
+        Fetched::Unreachable(_) => Verdict::Failed("Couldn't reach that site.".into()),
+        Fetched::Page { status, .. } if is_block_status(status) => {
+            Verdict::Blocked(format!("The site responded with {status}."))
+        }
+        Fetched::Page { status, .. } if !(200..300).contains(&status) => {
+            Verdict::Failed(format!("The site responded with {status}."))
+        }
+        Fetched::Page { html, .. } => match parse_recipe_html(&html, url) {
+            Some(recipe) => Verdict::Recipe(Box::new(recipe)),
+            None if is_challenge_page(&html) => {
+                Verdict::Blocked("The site showed a bot check instead of the recipe.".into())
+            }
+            None => Verdict::Failed("Couldn't find a recipe on that page.".into()),
+        },
+    }
+}
+
+/// The fetch order, with the fetchers passed in (so it's testable without a network):
+/// Firefox; Safari if Firefox was blocked; then the browser (when `browser` is true) if
+/// neither gave a recipe. Returns the method that worked, or the message for the cook.
+pub async fn scrape_with<F, Fut>(
+    url: &str,
+    browser: bool,
+    mut fetch: F,
+) -> Result<(Method, RecipeFields), String>
+where
+    F: FnMut(Method) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
+    let mut problem = match judge(fetch(Method::Firefox).await, url) {
+        Verdict::Recipe(recipe) => return Ok((Method::Firefox, *recipe)),
+        Verdict::Blocked(_) => match judge(fetch(Method::Safari).await, url) {
+            Verdict::Recipe(recipe) => return Ok((Method::Safari, *recipe)),
+            Verdict::Blocked(p) | Verdict::Failed(p) => p,
+        },
+        Verdict::Failed(p) => p,
+    };
+
+    if browser {
+        match fetch(Method::Browser).await {
+            Fetched::Page { html, .. } => match parse_recipe_html(&html, url) {
+                Some(recipe) => return Ok((Method::Browser, recipe)),
+                None => {
+                    problem = "Couldn't find a recipe on that page, even in a real browser.".into()
+                }
+            },
+            Fetched::Unreachable(err) => {
+                tracing::warn!(
+                    "[scraper] browser fallback failed for {}: {err}",
+                    crate::telemetry::host_of(url)
+                );
+                problem = format!("{problem} A real browser was blocked too.");
+            }
+        }
+    }
+
+    Err(format!("{problem} {PASTE_HINT}"))
+}
+
+/// Scrapes a recipe page (see [`scrape_with`] for the order it tries).
 pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeFields> {
     let parsed =
         url::Url::parse(url).map_err(|_| AppError::bad_request("Please enter a valid URL"))?;
@@ -23,52 +254,32 @@ pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeField
         return Err(AppError::bad_request("Only http(s) links are supported."));
     }
 
-    let mut problem = match fetch_html(&state.http, url).await {
-        Ok(html) => match parse_recipe_html(&html, url) {
-            Some(recipe) => return Ok(recipe),
-            None => "Couldn't find a recipe on that page.".to_string(),
-        },
-        Err(Some(status)) => format!("The site responded with {status}."),
-        Err(None) => "Couldn't reach that site.".to_string(),
-    };
-
-    if state.browser.available() {
-        match state.browser.fetch(url).await {
-            Ok(html) => match parse_recipe_html(&html, url) {
-                Some(recipe) => return Ok(recipe),
-                None => {
-                    problem = "Couldn't find a recipe on that page, even in a real browser.".into()
-                }
-            },
-            Err(err) => {
-                tracing::warn!("[scraper] browser fallback failed for {url}: {err}");
-                problem = format!("{problem} A real browser was blocked too.");
+    let browser = state.browser.clone();
+    let result = scrape_with(url, browser.available(), |method| {
+        let browser = browser.clone();
+        async move {
+            match method {
+                Method::Browser => match browser.fetch(url).await {
+                    Ok(html) => Fetched::Page { status: 200, html },
+                    Err(err) => Fetched::Unreachable(err),
+                },
+                wreq => fetch_wreq(wreq, url).await,
             }
         }
-    }
+    })
+    .await;
 
-    Err(AppError::new(422, format!("{problem} {PASTE_HINT}")))
-}
-
-/// `Err(Some(status))` for HTTP errors, `Err(None)` when the site can't be reached.
-async fn fetch_html(client: &reqwest::Client, url: &str) -> Result<String, Option<u16>> {
-    let response = client
-        .get(url)
-        .timeout(Duration::from_secs(15))
-        .header("User-Agent", USER_AGENT)
-        .header(
-            "Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        )
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .send()
-        .await
-        .map_err(|_| None)?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(Some(status.as_u16()));
+    let host = crate::telemetry::host_of(url);
+    match result {
+        Ok((method, recipe)) => {
+            tracing::info!("[scraper] {host}: {}", method.label());
+            Ok(recipe)
+        }
+        Err(message) => {
+            tracing::info!("[scraper] {host}: failed");
+            Err(AppError::new(422, message))
+        }
     }
-    response.text().await.map_err(|_| None)
 }
 
 fn sel(s: &str) -> Selector {
@@ -712,6 +923,156 @@ mod tests {
        ],
        "nutrition":{"@type":"NutritionInformation","calories":"420 kcal","proteinContent":"38 g","bogus":"x"}}
     ]}</script></head><body></body></html>"#;
+
+    #[test]
+    fn spots_challenge_pages() {
+        let cloudflare = "<html><head><title>Just a moment...</title></head><body></body></html>";
+        assert!(is_challenge_page(cloudflare));
+        let akamai = "<HTML><HEAD>\n<TITLE>Access Denied</TITLE>\n</HEAD><BODY>Reference errors.edgesuite.net</BODY></HTML>";
+        assert!(is_challenge_page(akamai));
+        let perimeterx = r#"<html><head><title>Food Site</title></head><body><div id="px-captcha"></div></body></html>"#;
+        assert!(is_challenge_page(perimeterx));
+        let plain = "<html><head><title>Easy Weeknight Pasta</title></head><body>Access denied to nobody.</body></html>";
+        assert!(!is_challenge_page(plain));
+        assert!(!is_challenge_page(GRAPH));
+    }
+
+    /// Runs `scrape_with` against scripted responses, returning the result and the methods asked.
+    fn scripted(
+        browser: bool,
+        mut responses: Vec<(Method, Fetched)>,
+    ) -> (Result<(Method, RecipeFields), String>, Vec<Method>) {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let result = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(scrape_with("https://food.test/r", browser, |method| {
+                asked.borrow_mut().push(method);
+                let at = responses
+                    .iter()
+                    .position(|(m, _)| *m == method)
+                    .unwrap_or_else(|| panic!("unexpected fetch with {method:?}"));
+                let fetched = responses.remove(at).1;
+                async move { fetched }
+            }));
+        (result, asked.into_inner())
+    }
+
+    fn ok(html: &str) -> Fetched {
+        Fetched::Page {
+            status: 200,
+            html: html.into(),
+        }
+    }
+
+    fn status(code: u16) -> Fetched {
+        Fetched::Page {
+            status: code,
+            html: String::new(),
+        }
+    }
+
+    const CHALLENGE: &str = "<html><head><title>Just a moment...</title></head></html>";
+
+    #[test]
+    fn firefox_first_and_alone_when_it_works() {
+        let (result, asked) = scripted(true, vec![(Method::Firefox, ok(GRAPH))]);
+        assert_eq!(result.unwrap().0, Method::Firefox);
+        assert_eq!(asked, vec![Method::Firefox]);
+    }
+
+    #[test]
+    fn safari_after_a_block_status_or_challenge() {
+        for blocked in [status(403), status(429), status(503), ok(CHALLENGE)] {
+            let (result, asked) = scripted(
+                true,
+                vec![(Method::Firefox, blocked), (Method::Safari, ok(GRAPH))],
+            );
+            assert_eq!(result.unwrap().0, Method::Safari);
+            assert_eq!(asked, vec![Method::Firefox, Method::Safari]);
+        }
+    }
+
+    #[test]
+    fn no_safari_retry_for_other_failures() {
+        let (result, asked) = scripted(false, vec![(Method::Firefox, status(404))]);
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("The site responded with 404.")
+        );
+        assert_eq!(asked, vec![Method::Firefox]);
+
+        let (result, asked) = scripted(
+            false,
+            vec![(Method::Firefox, Fetched::Unreachable("dns".into()))],
+        );
+        assert!(result.unwrap_err().starts_with("Couldn't reach that site."));
+        assert_eq!(asked, vec![Method::Firefox]);
+
+        let (result, _) = scripted(false, vec![(Method::Firefox, ok("<p>no recipe</p>"))]);
+        assert!(result.unwrap_err().contains("Couldn't find a recipe"));
+    }
+
+    #[test]
+    fn browser_last_and_only_when_available() {
+        let (result, asked) = scripted(
+            true,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, ok(CHALLENGE)),
+                (Method::Browser, ok(GRAPH)),
+            ],
+        );
+        assert_eq!(result.unwrap().0, Method::Browser);
+        assert_eq!(
+            asked,
+            vec![Method::Firefox, Method::Safari, Method::Browser]
+        );
+
+        // A page without a recipe (rendered by scripts) goes straight to the browser
+        let (result, asked) = scripted(
+            true,
+            vec![
+                (Method::Firefox, ok("<p>loading</p>")),
+                (Method::Browser, ok(GRAPH)),
+            ],
+        );
+        assert_eq!(result.unwrap().0, Method::Browser);
+        assert_eq!(asked, vec![Method::Firefox, Method::Browser]);
+
+        let (result, asked) = scripted(
+            false,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, status(403)),
+            ],
+        );
+        let message = result.unwrap_err();
+        assert!(
+            message.starts_with("The site responded with 403."),
+            "{message}"
+        );
+        assert!(message.ends_with(PASTE_HINT));
+        assert_eq!(asked, vec![Method::Firefox, Method::Safari]);
+
+        let (result, _) = scripted(
+            true,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, status(403)),
+                (
+                    Method::Browser,
+                    Fetched::Unreachable("Blocked by the site".into()),
+                ),
+            ],
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("A real browser was blocked too.")
+        );
+    }
 
     #[test]
     fn parses_json_ld_graph_with_sections() {

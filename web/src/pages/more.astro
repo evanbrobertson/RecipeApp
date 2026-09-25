@@ -1,88 +1,88 @@
 ---
 import Icon from "../components/Icon.astro"
-import { Plug, FileDown, PenLine, Archive, ChevronRight, Download, Shuffle } from "lucide"
+import { Archive, ChevronRight, Download, FileDown, PenLine, Plug, Shuffle } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import MoreSettings from "../islands/MoreSettings.svelte"
+import type { IconNode } from "lucide"
 
-const recipes = [
-  { href: "/recipes/new", icon: PenLine, title: "Write a recipe", text: "Type one in from scratch" },
+interface Row {
+  href: string
+  icon: IconNode
+  label: string
+  text?: string
+  random?: boolean
+  download?: boolean
+}
+
+const groups: { title: string; rows: Row[] }[] = [
   {
-    href: "/import",
-    icon: FileDown,
-    title: "Import recipes",
-    text: "From Just the Recipe, Paprika, Mealie, files or links",
+    title: "Your recipes",
+    rows: [
+      { href: "/random", icon: Shuffle, label: "Surprise me", random: true },
+      { href: "/recipes/new", icon: PenLine, label: "Write a recipe" },
+      {
+        href: "/import",
+        icon: FileDown,
+        label: "Import recipes",
+        text: "Links, files, Paprika, Mealie",
+      },
+    ],
+  },
+  {
+    title: "Claude & backups",
+    rows: [
+      { href: "/connect", icon: Plug, label: "Connect to Claude" },
+      {
+        href: "/api/export",
+        icon: Archive,
+        label: "Download a backup",
+        text: "Everything as one JSON file",
+        download: true,
+      },
+    ],
   },
 ]
 ---
 
 <Layout title="More" section="more" data>
-  <div class="mx-auto max-w-5xl space-y-7">
+  <div class="mx-auto flex max-w-[600px] flex-col gap-8">
     <h1 class="page-title">More</h1>
 
-    <div class="grid gap-7 lg:grid-cols-2 lg:gap-8">
-      <div class="min-w-0 space-y-7">
+    {
+      groups.map((g) => (
         <section>
-          <h2 class="section-title mb-3.5">Your recipes</h2>
+          <h2 class="settings-heading">{g.title}</h2>
           <div class="list-card">
-            <a href="/random" data-random data-no-prerender class="list-row">
-              <span class="well"><Icon icon={Shuffle} /></span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-[17px] leading-tight font-bold">Surprise me</span>
-                <span class="text-ink-muted block text-sm">Open a random recipe from your box</span>
-              </span>
-              <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
-            </a>
-            {
-              recipes.map((l) => (
-                <a href={l.href} class="list-row">
-                  <span class="well">
-                    <Icon icon={l.icon} />
-                  </span>
-                  <span class="min-w-0 flex-1">
-                    <span class="block text-[17px] leading-tight font-bold">{l.title}</span>
-                    <span class="text-ink-muted block text-sm">{l.text}</span>
-                  </span>
-                  <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
-                </a>
-              ))
-            }
+            {g.rows.map((r) => (
+              <a
+                href={r.href}
+                class="list-row settings-row"
+                download={r.download}
+                data-random={r.random}
+                data-no-prerender={r.random}
+              >
+                <Icon icon={r.icon} class="settings-icon" />
+                <span class="min-w-0 flex-1">
+                  <span class="block font-bold">{r.label}</span>
+                  {r.text && <span class="text-ink-muted block text-sm">{r.text}</span>}
+                </span>
+                <Icon
+                  icon={r.download ? Download : ChevronRight}
+                  class="text-ink-muted size-5 flex-none"
+                />
+              </a>
+            ))}
           </div>
         </section>
+      ))
+    }
 
-        <section>
-          <h2 class="section-title mb-3.5">Claude &amp; backups</h2>
-          <div class="list-card">
-            <a href="/connect" class="list-row">
-              <span class="well"><Icon icon={Plug} /></span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-[17px] leading-tight font-bold">Connect to Claude</span>
-                <span class="text-ink-muted block text-sm">
-                  Save, search and tweak recipes from any Claude chat
-                </span>
-              </span>
-              <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
-            </a>
-            <a href="/api/export" download class="list-row">
-              <span class="well"><Icon icon={Archive} /></span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-[17px] leading-tight font-bold">Download a backup</span>
-                <span class="text-ink-muted block text-sm">
-                  All recipes and cookbooks as one JSON file (re-import it any time)
-                </span>
-              </span>
-              <Icon icon={Download} class="text-ink-muted size-5 flex-none" />
-            </a>
-          </div>
-        </section>
+    <MoreSettings client:only="svelte">
+      <div slot="fallback" class="space-y-8">
+        <div class="skeleton rounded-ui h-[17rem]"></div>
+        <div class="skeleton rounded-ui h-40"></div>
       </div>
-
-      <MoreSettings client:only="svelte">
-        <div slot="fallback" class="space-y-3.5">
-          <div class="skeleton h-7 w-28"></div>
-          <div class="skeleton rounded-ui h-[17rem]"></div>
-        </div>
-      </MoreSettings>
-    </div>
+    </MoreSettings>
   </div>
 </Layout>
 

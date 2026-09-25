@@ -9,3 +9,6 @@ target
 web/node_modules
 web/dist
 web/.astro
+web/dist-*
+site/node_modules
+site/dist

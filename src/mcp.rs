@@ -683,8 +683,14 @@ impl Ctx<'_> {
                                 format!("{}{why}", self.recipe_line(&i.recipe))
                             })
                             .collect();
+                        let idea = s.idea.as_ref().map_or(String::new(), |i| {
+                            format!(
+                                "\n\nNot in the box yet, an idea from Wee Chef: {}\n  {}\n  Find a recipe: {}",
+                                i.title, i.why, i.search_url
+                            )
+                        });
                         text(format!(
-                            "Worth cooking next{filters}:\n{}",
+                            "Worth cooking next{filters}:\n{}{idea}",
                             lines.join("\n")
                         ))
                     }
@@ -857,7 +863,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "import_recipe_from_text",
             "title": "Import recipe from raw text",
-            "description": "Let the app parse raw recipe text itself (e.g. a long copy-pasted web page). Prefer save_recipe when you can structure the recipe yourself.",
+            "description": "Let the app parse raw recipe text itself (e.g. a long copy-pasted web page): Wee Chef, its AI helper, when an AI key is set, otherwise a built-in parser. Prefer save_recipe when you can structure the recipe yourself.",
             "inputSchema": object(json!({"text": {"type": "string", "minLength": 20, "description": "The raw recipe text"}}).as_object().unwrap().clone(), &["text"])
         }),
         json!({
@@ -887,7 +893,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "suggest_recipes",
             "title": "Suggest what to cook",
-            "description": "Recipes from the user's box worth cooking next, each with a short reason. Favours things they haven't made, variety, and what suits today; leaves out anything cooked in the last two weeks.",
+            "description": "Recipes from the user's box worth cooking next, each with a short reason. Favours things they haven't made, variety, and what suits today; leaves out anything cooked in the last two weeks. Some days it also has one idea from Wee Chef for a dish that isn't in the box yet, with a search link.",
             "inputSchema": object(props(json!({
                 "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                 "maxMinutes": {"type": "integer", "minimum": 1, "maximum": 1440, "description": "Only recipes with a known total time up to this"},

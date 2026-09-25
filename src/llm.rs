@@ -1,19 +1,30 @@
-//! Optional AI calls with structured JSON output: parsing messy pasted text into recipe
-//! fields, and writing "Try next" blurbs. Works with Anthropic (Claude), OpenAI, or
-//! DeepSeek, whichever is configured (see `config::LlmConfig`).
+//! Wee Chef, the optional AI helper: structured JSON calls that parse messy pasted text
+//! into recipe fields and write "Try next" blurbs and ideas. The UI only ever says
+//! "Wee Chef"; underneath it's Anthropic, OpenAI or DeepSeek, whichever is configured
+//! (see `config::LlmConfig`).
 
+use base64::Engine;
 use serde_json::{Value, json};
 use std::time::Duration;
 
 use crate::AppState;
 use crate::config::{LlmConfig, LlmProvider};
 use crate::model::{RecipeFields, normalize_sections, parse_sections};
+use crate::photos::Photo;
 
 const SYSTEM: &str = "You extract recipes from messy pasted text (web pages, emails, notes, OCR).
 Return the recipe exactly as written: keep every ingredient and every step, with quantities, temperatures and times unchanged.
 Drop ads, life stories, comments, navigation and other non-recipe content.
 Group ingredients and steps into named sections only when the source does; otherwise use a single section with name null.
 Each instruction item is one step. Do not invent ingredients, steps or metadata that are not in the text.";
+
+const PHOTO_SYSTEM: &str = "You transcribe recipes from photos: cookbook pages, recipe cards, magazine clippings and handwritten notes.
+The photos are the pages of one recipe, in order. Combine them into a single recipe; a step or list may continue from one page to the next.
+Transcribe exactly as written: keep every ingredient and every step, with quantities, fractions, units, temperatures and times as they appear (write ½ as ½ and 1/2 as 1/2). Do not convert, correct, round or complete anything.
+If a word or number is illegible, write your best reading followed by [?], or just [?] when you can't tell at all.
+Ignore page numbers, headers, photos of the dish, and other recipes that are only partly in view.
+Group ingredients and steps into named sections only when the source does; otherwise use a single section with name null.
+Each instruction item is one step. Do not invent ingredients, steps or metadata that are not in the photos. Set isRecipe to false if the photos don't show a recipe.";
 
 /// DeepSeek caps output tokens for its chat model.
 const DEEPSEEK_MAX_TOKENS: u32 = 8192;
@@ -88,7 +99,8 @@ pub fn available(state: &AppState) -> bool {
     state.config.llm.is_some()
 }
 
-/// "Claude", "OpenAI" or "DeepSeek" for the settings page; None without a key.
+/// The API behind Wee Chef ("Claude", "OpenAI" or "DeepSeek"), for logs and
+/// diagnostics; None without a key.
 pub fn provider_label(state: &AppState) -> Option<&'static str> {
     state.config.llm.as_ref().map(|l| l.provider.label())
 }
@@ -106,15 +118,56 @@ pub struct Ask<'a> {
     pub timeout: Duration,
 }
 
+/// What the user message carries: text, or photos (labelled "Page N:") and then text.
+#[derive(Clone, Copy)]
+enum UserContent<'a> {
+    Text(&'a str),
+    Pages { photos: &'a [Photo], text: &'a str },
+}
+
+/// The user message's `content` in this provider's format.
+fn user_content(provider: LlmProvider, content: UserContent) -> Value {
+    let (photos, text) = match content {
+        UserContent::Text(text) => return json!(text),
+        UserContent::Pages { photos, text } => (photos, text),
+    };
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let mut blocks = Vec::with_capacity(photos.len() * 2 + 1);
+    for (i, photo) in photos.iter().enumerate() {
+        blocks.push(json!({"type": "text", "text": format!("Page {}:", i + 1)}));
+        let data = b64.encode(&photo.bytes);
+        blocks.push(match provider {
+            LlmProvider::Anthropic => json!({"type": "image", "source": {
+                "type": "base64", "media_type": photo.media_type, "data": data
+            }}),
+            LlmProvider::OpenAi => json!({"type": "image_url", "image_url": {
+                "url": format!("data:{};base64,{data}", photo.media_type), "detail": "high"
+            }}),
+            // DeepSeek's docs don't list `detail`; it sizes images itself (at most 1024 tokens)
+            LlmProvider::DeepSeek => json!({"type": "image_url", "image_url": {
+                "url": format!("data:{};base64,{data}", photo.media_type)
+            }}),
+        });
+    }
+    blocks.push(json!({"type": "text", "text": text}));
+    Value::Array(blocks)
+}
+
 /// The HTTP request for `ask` on this provider.
-fn build(state: &AppState, llm: &LlmConfig, ask: &Ask) -> reqwest::RequestBuilder {
+fn build(
+    state: &AppState,
+    llm: &LlmConfig,
+    ask: &Ask,
+    content: UserContent,
+) -> reqwest::RequestBuilder {
+    let user = user_content(llm.provider, content);
     match llm.provider {
         LlmProvider::Anthropic => {
             let mut body = json!({
                 "model": ask.model,
                 "max_tokens": ask.max_tokens,
                 "system": ask.system,
-                "messages": [{"role": "user", "content": ask.user}],
+                "messages": [{"role": "user", "content": user}],
                 "output_config": {"format": {"type": "json_schema", "schema": ask.schema}},
             });
             if supports_effort(ask.model) {
@@ -140,7 +193,7 @@ fn build(state: &AppState, llm: &LlmConfig, ask: &Ask) -> reqwest::RequestBuilde
                 "model": ask.model,
                 "messages": [
                     {"role": "system", "content": ask.system},
-                    {"role": "user", "content": ask.user}
+                    {"role": "user", "content": user}
                 ],
                 "max_completion_tokens": ask.max_tokens,
                 "response_format": {"type": "json_schema", "json_schema": {
@@ -166,7 +219,7 @@ fn build(state: &AppState, llm: &LlmConfig, ask: &Ask) -> reqwest::RequestBuilde
                 "model": ask.model,
                 "messages": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": ask.user}
+                    {"role": "user", "content": user}
                 ],
                 "max_tokens": ask.max_tokens.min(DEEPSEEK_MAX_TOKENS),
                 "response_format": {"type": "json_object"},
@@ -214,10 +267,19 @@ fn reply_json(provider: LlmProvider, msg: &Value) -> Option<Value> {
 /// Sends one structured-output request, retrying once on rate limits and server errors.
 /// None when no provider is configured or the call fails; the failure is logged.
 pub async fn ask(state: &AppState, ask: Ask<'_>) -> Option<Value> {
+    let content = UserContent::Text(ask.user);
+    send(state, &ask, content).await
+}
+
+async fn send(state: &AppState, ask: &Ask<'_>, content: UserContent<'_>) -> Option<Value> {
     let llm = state.config.llm.as_ref()?;
     let mut last_error = String::new();
     for attempt in 0..2 {
-        match build(state, llm, &ask).timeout(ask.timeout).send().await {
+        match build(state, llm, ask, content)
+            .timeout(ask.timeout)
+            .send()
+            .await
+        {
             Ok(res) if res.status().is_success() => {
                 let msg: Value = res.json().await.ok()?;
                 let out = reply_json(llm.provider, &msg);
@@ -231,7 +293,7 @@ pub async fn ask(state: &AppState, ask: Ask<'_>) -> Option<Value> {
                 last_error = format!(
                     "API error {}: {}",
                     status.as_u16(),
-                    res.text().await.unwrap_or_default()
+                    crate::telemetry::api_error_text(&res.text().await.unwrap_or_default())
                 );
                 // Retry rate limits, overloads and server errors once
                 if !(status.as_u16() == 429 || status.as_u16() == 529 || status.is_server_error()) {
@@ -267,6 +329,45 @@ pub async fn extract_recipe(state: &AppState, text: &str) -> Option<RecipeFields
             schema: schema(),
             max_tokens: 16000,
             timeout: Duration::from_secs(60),
+        },
+    )
+    .await?;
+    fields_from_reply(&out)
+}
+
+/// Reads a recipe from photos of its pages (in order) with the vision model, in one
+/// structured-output call. `hint` is an optional note from the cook. None when no AI is
+/// configured, the call fails, or the photos don't show a recipe.
+pub async fn extract_recipe_from_photos(
+    state: &AppState,
+    photos: &[Photo],
+    hint: Option<&str>,
+) -> Option<RecipeFields> {
+    let model = state.config.llm.as_ref()?.vision_model().to_string();
+    let pages = if photos.len() == 1 {
+        "this photo".to_string()
+    } else {
+        format!("these {} photos", photos.len())
+    };
+    let mut text = format!("Transcribe the recipe in {pages}.");
+    if let Some(hint) = hint.map(str::trim).filter(|h| !h.is_empty()) {
+        text.push_str(&format!("\n\nA note from the cook: {hint}"));
+    }
+    let ask = Ask {
+        tag: "photos",
+        model: &model,
+        system: PHOTO_SYSTEM,
+        user: &text,
+        schema: schema(),
+        max_tokens: 4000,
+        timeout: Duration::from_secs(90),
+    };
+    let out = send(
+        state,
+        &ask,
+        UserContent::Pages {
+            photos,
+            text: &text,
         },
     )
     .await?;
@@ -323,6 +424,44 @@ mod tests {
         let refused = json!({"stop_reason": "refusal", "content": []});
         assert!(reply_json(LlmProvider::Anthropic, &refused).is_none());
         assert!(schema()["required"].as_array().unwrap().len() == 13);
+    }
+
+    #[test]
+    fn photos_go_before_the_text_labelled_by_page() {
+        let photos = [
+            Photo {
+                media_type: "image/jpeg",
+                bytes: vec![1, 2, 3],
+            },
+            Photo {
+                media_type: "image/jpeg",
+                bytes: vec![4, 5],
+            },
+        ];
+        let pages = UserContent::Pages {
+            photos: &photos,
+            text: "Transcribe.",
+        };
+        let a = user_content(LlmProvider::Anthropic, pages);
+        assert_eq!(a.as_array().unwrap().len(), 5);
+        assert_eq!(a[0], json!({"type": "text", "text": "Page 1:"}));
+        assert_eq!(
+            a[1]["source"],
+            json!({"type": "base64", "media_type": "image/jpeg", "data": "AQID"})
+        );
+        assert_eq!(a[2]["text"], "Page 2:");
+        assert_eq!(a[4], json!({"type": "text", "text": "Transcribe."}));
+        let o = user_content(LlmProvider::OpenAi, pages);
+        assert_eq!(
+            o[1],
+            json!({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AQID", "detail": "high"}})
+        );
+        let d = user_content(LlmProvider::DeepSeek, pages);
+        assert_eq!(d[3]["image_url"]["url"], "data:image/jpeg;base64,BAU=");
+        assert_eq!(
+            user_content(LlmProvider::OpenAi, UserContent::Text("hi")),
+            json!("hi")
+        );
     }
 
     #[test]

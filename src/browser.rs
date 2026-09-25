@@ -19,8 +19,6 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use crate::scraper::USER_AGENT;
-
 const CANDIDATES: [&str; 4] = [
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
@@ -33,10 +31,49 @@ const RECIPE_READY: &str = r#"[...document.querySelectorAll('script[type="applic
   .some((s) => /Recipe/.test(s.textContent || ""))
   || !!document.querySelector('[itemprop="recipeIngredient"], [class*="ingredient"]')"#;
 
-static CHALLENGE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)just a moment|attention required|access denied|verify you are human|robot")
-        .unwrap()
-});
+static VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(\d+)\.\d+\.\d+\.\d+\b").unwrap());
+
+#[cfg(target_os = "macos")]
+const PLATFORM: &str = "Macintosh; Intel Mac OS X 10_15_7";
+#[cfg(target_os = "windows")]
+const PLATFORM: &str = "Windows NT 10.0; Win64; x64";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const PLATFORM: &str = "X11; Linux x86_64";
+
+/// Chrome's reduced User-Agent for the major version in `chromium --version` output. Headless
+/// mode's own says "HeadlessChrome", which bot checks refuse; this one keeps the real
+/// version and platform, so it agrees with the client hints Chromium sends.
+pub fn user_agent_for(version_output: &str) -> Option<String> {
+    let major = VERSION.captures(version_output)?.get(1)?.as_str();
+    Some(format!(
+        "Mozilla/5.0 ({PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    ))
+}
+
+/// The User-Agent for this Chromium, asked of the binary once. `None` leaves Chromium's own.
+async fn user_agent(exe: &Path) -> Option<&'static str> {
+    static UA: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
+    UA.get_or_init(|| async {
+        let out = Command::new(exe)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        let out = tokio::time::timeout(Duration::from_secs(10), out).await;
+        let ua = out
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|o| user_agent_for(&String::from_utf8_lossy(&o.stdout)));
+        if ua.is_none() {
+            tracing::warn!("[browser] couldn't read Chromium's version; using its own User-Agent");
+        }
+        ua
+    })
+    .await
+    .as_deref()
+}
 
 // Images, media and fonts are never needed for the DOM
 const BLOCKED: [&str; 18] = [
@@ -93,7 +130,11 @@ impl Browser {
 
 async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String> {
     let profile = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let mut child = Command::new(exe)
+    let mut command = Command::new(exe);
+    if let Some(ua) = user_agent(exe).await {
+        command.arg(format!("--user-agent={ua}"));
+    }
+    let mut child = command
         .args([
             "--headless=new",
             "--no-sandbox",
@@ -107,7 +148,6 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
             "--window-size=1366,900",
             "--lang=en-US",
             "--remote-debugging-port=0",
-            &format!("--user-agent={USER_AGENT}"),
             &format!("--user-data-dir={}", profile.path().display()),
             "about:blank",
         ])
@@ -259,7 +299,7 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
 
     // Bot challenges usually redirect or reload once solved; give them a moment
     for _ in 0..8 {
-        if !CHALLENGE_TITLE.is_match(&cdp.title().await) {
+        if !crate::scraper::is_challenge_title(&cdp.title().await) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -276,7 +316,7 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    if CHALLENGE_TITLE.is_match(&cdp.title().await) {
+    if crate::scraper::is_challenge_title(&cdp.title().await) {
         return Err("Blocked by the site".into());
     }
     let html = cdp.eval("document.documentElement.outerHTML").await?;
@@ -285,4 +325,19 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
     html.as_str()
         .map(String::from)
         .ok_or_else(|| "Empty page".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_agent_follows_the_installed_version() {
+        let ua = user_agent_for("Chromium 140.0.7339.185 built on Debian GNU/Linux 12 (bookworm)")
+            .unwrap();
+        assert!(ua.contains("Chrome/140.0.0.0 Safari/537.36"), "{ua}");
+        assert!(!ua.contains("Headless"));
+        assert!(user_agent_for("Google Chrome 131.0.6778.85 ").is_some());
+        assert_eq!(user_agent_for("chromium: not found"), None);
+    }
 }

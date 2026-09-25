@@ -692,3 +692,31 @@
     transform: translateY(-10px) scale(0.98);
   }
 }
+
+/* ── Settings lists (More, Connect, Import) ─────────────────── */
+/* Quiet single-column groups: small muted heading, compact rows, plain muted icons */
+@layer components {
+  .settings-heading {
+    margin: 0 0 0.5rem;
+    padding-inline: 1rem;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .settings-row {
+    min-height: 3.5rem;
+    padding: 0.625rem 1rem;
+  }
+  .settings-row + .settings-row::before {
+    left: 3.125rem;
+    right: 0;
+  }
+  .settings-icon {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    color: var(--text-muted);
+  }
+}

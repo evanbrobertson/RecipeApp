@@ -115,7 +115,36 @@ fn bootstrap_sql() -> String {
     kind text NOT NULL,
     created_at integer NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS recipe_events_recipe_kind_idx ON recipe_events (recipe_id, kind, created_at);",
+  CREATE INDEX IF NOT EXISTS recipe_events_recipe_kind_idx ON recipe_events (recipe_id, kind, created_at);
+
+  -- Wee Chef's import checks (src/checks.rs). Derived data: not in backups.
+  CREATE TABLE IF NOT EXISTS recipe_checks (
+    recipe_id integer PRIMARY KEY NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    status text NOT NULL,
+    model text,
+    answers text,
+    original text,
+    fixed_at integer,
+    fixed_hash text,
+    mode text,
+    attempts integer DEFAULT 0 NOT NULL,
+    input_tokens integer,
+    error text,
+    queued_at integer NOT NULL,
+    checked_at integer
+  );
+  CREATE TABLE IF NOT EXISTS recipe_flags (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    recipe_id integer NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    field text NOT NULL,
+    item_text text,
+    kind text NOT NULL,
+    state text NOT NULL,
+    detail text,
+    created_at integer NOT NULL,
+    resolved_at integer
+  );
+  CREATE INDEX IF NOT EXISTS recipe_flags_recipe_idx ON recipe_flags (recipe_id, state);",
         recipes_table_sql("recipes")
     )
 }
@@ -199,6 +228,13 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
         .any(|c| c.name == "color")
     {
         conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN color text")?;
+    }
+    // Wee Chef's checks: what a fix wrote (for Undo) and why a recipe was queued
+    let checks = columns(conn, "recipe_checks")?;
+    for (name, ty) in [("fixed_hash", "text"), ("mode", "text")] {
+        if !checks.is_empty() && !checks.iter().any(|c| c.name == name) {
+            conn.execute_batch(&format!("ALTER TABLE recipe_checks ADD COLUMN {name} {ty}"))?;
+        }
     }
     Ok(())
 }

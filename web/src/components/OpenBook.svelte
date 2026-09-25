@@ -7,7 +7,7 @@
   import ChefHat from "@lucide/svelte/icons/chef-hat"
   import X from "@lucide/svelte/icons/x"
   import { api } from "../lib/api"
-  import { bookPalette, type ShelfBook } from "../lib/books"
+  import { bookPalette, edgeShadow, type ShelfBook } from "../lib/books"
   import type { CookbookDetail } from "../lib/recipe"
 
   let { book, onclose }: { book: ShelfBook | null; onclose: () => void } = $props()
@@ -62,7 +62,7 @@
       style:--cloth={palette.cloth}
       style:--shade={palette.shade}
       style:--foil={palette.foil}
-      style:--edge={palette.border}
+      style:--edge={edgeShadow(palette)}
       role="dialog"
       aria-modal="true"
       aria-label={book.name}

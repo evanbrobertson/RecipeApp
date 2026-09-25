@@ -14,7 +14,7 @@
     ontoggle?: (id: number) => void
     /** Why it's suggested, under the title (Try next). */
     reason?: string
-    /** The reason was written by the AI layer. */
+    /** The reason was written by Wee Chef. */
     aiReason?: boolean
     /** Replaces the category/time line (Fresh in the box: "Today · from a link"). */
     meta?: string

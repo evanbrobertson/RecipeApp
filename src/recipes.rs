@@ -293,7 +293,11 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
     if changed == 0 {
         return Err(AppError::not_found("Recipe not found"));
     }
-    require_recipe(conn, id)
+    let recipe = require_recipe(conn, id)?;
+    // Wee Chef's "take a look" flags whose line is gone are done with
+    crate::checks::resolve_missing(conn, &recipe)?;
+    crate::checks::note_edit(conn, id)?;
+    Ok(recipe)
 }
 
 pub fn delete_recipes(conn: &Connection, ids: &[i64]) -> AppResult<usize> {
@@ -343,7 +347,26 @@ pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Reci
         }
     }
     let fields = crate::scraper::scrape_recipe(state, &url).await?;
-    create_recipe(&state.db.lock(), fields, "url")
+    create_checked(state, fields, "url")
+}
+
+/// Tidies an imported recipe, saves it and, when it's new, remembers what the tidy
+/// dropped (for Undo) and queues Wee Chef's check of it.
+pub(crate) fn create_checked(
+    state: &AppState,
+    mut fields: RecipeFields,
+    source: &str,
+) -> AppResult<(Recipe, bool)> {
+    let tidied = crate::checks::tidy_import(&mut fields, source);
+    let conn = state.db.lock();
+    let (recipe, is_new) = create_recipe(&conn, fields, source)?;
+    if is_new {
+        if let Some(undo) = tidied {
+            crate::checks::remember_tidy(&conn, &recipe, undo)?;
+        }
+        crate::checks::queue(state, &conn, &[recipe.id], crate::checks::Mode::Import);
+    }
+    Ok((recipe, is_new))
 }
 
 /// Fields [`refresh_from_source`] can fill or overwrite, as json keys.
@@ -383,7 +406,8 @@ pub async fn refresh_from_source(
         current.url.clone().filter(|u| is_http(u)).ok_or_else(|| {
             AppError::bad_request("This recipe has no source URL to refresh from")
         })?;
-    let scraped = crate::scraper::scrape_recipe(state, &url).await?;
+    let mut scraped = crate::scraper::scrape_recipe(state, &url).await?;
+    crate::checks::tidy(&mut scraped, crate::checks::TidyScope::Scrape);
 
     let wants = |key: &str| overwrite.contains(&key);
     let blank = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
@@ -488,20 +512,21 @@ pub async fn refresh_from_source(
 static URL_ONLY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*(https?://\S+)\s*$").unwrap());
 
-/// Imports a recipe from pasted text. A lone URL is scraped; otherwise Claude parses
-/// the text when configured, with the built-in heuristic parser as the fallback.
+/// Imports a recipe from pasted text. A lone URL is scraped; otherwise Wee Chef (the AI
+/// helper) parses the text when configured, with the built-in heuristic parser as the fallback.
 pub async fn import_from_text(
     state: &AppState,
     text: &str,
-    use_claude: bool,
+    use_ai: bool,
 ) -> AppResult<(Recipe, bool)> {
     if let Some(m) = URL_ONLY.captures(text) {
         return import_from_url(state, &m[1]).await;
     }
     let mut fields = None;
-    if use_claude {
+    if use_ai {
         fields = crate::llm::extract_recipe(state, text).await;
     }
+    // Tidied in create_checked; the tidy never empties a list
     let mut fields = fields.unwrap_or_else(|| crate::text_parser::parse_recipe_text(text).recipe);
 
     if fields.ingredients.is_empty() && fields.instructions.is_empty() {
@@ -511,14 +536,13 @@ pub async fn import_from_text(
         ));
     }
 
-    let conn = state.db.lock();
     // Keep a source link if one was pasted alongside the text, unless it's already saved
     if let Some(url) = &fields.url
-        && find_by_url(&conn, url)?.is_some()
+        && find_by_url(&state.db.lock(), url)?.is_some()
     {
         fields.url = None;
     }
-    create_recipe(&conn, fields, "text")
+    create_checked(state, fields, "text")
 }
 
 // ─── Files & backups ─────────────────────────────────────────────────────────
@@ -580,10 +604,23 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
         error: None,
     };
     let conn = state.db.lock();
-    for item in found {
+    let mut to_check = Vec::new();
+    for mut item in found {
         let result = (|| -> AppResult<()> {
+            let tidied = (!item.restored)
+                .then(|| crate::checks::tidy_import(&mut item.fields, "import"))
+                .flatten();
             let (recipe, is_new) = create_recipe(&conn, item.fields, "import")?;
             if is_new {
+                if item.restored {
+                    // Saved as it was backed up; no check or tidy ever rewrites it
+                    crate::checks::mark_restored(&conn, recipe.id)?;
+                } else {
+                    if let Some(undo) = tidied {
+                        crate::checks::remember_tidy(&conn, &recipe, undo)?;
+                    }
+                    to_check.push(recipe.id);
+                }
                 summary.created.push(CreatedRef {
                     id: recipe.id,
                     title: recipe.title.clone(),
@@ -607,9 +644,11 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
             Ok(())
         })();
         if let Err(err) = result {
-            tracing::warn!("[import] skipped a recipe in {name}: {err}");
+            // Not the file name: it can say whose recipes these are
+            tracing::warn!("[import] skipped a recipe in an imported file: {err}");
         }
     }
+    crate::checks::queue(state, &conn, &to_check, crate::checks::Mode::Import);
     summary
 }
 

@@ -13,6 +13,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 hmac = "0.12"
+http-body-util = "0.1"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 pdf-extract = "0.7"
 percent-encoding = "2"
@@ -21,6 +22,7 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "deflate", "json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 scraper = "0.21"
+sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "ureq", "rustls", "tracing"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_urlencoded = "0.7"
@@ -35,10 +37,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 webp = { version = "0.3.1", default-features = false }
+# Pre-release: pinned exactly. Browser TLS/HTTP2 fingerprints for recipe pages (src/scraper.rs)
+wreq = { version = "=6.0.0-rc.31", features = ["gzip", "brotli", "deflate", "zstd", "cookies"] }
+wreq-util = "=3.0.0-rc.14"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-
-[dev-dependencies]
-http-body-util = "0.1"
 
 [profile.release]
 opt-level = 3

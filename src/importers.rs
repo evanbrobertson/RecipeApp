@@ -20,6 +20,8 @@ pub struct ImportedRecipe {
     pub cookbooks: Vec<String>,
     /// When it was cooked (unix seconds), from a Crumb backup's cook log.
     pub cooked: Vec<i64>,
+    /// From a Crumb backup: already the cook's own, so no clean-up or Wee Chef check.
+    pub restored: bool,
 }
 
 impl From<RecipeFields> for ImportedRecipe {
@@ -28,6 +30,7 @@ impl From<RecipeFields> for ImportedRecipe {
             fields,
             cookbooks: Vec::new(),
             cooked: Vec::new(),
+            restored: false,
         }
     }
 }
@@ -128,6 +131,7 @@ fn from_paprika(p: &Map<String, Value>) -> Option<ImportedRecipe> {
         },
         cookbooks: categories,
         cooked: Vec::new(),
+        restored: false,
     })
 }
 
@@ -224,6 +228,7 @@ fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                restored: true,
             }),
             Err(err) => {
                 tracing::warn!("[import] skipped a backup recipe: {err}");

@@ -1,7 +1,9 @@
 //! Try next and Surprise me as a service: reads the library and the cook log, ranks it
-//! with `suggest`, and, when an AI API is configured, has the model re-rank the top
-//! candidates and write one-line blurbs. The AI call runs in the background and is
-//! cached per day, so it never slows a page down; the algorithm's list always stands in.
+//! with `suggest`, and, when an AI API is configured, has Wee Chef (the model) re-rank
+//! the top candidates and write one-line blurbs. On about one day in three the same call
+//! also asks for one recipe idea that isn't in the box, shown as the last card. The AI
+//! call runs in the background and is cached per day, so it never slows a page down; the
+//! algorithm's list always stands in.
 
 use axum::http::HeaderMap;
 use rusqlite::Connection;
@@ -23,12 +25,21 @@ const AI_CANDIDATES: usize = 12;
 const AI_CALLS_PER_DAY: u32 = 3;
 const AI_FAILURE_BACKOFF_SECS: i64 = 3600;
 const BLURB_MAX_CHARS: usize = 120;
+const IDEA_TITLE_MAX_CHARS: usize = 80;
+/// Library titles sent so the idea doesn't repeat one (the check afterwards uses all).
+const IDEA_AVOID_TITLES: usize = 150;
 
 const SYSTEM: &str = "You help one home cook choose what to cook next from their own recipe box.
 Pick 4 recipes from `candidates` only, by id. Favour variety (different main ingredients and cuisines), things they haven't made, and what suits today.
 Use their recent cooking as a taste signal, but don't repeat it.
 For each pick, write one blurb of at most 90 characters, in the second person and concrete (why now, or why it fits them).
 Use only facts in the data, with no invented ingredients, times or claims, and no exclamation marks.";
+
+/// Added to SYSTEM on idea days.
+const SYSTEM_IDEA: &str = "
+Also suggest one `idea`: a well-known dish they don't have yet that fits their taste (their recent cooking, cuisines and cookbooks).
+It must not be any title in `idea.notTheseTitles`, or a version of one. Give its usual name as `title` (a few words, no brand or site names),
+and `why` in at most 90 characters, e.g. \"You love Oyakodon, so try Katsudon next\".";
 
 // ─── The cook's time zone ───────────────────────────────────────────────────
 
@@ -214,10 +225,22 @@ pub struct Item {
     pub ai: bool,
 }
 
+/// A dish Wee Chef thinks the cook would like that isn't in their box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Idea {
+    pub title: String,
+    pub why: String,
+    /// A web search for the recipe, to find a page to import.
+    pub search_url: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Suggestions {
     pub items: Vec<Item>,
     pub ai: AiStatus,
+    /// Shown after the items (it takes the last item's place) on idea days.
+    pub idea: Option<Idea>,
 }
 
 fn filtered(cands: Vec<Features>, opts: &Options) -> Vec<Features> {
@@ -235,10 +258,12 @@ fn filtered(cands: Vec<Features>, opts: &Options) -> Vec<Features> {
 
 /// (local day, recipe count, last edit, last cook, tz offset, southern)
 type Key = (i64, i64, i64, i64, i32, bool);
+/// The AI's (recipe id, blurb) picks in its order.
+type Picks = Vec<(i64, String)>;
 
 #[derive(Default)]
 struct AiInner {
-    cached: Option<(Key, Vec<(i64, String)>)>,
+    cached: Option<(Key, Picks, Option<Idea>)>,
     failed: Option<(Key, i64)>,
     in_flight: Option<Key>,
     day: i64,
@@ -276,6 +301,90 @@ pub fn apply_ai(
     out
 }
 
+/// The idea is never the first card: it takes the last one's place, so it needs room for
+/// at least one recipe before it (none with `limit` 1 or no recipes to suggest).
+fn place_idea<T>(chosen: &mut Vec<T>, idea: &mut Option<Idea>, limit: usize) {
+    if idea.is_none() {
+        return;
+    }
+    if chosen.is_empty() || limit < 2 {
+        *idea = None;
+    } else if chosen.len() >= limit {
+        chosen.truncate(limit - 1);
+    }
+}
+
+/// Whether today's Try next gets an idea card: about one local day in `one_in`, fixed
+/// per day so it doesn't come and go between reloads.
+pub fn idea_day(local_day: i64, one_in: u32) -> bool {
+    if one_in == 0 {
+        return false;
+    }
+    // splitmix64 finaliser: consecutive days land far apart
+    let mut z = (local_day as u64).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^= z >> 31;
+    z.is_multiple_of(one_in as u64)
+}
+
+/// Lower-case words with the punctuation dropped, space-padded for
+/// whole-word `contains` checks.
+fn normalize_title(t: &str) -> String {
+    let words: Vec<String> = t
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    format!(" {} ", words.join(" "))
+}
+
+/// The idea is taken if one title contains the other as whole words ("Katsudon" and
+/// "Easy chicken katsudon" are the same dish).
+fn duplicates(idea: &str, titles: &[String]) -> bool {
+    let idea = normalize_title(idea);
+    idea.trim().is_empty()
+        || titles.iter().any(|t| {
+            let t = normalize_title(t);
+            !t.trim().is_empty() && (idea.contains(&t) || t.contains(&idea))
+        })
+}
+
+pub fn search_url(title: &str) -> String {
+    reqwest::Url::parse_with_params(
+        "https://www.google.com/search",
+        &[("q", format!("{title} recipe"))],
+    )
+    .map(String::from)
+    .unwrap_or_default()
+}
+
+/// The model's idea, if it's well formed and not already in the box.
+pub fn parse_idea(reply: &Value, titles: &[String]) -> Option<Idea> {
+    let idea = reply.get("idea")?;
+    let clean = |k: &str, max: usize| -> Option<String> {
+        let v = idea
+            .get(k)?
+            .as_str()?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let v: String = v.chars().take(max).collect();
+        let v = v.trim_end().to_string();
+        (!v.is_empty()).then_some(v)
+    };
+    let title = clean("title", IDEA_TITLE_MAX_CHARS)?;
+    let why = clean("why", BLURB_MAX_CHARS)?;
+    if duplicates(&title, titles) {
+        return None;
+    }
+    Some(Idea {
+        search_url: search_url(&title),
+        title,
+        why,
+    })
+}
+
 /// Valid picks from the model's reply: known candidate ids, no repeats, short blurbs.
 pub fn parse_ai(reply: &Value, candidates: &HashSet<i64>) -> Vec<(i64, String)> {
     let mut out: Vec<(i64, String)> = Vec::new();
@@ -299,8 +408,8 @@ pub fn parse_ai(reply: &Value, candidates: &HashSet<i64>) -> Vec<(i64, String)> 
     out
 }
 
-fn schema() -> Value {
-    json!({
+fn schema(with_idea: bool) -> Value {
+    let mut schema = json!({
         "type": "object",
         "properties": {
             "picks": {
@@ -315,11 +424,21 @@ fn schema() -> Value {
         },
         "required": ["picks"],
         "additionalProperties": false
-    })
+    });
+    if with_idea {
+        schema["properties"]["idea"] = json!({
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "why": {"type": "string"}},
+            "required": ["title", "why"],
+            "additionalProperties": false
+        });
+        schema["required"] = json!(["picks", "idea"]);
+    }
+    schema
 }
 
 /// What the model sees: no ingredient lists, steps, notes, links or images.
-fn payload(inputs: &Inputs, ctx: &Ctx, candidates: &[Pick]) -> Value {
+fn payload(inputs: &Inputs, ctx: &Ctx, candidates: &[Pick], with_idea: bool) -> Value {
     let by_id: HashMap<i64, &Features> = inputs.cands.iter().map(|f| (f.id, f)).collect();
     let now = ctx.now;
     let mut recent: Vec<(&Features, i64)> = inputs
@@ -372,12 +491,27 @@ fn payload(inputs: &Inputs, ctx: &Ctx, candidates: &[Pick]) -> Value {
             }))
         })
         .collect();
-    json!({
+    let mut body = json!({
         "today": {"weekday": ctx.weekday_name(), "timeOfDay": ctx.time_of_day(), "season": ctx.season()},
         "recentlyCooked": recent,
         "openedNotCooked": opened,
         "candidates": candidates,
-    })
+    });
+    if with_idea {
+        // Short, de-duplicated titles; newest recipes first when the box is big
+        let mut by_new: Vec<&Features> = inputs.cands.iter().collect();
+        by_new.sort_by_key(|f| std::cmp::Reverse(f.id));
+        let mut seen = HashSet::new();
+        let titles: Vec<String> = by_new
+            .iter()
+            .map(|f| normalize_title(&f.title).trim().to_string())
+            .filter(|t| !t.is_empty() && seen.insert(t.clone()))
+            .map(|t| t.chars().take(40).collect())
+            .take(IDEA_AVOID_TITLES)
+            .collect();
+        body["idea"] = json!({"notTheseTitles": titles});
+    }
+    body
 }
 
 /// Clears the in-flight marker when a call ends, even by panic, unless a newer call
@@ -396,7 +530,22 @@ impl Drop for InFlight {
     }
 }
 
-async fn run_ai(state: AppState, key: Key, body: Value, candidates: HashSet<i64>) {
+/// What one background call needs.
+struct Call {
+    key: Key,
+    body: Value,
+    candidates: HashSet<i64>,
+    /// Every library title, for the idea's duplicate check; None when no idea is asked.
+    idea_titles: Option<Vec<String>>,
+}
+
+async fn run_ai(state: AppState, call: Call) {
+    let Call {
+        key,
+        body,
+        candidates,
+        idea_titles,
+    } = call;
     let _flight = InFlight {
         state: state.clone(),
         key,
@@ -407,21 +556,33 @@ async fn run_ai(state: AppState, key: Key, body: Value, candidates: HashSet<i64>
         .clone()
         .or_else(|| state.config.llm.as_ref().map(|l| l.model.clone()))
         .unwrap_or_default();
+    let system = if idea_titles.is_some() {
+        format!("{SYSTEM}{SYSTEM_IDEA}")
+    } else {
+        SYSTEM.to_string()
+    };
     let reply = crate::llm::ask(
         &state,
         crate::llm::Ask {
             tag: "suggest",
             model: &model,
-            system: SYSTEM,
+            system: &system,
             user: &body.to_string(),
-            schema: schema(),
+            schema: schema(idea_titles.is_some()),
             // Thinking models count their reasoning against this too
             max_tokens: 4000,
             timeout: Duration::from_secs(20),
         },
     )
     .await;
-    let picks = reply.map(|r| parse_ai(&r, &candidates)).unwrap_or_default();
+    let picks = reply
+        .as_ref()
+        .map(|r| parse_ai(r, &candidates))
+        .unwrap_or_default();
+    let idea = reply
+        .as_ref()
+        .zip(idea_titles.as_deref())
+        .and_then(|(r, titles)| parse_idea(r, titles));
     let mut inner = state.ai.lock();
     // A newer call (the library changed meanwhile) owns the result now
     if inner.in_flight != Some(key) {
@@ -430,7 +591,7 @@ async fn run_ai(state: AppState, key: Key, body: Value, candidates: HashSet<i64>
     if picks.is_empty() {
         inner.failed = Some((key, now_secs() + AI_FAILURE_BACKOFF_SECS));
     } else {
-        inner.cached = Some((key, picks));
+        inner.cached = Some((key, picks, idea));
     }
 }
 
@@ -458,6 +619,7 @@ pub fn suggestions(state: &AppState, ctx: Ctx, opts: &Options) -> AppResult<Sugg
         && opts.only.is_none()
         && opts.max_minutes.is_none();
     let mut status = AiStatus::Off;
+    let mut idea: Option<Idea> = None;
     let mut chosen: Vec<(i64, String, ReasonKind, bool)> = algo
         .iter()
         .map(|p| (p.id, p.reason.clone(), p.reason_kind, false))
@@ -474,7 +636,7 @@ pub fn suggestions(state: &AppState, ctx: Ctx, opts: &Options) -> AppResult<Sugg
             ctx.southern,
         );
         let mut inner = state.ai.lock();
-        if let Some((k, picks)) = &inner.cached
+        if let Some((k, picks, cached_idea)) = &inner.cached
             && *k == key
         {
             let eligible: HashSet<i64> =
@@ -484,6 +646,7 @@ pub fn suggestions(state: &AppState, ctx: Ctx, opts: &Options) -> AppResult<Sugg
                     .collect();
             chosen = apply_ai(picks, &eligible, &algo, limit);
             status = AiStatus::Ready;
+            idea = cached_idea.clone();
         } else if inner.in_flight == Some(key) {
             status = AiStatus::Pending;
         } else if inner
@@ -502,13 +665,25 @@ pub fn suggestions(state: &AppState, ctx: Ctx, opts: &Options) -> AppResult<Sugg
                 let pool =
                     suggest::rank(&cands, &inputs.hist, &ctx, &HashSet::new(), AI_CANDIDATES);
                 let ids: HashSet<i64> = pool.iter().map(|p| p.id).collect();
-                let body = payload(&inputs, &ctx, &pool);
-                tokio::spawn(run_ai(state.clone(), key, body, ids));
+                let with_idea = idea_day(key.0, state.config.idea_one_in);
+                let body = payload(&inputs, &ctx, &pool, with_idea);
+                let idea_titles =
+                    with_idea.then(|| inputs.cands.iter().map(|f| f.title.clone()).collect());
+                tokio::spawn(run_ai(
+                    state.clone(),
+                    Call {
+                        key,
+                        body,
+                        candidates: ids,
+                        idea_titles,
+                    },
+                ));
                 status = AiStatus::Pending;
             }
         }
     }
 
+    place_idea(&mut chosen, &mut idea, limit);
     let ids: Vec<i64> = chosen.iter().map(|c| c.0).collect();
     let summaries = summaries_by_ids(&state.db.lock(), &ids)?;
     let items = chosen
@@ -523,7 +698,11 @@ pub fn suggestions(state: &AppState, ctx: Ctx, opts: &Options) -> AppResult<Sugg
             })
         })
         .collect();
-    Ok(Suggestions { items, ai: status })
+    Ok(Suggestions {
+        items,
+        ai: status,
+        idea,
+    })
 }
 
 /// Surprise me: a random recipe id, or None when the library (after filters) is empty.
@@ -570,6 +749,80 @@ mod tests {
         assert!(!is_southern("America/Toronto"));
         assert!(!is_southern("Europe/London"));
         assert!(!is_southern(""));
+    }
+
+    #[test]
+    fn an_idea_needs_room_for_a_recipe_first() {
+        let idea = || {
+            Some(Idea {
+                title: "Shakshuka".into(),
+                why: "Eggs".into(),
+                search_url: search_url("Shakshuka"),
+            })
+        };
+        let (mut chosen, mut i) = (vec![1, 2, 3], idea());
+        place_idea(&mut chosen, &mut i, 1);
+        assert!(i.is_none(), "limit 1 has no room for an idea");
+        assert_eq!(chosen, [1, 2, 3]);
+        let (mut chosen, mut i) = (vec![1, 2], idea());
+        place_idea(&mut chosen, &mut i, 2);
+        assert!(i.is_some());
+        assert_eq!(chosen, [1]);
+        let (mut chosen, mut i) = (vec![1], idea());
+        place_idea(&mut chosen, &mut i, 5);
+        assert!(i.is_some());
+        assert_eq!(chosen, [1]);
+        let (mut chosen, mut i) = (Vec::<i32>::new(), idea());
+        place_idea(&mut chosen, &mut i, 5);
+        assert!(i.is_none());
+    }
+
+    #[test]
+    fn idea_days_are_about_one_in_three_and_stable() {
+        let days: Vec<bool> = (19_000..22_000).map(|d| idea_day(d, 3)).collect();
+        let n = days.iter().filter(|d| **d).count();
+        assert!((850..=1150).contains(&n), "{n} idea days in 3000");
+        // Same answer for the same day, every time
+        assert_eq!(
+            days,
+            (19_000..22_000).map(|d| idea_day(d, 3)).collect::<Vec<_>>()
+        );
+        // Not a fixed weekly pattern: some weeks have none, some have several
+        assert!(days.windows(7).any(|w| w.iter().all(|d| !d)));
+        assert!(
+            days.windows(7)
+                .any(|w| w.iter().filter(|d| **d).count() >= 4)
+        );
+        assert!((0..100).all(|d| idea_day(d, 1)));
+        assert!((0..100).all(|d| !idea_day(d, 0)));
+    }
+
+    #[test]
+    fn ideas_must_be_new_dishes() {
+        let titles = vec![
+            "Oyakodon (Chicken & Egg Rice Bowl)".to_string(),
+            "Katsudon!".to_string(),
+            "Pad Thai".to_string(),
+        ];
+        let reply = |title: &str| json!({"idea": {"title": title, "why": " You love  Oyakodon "}});
+        let idea = parse_idea(&reply("Chicken Karaage"), &titles).unwrap();
+        assert_eq!(idea.title, "Chicken Karaage");
+        assert_eq!(idea.why, "You love Oyakodon");
+        assert_eq!(
+            idea.search_url,
+            "https://www.google.com/search?q=Chicken+Karaage+recipe"
+        );
+        // Case, punctuation and extra words don't make it new
+        assert!(parse_idea(&reply("KATSUDON"), &titles).is_none());
+        assert!(parse_idea(&reply("Easy pork katsudon"), &titles).is_none());
+        assert!(parse_idea(&reply("pad-thai"), &titles).is_none());
+        assert!(parse_idea(&reply("Oyakodon"), &titles).is_none());
+        // Whole words only: "Thai" isn't "Pad Thai"
+        assert!(parse_idea(&reply("Thai green curry"), &titles).is_some());
+        assert!(parse_idea(&reply("  "), &titles).is_none());
+        assert!(parse_idea(&json!({"picks": []}), &titles).is_none());
+        assert!(schema(true)["required"].as_array().unwrap().len() == 2);
+        assert!(schema(false)["properties"].get("idea").is_none());
     }
 
     #[test]

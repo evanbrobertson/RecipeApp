@@ -4,11 +4,13 @@
    * (one item per line), which is much faster than item-by-item inputs, especially on phones.
    */
   import Check from "@lucide/svelte/icons/check"
+  import ChefHat from "@lucide/svelte/icons/chef-hat"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import Plus from "@lucide/svelte/icons/plus"
   import Trash2 from "@lucide/svelte/icons/trash-2"
   import { autosize } from "../lib/autosize"
-  import type { RecipeFields, RecipeSection } from "../lib/recipe"
+  import { quote, reviewText } from "../lib/checks"
+  import type { CheckFlag, RecipeFields, RecipeSection } from "../lib/recipe"
 
   interface Props {
     initial?: Partial<RecipeFields>
@@ -16,8 +18,20 @@
     submitLabel?: string
     onsave: (fields: RecipeFields) => void
     oncancel: () => void
+    /** Lines Wee Chef thinks might need a look (review flags from its import check). */
+    flags?: CheckFlag[]
+    /** "Keep as is" on a flagged line. */
+    ondismiss?: (flag: CheckFlag) => void
   }
-  let { initial = {}, saving = false, submitLabel = "Save", onsave, oncancel }: Props = $props()
+  let {
+    initial = {},
+    saving = false,
+    submitLabel = "Save",
+    onsave,
+    oncancel,
+    flags = [],
+    ondismiss,
+  }: Props = $props()
 
   interface DraftSection {
     name: string
@@ -76,6 +90,71 @@
     { key: "recipeCuisine", label: "Cuisine", placeholder: "Italian" },
     { key: "author", label: "Author", placeholder: "" },
   ] as const
+
+  // ─── Wee Chef's hints ───
+  // A flag shows under the section that still has its line; editing the line away (or
+  // one of the fixes below) clears it, and the server resolves it on save.
+  const lines = (text: string) => text.split("\n").map((l) => l.trim())
+  function hintsFor(kind: "ingredients" | "instructions", section: DraftSection) {
+    const here = lines(section.text)
+    return flags.filter((f) => f.field === kind && f.state === "review" && here.includes(f.itemText))
+  }
+
+  type Fix = { label: string; run: () => void }
+  function fixFor(kind: "ingredients" | "instructions", si: number, f: CheckFlag): Fix | null {
+    const list = draft[kind]
+    const section = list[si]!
+    const all = section.text.split("\n")
+    const at = all.findIndex((l) => l.trim() === f.itemText)
+    if (at < 0) return null
+    const without = (drop: number) => all.filter((_, j) => j !== drop)
+    switch (f.kind) {
+      case "heading":
+        // A heading needs lines under it, or the empty section would vanish on save
+        if (!all.slice(at + 1).some((l) => l.trim())) return null
+        return {
+          label: "Make it a heading",
+          run: () => {
+            const name = f.itemText.replace(/[:.\s]+$/, "")
+            const before = all.slice(0, at).join("\n").trim()
+            const after = all.slice(at + 1).join("\n")
+            if (!before && !section.name.trim()) {
+              section.name = name
+              section.text = after
+            } else {
+              section.text = before
+              list.splice(si + 1, 0, { name, text: after })
+            }
+          },
+        }
+      case "junk":
+        return { label: "Remove it", run: () => (section.text = without(at).join("\n")) }
+      case "not_instruction":
+        return kind === "instructions"
+          ? {
+              label: "Move to notes",
+              run: () => {
+                section.text = without(at).join("\n")
+                draft.notes = [draft.notes.trim(), f.itemText].filter(Boolean).join("\n\n")
+              },
+            }
+          : null
+      case "fragment":
+        return at > 0
+          ? {
+              label: "Join with the step above",
+              run: () => {
+                const next = [...all]
+                next[at - 1] = `${next[at - 1]!.trimEnd()} ${next[at]!.trim()}`
+                next.splice(at, 1)
+                section.text = next.join("\n")
+              },
+            }
+          : null
+      default:
+        return null
+    }
+  }
 
   let error = $state("")
 
@@ -158,6 +237,31 @@
             ? "2 cups flour\n1 tsp salt"
             : "Preheat the oven to 180°C.\nMix the dry ingredients."}
         ></textarea>
+        {#each hintsFor(kind, section) as f (f.id)}
+          {@const fix = fixFor(kind, si, f)}
+          <div class="bg-tint rounded-ctl flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-3">
+            <p class="flex min-w-0 flex-[1_1_16rem] items-start gap-2 py-1.5 text-sm">
+              <ChefHat class="text-primary mt-px size-4 flex-none" aria-hidden="true" />
+              <span class="min-w-0 break-words">
+                <span class="sr-only">Wee Chef: </span>
+                <span class="font-bold">{quote(f.itemText, 60)}</span>
+                {reviewText(f)}
+              </span>
+            </p>
+            <div class="ml-auto flex flex-wrap gap-1">
+              {#if fix}
+                <button type="button" class="btn btn-outline px-3.5" onclick={fix.run}>
+                  {fix.label}
+                </button>
+              {/if}
+              {#if ondismiss}
+                <button type="button" class="btn btn-ghost px-3.5" onclick={() => ondismiss(f)}>
+                  Keep as is
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/each}
       </div>
     {/each}
   </div>

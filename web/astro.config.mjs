@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { brotliCompressSync, constants, gzipSync } from "node:zlib"
+import sentry from "@sentry/astro"
 import svelte from "@astrojs/svelte"
 import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "astro/config"
@@ -33,10 +34,39 @@ const precompress = () => ({
   },
 })
 
+const outDir = process.env.CRUMB_OUT_DIR ?? "./dist"
+
+/**
+ * Browser error reporting. The SDK only starts when the Rust server names a DSN on the page
+ * load (src/lib/sentry-boot.ts), so nothing here is environment-specific. With
+ * SENTRY_AUTH_TOKEN set (CI), the build emits hidden source maps, uploads them to Sentry and
+ * deletes them, so they are never served; without it, no maps are made.
+ */
+const sentryIntegration = () =>
+  sentry({
+    enabled: { client: true, server: false },
+    clientInitPath: "src/lib/sentry-boot.ts",
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    telemetry: false,
+    // The release comes from the server at runtime; CI creates and finalizes it
+    release: { name: process.env.SENTRY_RELEASE, inject: false, finalize: false },
+    sourcemaps: {
+      disable: !process.env.SENTRY_AUTH_TOKEN,
+      filesToDeleteAfterUpload: [`${outDir}/**/*.map`],
+    },
+    bundleSizeOptimizations: {
+      excludeDebugStatements: true,
+      excludeReplayIframe: true,
+      excludeReplayShadowDom: true,
+    },
+  })
+
 export default defineConfig({
   output: "static",
   // Parallel local builds (one per worktree or agent) can write to their own folder
-  outDir: process.env.CRUMB_OUT_DIR ?? "./dist",
+  outDir,
   trailingSlash: "ignore",
   build: { format: "directory", inlineStylesheets: "auto" },
   // The Rust server owns routing; in dev, proxy the API and dynamic pages to it
@@ -59,5 +89,5 @@ export default defineConfig({
       },
     },
   },
-  integrations: [svelte(), precompress()],
+  integrations: [svelte(), sentryIntegration(), precompress()],
 })

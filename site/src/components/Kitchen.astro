@@ -1,0 +1,505 @@
+---
+/**
+ * The hero illustration: a window with curtains over a farmhouse sink, and a stove with a
+ * pot and a kettle, against the tile wall. Flat shapes, 1.5–2px outlines. The counter and
+ * cabinets run past both edges of the viewBox (overflow is visible) so they meet the sides
+ * of the hero at any width. Colours are CSS custom properties so the dark theme can turn
+ * it into an evening kitchen (night sky, stars, a warm oven).
+ */
+const scallops = Array.from({ length: 8 }, () => "a14.75 10 0 0 1 -29.5 0").join(" ")
+// Cabinet doors running off both sides: left of the sink and right of the stove
+const doors = [
+  ...Array.from({ length: 16 }, (_, k) => -30 - 110 * k),
+  ...Array.from({ length: 12 }, (_, k) => 668 + 110 * k),
+]
+---
+
+<svg
+  class="kitchen"
+  viewBox="0 0 720 400"
+  preserveAspectRatio="xMidYMax meet"
+  role="img"
+  aria-labelledby="kitchen-title"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <title id="kitchen-title">
+    A cosy kitchen on a green tiled wall: a window with curtains and a plant on the sill above a
+    sink, and a stove with a steaming pot and a kettle.
+  </title>
+
+  <!-- Counter and cabinets, bled far past both edges -->
+  <rect class="cab" x="-3000" y="280" width="6720" height="140"></rect>
+  <rect class="top" x="-3000" y="266" width="6720" height="14"></rect>
+  <path class="ln" d="M-3000 266H3720M-3000 280H3720" fill="none"></path>
+  <g class="door">
+    {doors.map((x) => <rect x={x} y="294" width="96" height="96" rx="5" />)}
+    <rect x="262" y="294" width="72" height="96" rx="5"></rect>
+    <rect x="346" y="294" width="64" height="96" rx="5"></rect>
+    <rect x="118" y="326" width="58" height="64" rx="5"></rect>
+    <rect x="184" y="326" width="58" height="64" rx="5"></rect>
+  </g>
+  <g class="knob">
+    {doors.map((x, i) => <circle cx={i % 2 ? x + 12 : x + 84} cy="316" r="4" />)}
+    <circle cx="324" cy="316" r="4"></circle>
+    <circle cx="356" cy="316" r="4"></circle>
+    <circle cx="166" cy="340" r="4"></circle>
+    <circle cx="194" cy="340" r="4"></circle>
+  </g>
+
+  <!-- Window -->
+  <rect class="frame" x="70" y="36" width="220" height="182" rx="6"></rect>
+  <rect class="sky" x="82" y="48" width="196" height="158"></rect>
+  <g class="star">
+    <circle cx="112" cy="74" r="1.8"></circle>
+    <circle cx="148" cy="100" r="1.4"></circle>
+    <circle cx="206" cy="68" r="1.6"></circle>
+    <circle cx="254" cy="146" r="1.4"></circle>
+    <circle cx="120" cy="140" r="1.2"></circle>
+  </g>
+  <circle class="sun" cx="236" cy="92" r="18"></circle>
+  <path class="hill" d="M82 180Q136 152 186 176T278 168V206H82Z"></path>
+  <path class="hill2" d="M82 194Q150 176 210 192T278 190V206H82Z"></path>
+  <rect class="mullion" x="177" y="48" width="6" height="158"></rect>
+  <rect class="mullion" x="82" y="124" width="196" height="6"></rect>
+
+  <!-- Curtains -->
+  <path
+    class="curtain"
+    d="M62 50H106C102 98 94 128 86 150C98 170 102 196 100 216H62Z"
+  ></path>
+  <path
+    class="curtain"
+    d="M298 50H254C258 98 266 128 274 150C262 170 258 196 260 216H298Z"
+  ></path>
+  <path class="fold" d="M76 58C76 100 72 130 70 150M284 58C284 100 288 130 290 150" fill="none"
+  ></path>
+  <ellipse class="tie" cx="80" cy="151" rx="13" ry="4.5"></ellipse>
+  <ellipse class="tie" cx="280" cy="151" rx="13" ry="4.5"></ellipse>
+  <path class="valance" d={`M62 30H298V50 ${scallops}Z`}></path>
+  <g class="dot">
+    <circle cx="84" cy="42" r="2.4"></circle>
+    <circle cx="120" cy="40" r="2.4"></circle>
+    <circle cx="156" cy="42" r="2.4"></circle>
+    <circle cx="192" cy="40" r="2.4"></circle>
+    <circle cx="228" cy="42" r="2.4"></circle>
+    <circle cx="264" cy="40" r="2.4"></circle>
+  </g>
+  <rect class="rod" x="54" y="24" width="252" height="6" rx="3"></rect>
+  <circle class="rod" cx="54" cy="27" r="5"></circle>
+  <circle class="rod" cx="306" cy="27" r="5"></circle>
+
+  <!-- Sill, with a cup and a plant -->
+  <rect class="sill" x="58" y="216" width="244" height="10" rx="3"></rect>
+  <path class="cup" d="M114 200H130V212Q130 216 126 216H118Q114 216 114 212Z"></path>
+  <path class="ln" d="M130 203Q137 203 137 208Q137 213 130 212" fill="none"></path>
+  <path class="leaf-a" d="M250 190C236 182 232 168 238 158C248 166 252 178 250 190Z"></path>
+  <path class="leaf-b" d="M250 190C264 180 268 166 262 156C254 164 248 178 250 190Z"></path>
+  <path class="leaf-a" d="M250 190C245 174 247 158 252 148C257 158 257 176 250 190Z"></path>
+  <path class="pot" d="M238 194H262L258 216H242Z"></path>
+  <rect class="pot" x="235" y="189" width="30" height="7" rx="2"></rect>
+
+  <!-- Bread on a board -->
+  <rect class="board" x="-6" y="260" width="76" height="6" rx="3"></rect>
+  <path class="loaf" d="M2 260V248Q2 230 30 230Q58 230 58 248V260Z"></path>
+  <path class="score" d="M16 244L22 236M28 245L34 237M40 246L46 238" fill="none"></path>
+
+  <!-- Farmhouse sink and tap -->
+  <path class="tap-o" d="M180 264V236C180 214 208 214 208 236V244" fill="none"></path>
+  <path class="tap" d="M180 264V236C180 214 208 214 208 236V244" fill="none"></path>
+  <rect class="steel" x="170" y="258" width="20" height="8" rx="2"></rect>
+  <circle class="steel" cx="160" cy="260" r="5"></circle>
+  <path class="drop" d="M208 252Q204 258 204 260A4 4 0 0 0 212 260Q212 258 208 252Z"></path>
+  <rect class="apron" x="108" y="264" width="144" height="52" rx="7"></rect>
+  <rect class="lip" x="104" y="262" width="152" height="7" rx="3"></rect>
+  <path class="soap" d="M264 244H280V262Q280 266 276 266H268Q264 266 264 262Z"></path>
+  <path class="ln" d="M272 244V236H278" fill="none"></path>
+
+  <!-- Shelf with jars and a few cookbooks -->
+  <rect class="sill" x="440" y="120" width="224" height="8" rx="3"></rect>
+  <path class="bracket" d="M456 128V142L470 128ZM648 128V142L634 128Z"></path>
+  <rect class="glass" x="454" y="84" width="30" height="36" rx="6"></rect>
+  <rect class="fill-b" x="456" y="100" width="26" height="18" rx="4"></rect>
+  <rect class="lid-c" x="452" y="78" width="34" height="8" rx="3"></rect>
+  <rect class="glass" x="494" y="76" width="26" height="44" rx="6"></rect>
+  <rect class="fill-s" x="496" y="92" width="22" height="26" rx="4"></rect>
+  <rect class="lid-t" x="492" y="70" width="30" height="8" rx="3"></rect>
+  <rect class="glass" x="530" y="94" width="34" height="26" rx="6"></rect>
+  <rect class="fill-c" x="532" y="106" width="30" height="12" rx="4"></rect>
+  <rect class="lid-b" x="528" y="88" width="38" height="8" rx="3"></rect>
+  <path class="book-c" d="M586 120V84Q586 82 588 82H598Q600 82 600 84V120Z"></path>
+  <path class="book-t" d="M602 120V90Q602 88 604 88H614Q616 88 616 90V120Z"></path>
+  <path class="book-b" d="M618 120V80Q618 78 620 78H632Q634 78 634 80V120Z"></path>
+  <path class="book-s" d="M638 120L648 88Q649 86 651 87L660 90Q662 91 661 93L652 122Z"></path>
+  <path class="band" d="M588 90H598M588 112H598M620 86H632M620 112H632" fill="none"></path>
+
+  <!-- Stove -->
+  <rect class="enamel" x="430" y="226" width="220" height="42" rx="6"></rect>
+  <g class="dial">
+    <circle cx="462" cy="247" r="7"></circle>
+    <circle cx="492" cy="247" r="7"></circle>
+    <circle cx="588" cy="247" r="7"></circle>
+    <circle cx="618" cy="247" r="7"></circle>
+  </g>
+  <path class="ln" d="M462 247V242M492 247L495 243M588 247L585 243M618 247V242" fill="none"></path>
+  <rect class="clock" x="522" y="239" width="36" height="16" rx="4"></rect>
+  <path class="digits" d="M529 247H535M540 244V250M545 247H551" fill="none"></path>
+
+  <!-- Pot, lid and steam -->
+  <path class="steam" d="M480 190c-7-8 7-14 0-22s7-14 0-22" fill="none"></path>
+  <path class="steam" d="M496 182c-7-8 7-14 0-22s7-14 0-22" fill="none"></path>
+  <path class="steam" d="M512 190c-7-8 7-14 0-22s7-14 0-22" fill="none"></path>
+  <rect class="handle" x="438" y="232" width="16" height="7" rx="3.5"></rect>
+  <rect class="handle" x="538" y="232" width="16" height="7" rx="3.5"></rect>
+  <rect class="potbody" x="450" y="222" width="92" height="46" rx="9"></rect>
+  <rect class="stripe" x="451" y="238" width="90" height="7"></rect>
+  <path class="lid" d="M446 223Q496 196 546 223Z"></path>
+  <circle class="lid-knob" cx="496" cy="206" r="5"></circle>
+
+  <!-- Kettle -->
+  <path class="kettle-h" d="M584 234Q606 206 628 234" fill="none"></path>
+  <path class="kettle" d="M632 250L648 238L651 242L636 258Z"></path>
+  <path class="kettle" d="M578 268Q576 234 606 232Q636 234 634 268Z"></path>
+  <circle class="lid-knob" cx="606" cy="229" r="4"></circle>
+
+  <rect class="hob" x="422" y="264" width="236" height="10" rx="3"></rect>
+  <rect class="enamel" x="426" y="274" width="228" height="140"></rect>
+  <rect class="rail" x="464" y="290" width="152" height="7" rx="3.5"></rect>
+  <rect class="oven" x="446" y="304" width="188" height="84" rx="7"></rect>
+  <rect class="ovenglass" x="470" y="320" width="140" height="50" rx="7"></rect>
+  <path class="pie" d="M508 360Q508 344 540 344Q572 344 572 360Z"></path>
+  <path class="crust" d="M520 352L528 348M536 352L544 348M552 352L560 348" fill="none"></path>
+
+  <!-- Tea towel over the oven rail -->
+  <path class="towel" d="M556 292H588V344Q588 348 584 348H560Q556 348 556 344Z"></path>
+  <rect class="towel-band" x="557" y="330" width="30" height="3"></rect>
+  <rect class="towel-band" x="557" y="336" width="30" height="3"></rect>
+</svg>
+
+<style>
+  .kitchen {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    --k-ink: #1c2b22;
+    --k-paper: #fffdf8;
+    --k-cream: #f8f3e6;
+    --k-enamel: #f4efe2;
+    --k-butter: #f3da8b;
+    --k-sage: #a9c4ae;
+    --k-sage-2: #bdd3c1;
+    --k-clay: #a55a40;
+    --k-tile: #2f6b4f;
+    --k-sky: #d7e6da;
+    --k-hill: #a9c4ae;
+    --k-hill-2: #8fb298;
+    --k-steel: #d9d5c8;
+    --k-glass: #eef3ec;
+    --k-oven: #1c2b22;
+    --k-star: 0;
+  }
+  @media (prefers-color-scheme: dark) {
+    .kitchen {
+      --k-ink: #0d130f;
+      --k-paper: #e9e2cf;
+      --k-cream: #ded6c1;
+      --k-enamel: #e2dbc7;
+      --k-butter: #e6c878;
+      --k-sage: #7f9f87;
+      --k-sage-2: #8eac95;
+      --k-clay: #97503a;
+      --k-sky: #16241c;
+      --k-hill: #24382c;
+      --k-hill-2: #2c4436;
+      --k-steel: #c4bfb1;
+      --k-glass: #d7dccf;
+      --k-oven: #3a2a16;
+      --k-star: 1;
+    }
+  }
+
+  .kitchen * {
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ln,
+  .fold,
+  .score,
+  .band,
+  .digits,
+  .crust {
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .fold {
+    stroke-width: 1;
+    opacity: 0.35;
+  }
+  .score,
+  .crust {
+    stroke: var(--k-clay);
+    stroke-width: 2;
+  }
+  .band {
+    stroke: var(--k-butter);
+    stroke-width: 2;
+  }
+  .digits {
+    stroke: var(--k-butter);
+  }
+
+  .cab {
+    fill: var(--k-sage);
+  }
+  .top {
+    fill: var(--k-cream);
+  }
+  .door rect {
+    fill: var(--k-sage-2);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .knob circle,
+  .tie,
+  .dot circle {
+    fill: var(--k-clay);
+  }
+  .knob circle {
+    stroke: var(--k-ink);
+    stroke-width: 1;
+  }
+
+  .frame,
+  .sill,
+  .bracket {
+    fill: var(--k-paper);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .sill,
+  .bracket {
+    stroke-width: 1.5;
+  }
+  .sky {
+    fill: var(--k-sky);
+  }
+  .star circle {
+    fill: var(--k-butter);
+    opacity: var(--k-star);
+  }
+  .sun {
+    fill: var(--k-butter);
+  }
+  .hill {
+    fill: var(--k-hill);
+  }
+  .hill2 {
+    fill: var(--k-hill-2);
+  }
+  .mullion {
+    fill: var(--k-paper);
+  }
+  .curtain {
+    fill: var(--k-cream);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .valance {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .rod {
+    fill: var(--k-clay);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+
+  .cup {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .pot {
+    fill: var(--k-clay);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .leaf-a {
+    fill: var(--k-tile);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .leaf-b {
+    fill: var(--k-hill-2);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+
+  .board {
+    fill: var(--k-clay);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .loaf {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+
+  .tap-o {
+    stroke: var(--k-ink);
+    stroke-width: 10;
+  }
+  .tap {
+    stroke: var(--k-steel);
+    stroke-width: 7;
+  }
+  .steel {
+    fill: var(--k-steel);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .drop {
+    fill: var(--k-sky);
+    stroke: var(--k-ink);
+    stroke-width: 1.2;
+  }
+  .apron,
+  .lip {
+    fill: var(--k-paper);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .soap {
+    fill: var(--k-sage);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+
+  .glass {
+    fill: var(--k-glass);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .fill-b {
+    fill: var(--k-butter);
+  }
+  .fill-s {
+    fill: var(--k-sage);
+  }
+  .fill-c {
+    fill: var(--k-clay);
+  }
+  .lid-c,
+  .lid-t,
+  .lid-b {
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .lid-c {
+    fill: var(--k-clay);
+  }
+  .lid-t {
+    fill: var(--k-tile);
+  }
+  .lid-b {
+    fill: var(--k-butter);
+  }
+  .book-c,
+  .book-t,
+  .book-b,
+  .book-s {
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .book-c {
+    fill: var(--k-clay);
+  }
+  .book-t {
+    fill: var(--k-tile);
+  }
+  .book-b {
+    fill: var(--k-butter);
+  }
+  .book-s {
+    fill: var(--k-sage);
+  }
+
+  .enamel,
+  .hob,
+  .oven {
+    fill: var(--k-enamel);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .hob {
+    fill: var(--k-steel);
+  }
+  .oven {
+    fill: var(--k-cream);
+    stroke-width: 1.5;
+  }
+  .dial circle {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .clock,
+  .ovenglass {
+    fill: var(--k-oven);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .rail {
+    fill: var(--k-steel);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .pie {
+    fill: var(--k-butter);
+  }
+  .steam {
+    stroke: var(--k-paper);
+    stroke-width: 3;
+    opacity: 0.75;
+  }
+  .handle {
+    fill: var(--k-ink);
+  }
+  .potbody {
+    fill: var(--k-clay);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .stripe {
+    fill: var(--k-cream);
+  }
+  .lid {
+    fill: var(--k-cream);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .lid-knob {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .kettle {
+    fill: var(--k-butter);
+    stroke: var(--k-ink);
+    stroke-width: 2;
+  }
+  .kettle-h {
+    stroke: var(--k-ink);
+    stroke-width: 4;
+  }
+  .towel {
+    fill: var(--k-clay);
+    stroke: var(--k-ink);
+    stroke-width: 1.5;
+  }
+  .towel-band {
+    fill: var(--k-cream);
+  }
+</style>
