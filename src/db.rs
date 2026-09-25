@@ -131,7 +131,8 @@ fn bootstrap_sql() -> String {
     input_tokens integer,
     error text,
     queued_at integer NOT NULL,
-    checked_at integer
+    checked_at integer,
+    seen_at integer
   );
   CREATE TABLE IF NOT EXISTS recipe_flags (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -229,9 +230,14 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
     {
         conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN color text")?;
     }
-    // Wee Chef's checks: what a fix wrote (for Undo) and why a recipe was queued
+    // Wee Chef's checks: what a fix wrote (for Undo), why a recipe was queued, and the
+    // recipe's updated_at when a check last left it (so later edits are re-checked)
     let checks = columns(conn, "recipe_checks")?;
-    for (name, ty) in [("fixed_hash", "text"), ("mode", "text")] {
+    for (name, ty) in [
+        ("fixed_hash", "text"),
+        ("mode", "text"),
+        ("seen_at", "integer"),
+    ] {
         if !checks.is_empty() && !checks.iter().any(|c| c.name == name) {
             conn.execute_batch(&format!("ALTER TABLE recipe_checks ADD COLUMN {name} {ty}"))?;
         }

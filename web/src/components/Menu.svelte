@@ -4,7 +4,12 @@
   export interface MenuItem {
     label: string
     icon: Component<{ class?: string }>
-    onselect: () => void
+    /** A button's action. Items with `href` are links instead. */
+    onselect?: () => void
+    /** A link (e.g. a file download); never prerendered. */
+    href?: string
+    /** With `href`: download the response instead of navigating. */
+    download?: boolean
     danger?: boolean
   }
 </script>
@@ -55,21 +60,42 @@
       {#each groups as group, gi (gi)}
         {#if gi > 0}<div class="bg-line mx-3 my-1 h-px"></div>{/if}
         {#each group as item (item.label)}
-          <button
-            type="button"
-            role="menuitem"
-            class={[
-              "hover:bg-tint active:bg-tint flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left text-[15px] font-bold transition-colors",
-              item.danger ? "text-error" : "text-ink",
-            ]}
-            onclick={() => {
-              open = false
-              item.onselect()
-            }}
-          >
-            <item.icon class={item.danger ? "size-[18px] flex-none" : "text-primary size-[18px] flex-none"} />
-            {item.label}
-          </button>
+          {@const itemClass = [
+            "hover:bg-tint active:bg-tint flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left text-[15px] font-bold transition-colors",
+            item.danger ? "text-error" : "text-ink",
+          ]}
+          {@const iconClass = item.danger
+            ? "size-[18px] flex-none"
+            : "text-primary size-[18px] flex-none"}
+          {#if item.href}
+            <a
+              href={item.href}
+              role="menuitem"
+              class={itemClass}
+              download={item.download ? "" : undefined}
+              data-no-prerender
+              onclick={() => {
+                open = false
+                item.onselect?.()
+              }}
+            >
+              <item.icon class={iconClass} />
+              {item.label}
+            </a>
+          {:else}
+            <button
+              type="button"
+              role="menuitem"
+              class={itemClass}
+              onclick={() => {
+                open = false
+                item.onselect?.()
+              }}
+            >
+              <item.icon class={iconClass} />
+              {item.label}
+            </button>
+          {/if}
         {/each}
       {/each}
     </div>

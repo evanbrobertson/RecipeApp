@@ -654,24 +654,44 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
 
 /// Everything in one JSON file that `import_file` can read back.
 pub fn export_backup(conn: &Connection) -> AppResult<Value> {
-    let mut stmt = conn.prepare("SELECT * FROM recipes ORDER BY id")?;
+    export_json(conn, None)
+}
+
+/// One recipe in the backup's format (with its cookbooks and cook log), so the Import
+/// page reads it back like a backup.
+pub fn export_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
+    require_exists(conn, id)?;
+    export_json(conn, Some(id))
+}
+
+/// The backup JSON: every recipe, or only `only` and the cookbooks it's in.
+fn export_json(conn: &Connection, only: Option<i64>) -> AppResult<Value> {
+    let mut stmt = conn.prepare("SELECT * FROM recipes WHERE ?1 IS NULL OR id = ?1 ORDER BY id")?;
     let recipes: Vec<Recipe> = stmt
-        .query_map([], recipe_from_row)?
+        .query_map([only], recipe_from_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut stmt = conn.prepare(
+        "SELECT cookbook_id, recipe_id FROM cookbook_recipes WHERE ?1 IS NULL OR recipe_id = ?1",
+    )?;
+    let links: Vec<(i64, i64)> = stmt
+        .query_map([only], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare("SELECT id, name, description FROM cookbooks ORDER BY name")?;
     let books: Vec<(i64, String, Option<String>)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    let mut stmt = conn.prepare("SELECT cookbook_id, recipe_id FROM cookbook_recipes")?;
-    let links: Vec<(i64, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|b: &(i64, String, Option<String>)| {
+            only.is_none() || links.iter().any(|l| l.0 == b.0)
+        })
+        .collect();
 
     let mut stmt = conn.prepare(
-        "SELECT recipe_id, created_at FROM recipe_events WHERE kind = 'cooked' ORDER BY created_at",
+        "SELECT recipe_id, created_at FROM recipe_events
+         WHERE kind = 'cooked' AND (?1 IS NULL OR recipe_id = ?1) ORDER BY created_at",
     )?;
     let cooks: Vec<(i64, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map([only], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
 
     let book_name = |id: i64| books.iter().find(|b| b.0 == id).map(|b| b.1.clone());

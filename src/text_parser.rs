@@ -116,7 +116,7 @@ static NUMBERED: LazyLock<Regex> = LazyLock::new(|| {
 });
 static QUANTITY: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?i)^(?:\d|[¼½¾⅓⅔⅛⅜⅝⅞]|a |an |one |two |three |four |five |six |half |pinch|dash|handful|splash|some |few )",
+        r"(?i)^(?:\d|[¼½¾⅓⅔⅙⅚⅛⅜⅝⅞]|a |an |one |two |three |four |five |six |half |pinch|dash|handful|splash|some |few )",
     )
 });
 static UNITS: LazyLock<Regex> = LazyLock::new(|| {

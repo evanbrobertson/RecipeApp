@@ -22,6 +22,8 @@ const UNICODE_FRACTIONS: Record<string, number> = {
   "⅓": 1 / 3,
   "⅔": 2 / 3,
   "⅕": 0.2,
+  "⅙": 1 / 6,
+  "⅚": 5 / 6,
   "⅛": 0.125,
   "⅜": 0.375,
   "⅝": 0.625,
@@ -63,7 +65,7 @@ const unitPattern = [...aliasToUnit.keys()]
   .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")
 
-const NUMBER = String.raw`(?:\d+\s+\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+(?:\s*[¼½¾⅓⅔⅕⅛⅜⅝⅞])?|[¼½¾⅓⅔⅕⅛⅜⅝⅞])`
+const NUMBER = String.raw`(?:\d+\s+\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+(?:\s*[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])?|[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])`
 const LEADING = new RegExp(
   String.raw`^\s*(?:about|approx\.?|~)?\s*(${NUMBER})(?:\s*(?:-|–|to)\s*(${NUMBER}))?\s*(?:(${unitPattern})\.?(?=\s|$|,))?\s*(?:of\s+)?(.*)$`,
 )
@@ -80,7 +82,7 @@ const WORD_QUANTITY = /^\s*(a|an|one|a few|a couple of|some)\s+(.*)$/i
 export function parseNumber(value: string): number | null {
   const v = value.trim()
   if (!v) return null
-  const uni = v.match(/^(\d+)?\s*([¼½¾⅓⅔⅕⅛⅜⅝⅞])$/)
+  const uni = v.match(/^(\d+)?\s*([¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])$/)
   if (uni) return Number(uni[1] ?? 0) + UNICODE_FRACTIONS[uni[2]!]!
   const mixed = v.match(/^(\d+)\s+(\d+)\/(\d+)$/)
   if (mixed) return Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3])
@@ -173,13 +175,20 @@ export function parseIngredient(raw: string): ParsedIngredient {
 
 // ─── Formatting & scaling ──────────────────────────────────────────────────
 
+// Eighths, sixths, quarters, thirds and halves: the same set the importer turns float
+// quantities back into (src/fractions.rs)
 const NICE_FRACTIONS: [number, string][] = [
   [0.125, "⅛"],
+  [1 / 6, "⅙"],
   [0.25, "¼"],
   [1 / 3, "⅓"],
+  [0.375, "⅜"],
   [0.5, "½"],
+  [0.625, "⅝"],
   [2 / 3, "⅔"],
   [0.75, "¾"],
+  [5 / 6, "⅚"],
+  [0.875, "⅞"],
 ]
 
 export function formatQuantity(n: number): string {

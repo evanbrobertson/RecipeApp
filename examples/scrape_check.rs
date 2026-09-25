@@ -38,7 +38,15 @@ async fn main() {
         .await;
         let host = crumb::telemetry::host_of(&url);
         let winner = match &result {
-            Ok((method, recipe)) => format!("{} \"{}\"", method.label(), recipe.title),
+            Ok((method, recipe)) => format!(
+                "{} \"{}\" prep={:?} cook={:?} extra={:?} total={:?}",
+                method.label(),
+                recipe.title,
+                recipe.prep_time,
+                recipe.cook_time,
+                recipe.freeze_time,
+                recipe.total_time
+            ),
             Err(_) => "failed".into(),
         };
         println!(

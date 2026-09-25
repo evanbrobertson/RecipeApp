@@ -322,6 +322,8 @@ pub fn recipe_from_json_ld(data: &Value, url: &str) -> Option<RecipeFields> {
 fn finish(mut recipe: RecipeFields, url: &str) -> Option<RecipeFields> {
     recipe.ingredients =
         normalize_sections(recipe.ingredients.into_iter().map(decode_section).collect());
+    // Some sites' JSON-LD has "0.33333334 cup" where the page shows "⅓ cup"
+    crate::fractions::fractionize_sections(&mut recipe.ingredients);
     recipe.instructions = normalize_sections(
         recipe
             .instructions
@@ -771,17 +773,38 @@ fn normalize_nutrition(v: Option<&Value>) -> Option<Map<String, Value>> {
     if out.is_empty() { None } else { Some(out) }
 }
 
-static DURATION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$").unwrap());
+/// ISO 8601 durations in full: "PT1H10M", "P1DT2H", and the long form some sites emit,
+/// "P0Y0M0DT0H10M0.000S". Any unit may have decimals; weeks count as 7 days.
+static DURATION: LazyLock<Regex> = LazyLock::new(|| {
+    let n = r"(\d+(?:[.,]\d+)?)";
+    Regex::new(&format!(
+        r"(?i)^P(?:{n}Y)?(?:{n}M)?(?:{n}W)?(?:{n}D)?(?:T(?:{n}H)?(?:{n}M)?(?:{n}S)?)?$"
+    ))
+    .unwrap()
+});
 
-fn parse_duration_minutes(iso: Option<&str>) -> Option<i64> {
-    let c = DURATION.captures(iso?)?;
+/// Minutes in an ISO 8601 duration, or None if it isn't one. Years and months have no
+/// fixed length and never describe cooking, so a duration using them is not parsed.
+pub fn iso_duration_minutes(iso: &str) -> Option<f64> {
+    let iso = iso.trim();
+    // "P" or "PT" alone would otherwise match as zero
+    if iso.len() < 3 {
+        return None;
+    }
+    let c = DURATION.captures(iso)?;
     let n = |i: usize| {
         c.get(i)
-            .and_then(|m| m.as_str().parse::<i64>().ok())
-            .unwrap_or(0)
+            .and_then(|m| m.as_str().replace(',', ".").parse::<f64>().ok())
+            .unwrap_or(0.0)
     };
-    Some(n(1) * 60 + n(2))
+    if n(1) != 0.0 || n(2) != 0.0 {
+        return None;
+    }
+    Some(n(3) * 10_080.0 + n(4) * 1440.0 + n(5) * 60.0 + n(6) + n(7) / 60.0)
+}
+
+fn parse_duration_minutes(iso: Option<&str>) -> Option<i64> {
+    iso_duration_minutes(iso?).map(|m| m.round() as i64)
 }
 
 fn format_minutes(minutes: i64) -> String {
@@ -815,20 +838,14 @@ fn compute_additional_time(
     Some(format_minutes(additional)).filter(|s| !s.is_empty())
 }
 
-/// ISO-8601 durations ("PT1H10M") as "1h 10m"; anything else is kept as written.
+/// ISO 8601 durations ("PT1H10M", "P0Y0M0DT0H10M0.000S") as "1h 10m"; anything else is
+/// kept as written. A duration under a minute is dropped.
 pub fn format_duration(iso: Option<&str>) -> Option<String> {
-    let iso = iso.filter(|s| !s.is_empty())?;
-    let Some(c) = DURATION.captures(iso) else {
-        return Some(iso.to_string());
-    };
-    let parts: Vec<String> = [(1, "h"), (2, "m")]
-        .iter()
-        .filter_map(|(i, unit)| c.get(*i).map(|m| format!("{}{unit}", m.as_str())))
-        .collect();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" "))
+    let iso = iso.filter(|s| !s.trim().is_empty())?;
+    match iso_duration_minutes(iso) {
+        Some(minutes) if minutes < 1.0 => None,
+        Some(minutes) => Some(format_minutes(minutes.round() as i64)),
+        None => Some(iso.to_string()),
     }
 }
 
@@ -1101,6 +1118,18 @@ mod tests {
     }
 
     #[test]
+    fn turns_float_quantities_back_into_fractions() {
+        let html = r#"<script type="application/ld+json">{"@type":"Recipe","name":"Casserole",
+          "recipeIngredient":["0.33333334326744 cup olive oil","1.5 teaspoons salt","0.4 kg potatoes"],
+          "recipeInstructions":"Bake."}</script>"#;
+        let r = parse_recipe_html(html, "https://x.test/casserole").unwrap();
+        assert_eq!(
+            r.ingredients[0].items,
+            ["⅓ cup olive oil", "1 ½ teaspoons salt", "0.4 kg potatoes"]
+        );
+    }
+
+    #[test]
     fn prefers_wprm_groups_over_flat_json_ld() {
         let html = r#"<script type="application/ld+json">{"@type":"Recipe","name":"Cake",
           "recipeIngredient":["2 cups flour","1 cup sugar","1 cup cream"],
@@ -1150,6 +1179,30 @@ mod tests {
         assert_eq!(format_duration(Some("PT30S")), None);
         assert_eq!(format_duration(Some("20 mins")).as_deref(), Some("20 mins"));
         assert_eq!(format_duration(None), None);
+        // The long form Food Network uses, with years, months, days and decimal seconds
+        assert_eq!(
+            format_duration(Some("P0Y0M0DT0H10M0.000S")).as_deref(),
+            Some("10m")
+        );
+        assert_eq!(
+            format_duration(Some("P0Y0M0DT0H34M0.000S")).as_deref(),
+            Some("34m")
+        );
+        assert_eq!(format_duration(Some("P1DT2H")).as_deref(), Some("26h"));
+        assert_eq!(format_duration(Some("PT90M")).as_deref(), Some("1h 30m"));
+        assert_eq!(format_duration(Some("PT1.5H")).as_deref(), Some("1h 30m"));
+        // Months are not minutes; a year-long "duration" is kept as written
+        assert_eq!(format_duration(Some("P1M")).as_deref(), Some("P1M"));
+        assert_eq!(format_duration(Some("PT")).as_deref(), Some("PT"));
+        assert_eq!(
+            compute_additional_time(
+                Some("P0Y0M0DT0H10M0.000S"),
+                Some("P0Y0M0DT0H20M0.000S"),
+                Some("P0Y0M0DT0H34M0.000S")
+            )
+            .as_deref(),
+            Some("4m")
+        );
         assert_eq!(
             compute_additional_time(Some("PT10M"), Some("PT20M"), Some("PT2H")).as_deref(),
             Some("1h 30m")

@@ -96,6 +96,12 @@ const links = [
         }
       } catch {}
     </script>
+    {
+      /* Hold the first frame until both navs are parsed. Otherwise a page with a large
+         page-data block paints before its nav exists, and the view transition slides the
+         old nav away as if we'd left for cook mode. */
+      !bare && <link rel="expect" href="#tab-bar" blocking="render" />
+    }
   </head>
   <body class={bodyClass}>
     {data && <script type="application/json" id="page-data">null</script>}
@@ -133,16 +139,11 @@ const links = [
             </a>
           </nav>
 
-          <slot name="hero" />
-
-          <main class="mx-auto max-w-[75rem] px-5 pt-6 pb-32 sm:pt-8 md:px-8 md:pb-16">
-            <slot />
-          </main>
-
           <nav
             class="bg-nav fixed inset-x-0 bottom-0 z-40 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),0.875rem)] md:hidden"
             style="view-transition-name: nav"
             aria-label="Tabs"
+            id="tab-bar"
           >
             <div
               class:list={["tab-grid grid", section === "suggestions" ? "grid-cols-5" : "grid-cols-4"]}
@@ -166,6 +167,13 @@ const links = [
               ))}
             </div>
           </nav>
+
+          <slot name="hero" />
+
+          <main class="mx-auto max-w-[75rem] px-5 pt-6 pb-32 sm:pt-8 md:px-8 md:pb-16">
+            <slot />
+          </main>
+
         </div>
       )
     }

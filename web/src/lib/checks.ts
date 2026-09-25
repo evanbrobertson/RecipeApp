@@ -20,7 +20,7 @@ export function fixText(f: CheckFlag): string {
     case "joined":
       return `Joined a step that was split in two: ${quote(f.itemText)}`
     case "tidy":
-      return "Cleaned up stray checkboxes, web codes, repeated lines or a missing total time"
+      return "Cleaned up stray checkboxes, web codes, repeated lines, quantities or times"
     default:
       return `Tidied ${quote(f.itemText)}`
   }

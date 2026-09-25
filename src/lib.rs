@@ -7,6 +7,7 @@ pub mod checks;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod fractions;
 pub mod images;
 pub mod importers;
 pub mod llm;
