@@ -3,8 +3,11 @@
 //! olive oil", "1 ½ teaspoons salt").
 //!
 //! Only the leading quantity (or range) of an ingredient line is touched, and only when
-//! every decimal in it sits next to a common cooking fraction: halves, thirds, quarters,
-//! sixths or eighths. Anything else ("0.4 kg", "2.2 lbs", "0.35 kg") is left as written.
+//! every decimal in it is plainly a fraction: float noise with three or more places that
+//! sits on a halves, thirds, quarters, sixths or eighths fraction ("0.33333334",
+//! "0.667"), or an exact eighth ("0.5", "2.25", "0.375"). Two-place amounts ("0.33",
+//! "1.12"), metric amounts ("12.5 g", "0.67 l") and percentages ("2.5 % fat") are real
+//! measurements and left as written, as is anything else ("0.4 kg", "2.2 lbs").
 //! The output uses the same Unicode glyphs and "1 ½" spacing that the recipe page's
 //! scaler prints (`formatQuantity` in `web/src/lib/ingredients.ts`), which parses them back.
 
@@ -12,10 +15,13 @@ use crate::model::Section;
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// How close a decimal must be to a fraction. Float noise (0.33333334) is far inside it; a
-/// two-place rounding (0.33, 0.67, 0.17) is inside it too, while a real measurement like
-/// 0.35 or 0.4 is not.
-const TOLERANCE: f64 = 0.01;
+/// How close a decimal of three or more places must be to a fraction. Float noise
+/// (0.33333334) and a three-place rounding (0.333, 0.667, 0.167) are inside it; a real
+/// measurement like 0.120 or 0.35 is not.
+const TOLERANCE: f64 = 0.002;
+
+/// Exact binary fractions, written out: the only decimals under three places rewritten.
+const EXACT: [&str; 7] = ["5", "25", "75", "125", "375", "625", "875"];
 
 const FRACTIONS: [(f64, &str); 11] = [
     (1.0 / 8.0, "⅛"),
@@ -31,6 +37,14 @@ const FRACTIONS: [(f64, &str); 11] = [
     (7.0 / 8.0, "⅞"),
 ];
 
+/// A metric unit or a percent sign right after the quantity: the amount is a measurement.
+static MEASURED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^\s*(?:%|(?:g|kg|mg|ml|l|cl|dl|grams?|kilograms?|millilit(?:re|er)s?|lit(?:re|er)s?)\b)",
+    )
+    .unwrap()
+});
+
 static LEADING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)^(\s*(?:(?:about|approx\.?|~)\s*)?)(\d+(?:\.\d+)?|\.\d+)(?:(\s*(?:-|–|to)\s*)(\d+(?:\.\d+)?|\.\d+))?",
@@ -38,18 +52,21 @@ static LEADING: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// "0.5" → "½", "2.25" → "2 ¼"; `None` for a whole number or a decimal that isn't near a
-/// common fraction.
+/// "0.5" → "½", "2.25" → "2 ¼", "0.33333334" → "⅓"; `None` for a whole number or a
+/// decimal that isn't plainly a fraction (see the module docs).
 fn as_fraction(number: &str) -> Option<String> {
-    if !number.contains('.') {
+    let (_, places) = number.split_once('.')?;
+    let exact = EXACT.contains(&places.trim_end_matches('0'));
+    if !exact && places.len() < 3 {
         return None;
     }
     let value: f64 = number.parse().ok()?;
     let whole = value.trunc();
     let part = value - whole;
+    let tolerance = if exact { 1e-9 } else { TOLERANCE };
     let (_, glyph) = FRACTIONS
         .iter()
-        .find(|(f, _)| (part - f).abs() <= TOLERANCE)?;
+        .find(|(f, _)| (part - f).abs() <= tolerance)?;
     Some(if whole == 0.0 {
         (*glyph).to_string()
     } else {
@@ -75,6 +92,10 @@ pub fn fractionize(line: &str) -> String {
     let end = m.get(0).map_or(0, |g| g.end());
     // "1.5% milk", "0.5.1", "1.5/2": not a plain quantity
     if line[end..].starts_with(|c: char| c == '%' || c == '.' || c == '/' || c.is_ascii_digit()) {
+        return line.to_string();
+    }
+    // "12.5 g", "0.67 l", "2.5 % fat": a measurement, not a cup fraction
+    if MEASURED.is_match(&line[end..]) {
         return line.to_string();
     }
     let first = &m[2];
@@ -118,7 +139,8 @@ mod tests {
             ("0.33333334326744 cup olive oil", "⅓ cup olive oil"),
             ("0.3333333 cup sugar", "⅓ cup sugar"),
             ("0.6666667 cup milk", "⅔ cup milk"),
-            ("0.66 cup milk", "⅔ cup milk"),
+            ("0.667 cup milk", "⅔ cup milk"),
+            ("0.50 cup water", "½ cup water"),
             ("0.5 cup water", "½ cup water"),
             (".5 cup water", "½ cup water"),
             ("0.25 teaspoon salt", "¼ teaspoon salt"),
@@ -130,6 +152,9 @@ mod tests {
             ("0.16666667 cup honey", "⅙ cup honey"),
             ("0.8333333 cup honey", "⅚ cup honey"),
             ("1.5 teaspoons salt", "1 ½ teaspoons salt"),
+            ("0.33333334 cup flour", "⅓ cup flour"),
+            ("0.5 lb butter", "½ lb butter"),
+            ("1.5 large eggs", "1 ½ large eggs"),
             ("2.25 cups stock", "2 ¼ cups stock"),
             ("1.3333334 cups rice", "1 ⅓ cups rice"),
             (
@@ -168,6 +193,21 @@ mod tests {
             "8 potatoes, cut into 1/2-inch cubes",
             "cooking spray",
             "1.5% milk",
+            "2.5 % fat",
+            "1.12 kg beef",
+            "0.13 g yeast",
+            "0.67 l stock",
+            "12.5 g butter",
+            "12.5g butter",
+            "0.5 L milk",
+            "1.5 kilograms potatoes",
+            "0.75 litres water",
+            "0.5 millilitre vanilla",
+            "2.25 grams salt",
+            "0.66 cup milk",
+            "0.33 cup sugar",
+            "1.12 cups flour",
+            "0.120 cup oil",
             "0.5-0.4 cup cream",
             "0.5-1.2 kg beef",
             "",

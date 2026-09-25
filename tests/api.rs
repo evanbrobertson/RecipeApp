@@ -2517,9 +2517,44 @@ async fn one_recipe_can_be_checked_again_on_request() {
     let (status, _) = t.json("POST", "/api/recipes/999/checks", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // A fresh import whose check never ran: fixed as its import check would have been
+    // Saved before Wee Chef (no check row at all, like an old restore): already in the
+    // box, so only suggestions, plus the deterministic clean-up of the checkbox glyph
+    let (old, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "import").unwrap();
+    let (status, c) = t
+        .json("POST", &format!("/api/recipes/{}/checks", old.id), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    let c = wait_for_check(&t, old.id).await;
+    assert_eq!(c["status"], "done");
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", old.id), None)
+        .await;
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["Filling", "1 egg", "Nutrition Facts"]}])
+    );
+    assert!(
+        c["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["state"] == "review" || f["kind"] == "tidy"),
+        "{c}"
+    );
+
+    // A fresh import whose check never ran (only tidied on the way in): fixed as its
+    // import check would have been
     let (fresh, _) =
         crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
+    t.state
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO recipe_checks (recipe_id, status, queued_at) VALUES (?1, 'tidied', 0)",
+            [fresh.id],
+        )
+        .unwrap();
     let (status, c) = t
         .json("POST", &format!("/api/recipes/{}/checks", fresh.id), None)
         .await;
@@ -2542,7 +2577,7 @@ async fn one_recipe_can_be_checked_again_on_request() {
     assert_eq!(c["status"], "pending");
     let c = wait_for_check(&t, fresh.id).await;
     assert_eq!(c["status"], "done");
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     let (_, again) = t
         .json("GET", &format!("/api/recipes/{}", fresh.id), None)
         .await;

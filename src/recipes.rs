@@ -230,6 +230,7 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
     {
         return Err(AppError::new(409, "Another recipe already uses that URL"));
     }
+    let before = require_recipe(conn, id)?;
 
     let mut sets: Vec<&str> = Vec::new();
     let mut values: Vec<SqlValue> = Vec::new();
@@ -296,7 +297,7 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
     let recipe = require_recipe(conn, id)?;
     // Wee Chef's "take a look" flags whose line is gone are done with
     crate::checks::resolve_missing(conn, &recipe)?;
-    crate::checks::note_edit(conn, id)?;
+    crate::checks::note_edit(conn, &before, &recipe)?;
     Ok(recipe)
 }
 

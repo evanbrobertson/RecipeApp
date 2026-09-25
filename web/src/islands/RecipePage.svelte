@@ -77,12 +77,22 @@
   // Just imported (or asked for from the menu): Wee Chef's check runs in the background for
   // a second or so. Pick up its result (and the tidied recipe) without a reload.
   let polls = 0
-  // "Check with Wee Chef" was chosen: say how it went when it's done
+  // "Check with Wee Chef" was chosen (when, and the fixes already there): say how it went
+  // when it's done. It may wait behind a "Check all", so keep looking for a while.
   let asked = false
+  let askedAt = 0
+  let fixedBefore = new Set<number>()
+  const ASK_WAIT = 5 * 60_000
   $effect(() => {
     if (page.data?.checks?.status !== "pending") return
+    const delay = !asked ? 1500 : polls < 10 ? 3000 : 10_000
     const timer = setTimeout(async () => {
-      if (++polls > 20 || !page.data) return
+      if (!page.data) return
+      if (asked ? Date.now() - askedAt > ASK_WAIT : ++polls > 20) {
+        asked = false
+        return
+      }
+      if (asked) polls++
       const checks = await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null)
       if (!checks || !page.data) return
       if (checks.status !== "pending" && checks.flags.some((f) => f.state === "fixed")) {
@@ -93,12 +103,20 @@
       if (asked && checks.status !== "pending") {
         asked = false
         const review = checks.flags.filter((f) => f.state === "review").length
+        // This check's fixes only; the tidy counts each small thing it cleaned up
+        const fixed = checks.flags
+          .filter((f) => f.state === "fixed" && !fixedBefore.has(f.id))
+          .reduce((n, f) => n + (f.detail?.fix === "tidy" ? (f.detail.count ?? 1) : 1), 0)
+        const tidied = `Wee Chef tidied ${plural(fixed, "thing")}`
+        const look = `${plural(review, "line")} might need a look`
         if (checks.status === "failed")
           toast({ title: "Wee Chef couldn't check this recipe", tone: "error" })
-        else if (review) toast({ title: `${plural(review, "line")} might need a look` })
+        else if (fixed && review) toast({ title: tidied, description: look })
+        else if (fixed) toast({ title: tidied })
+        else if (review) toast({ title: look })
         else toast({ title: "Wee Chef found nothing to change" })
       }
-    }, 1500)
+    }, delay)
     return () => clearTimeout(timer)
   })
 
@@ -244,10 +262,13 @@
   }
 
   async function checkNow() {
+    const before = page.data?.checks?.flags ?? []
     try {
       const checks = await api<RecipeChecks>(`/api/recipes/${id}/checks`, { method: "POST" })
+      fixedBefore = new Set(before.filter((f) => f.state === "fixed").map((f) => f.id))
       polls = 0
       asked = true
+      askedAt = Date.now()
       if (page.data) page.data.checks = checks
       toast({ title: "Wee Chef is checking…" })
     } catch (e) {
