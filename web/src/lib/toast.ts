@@ -9,6 +9,8 @@ export interface Toast {
   description?: string
   tone?: "default" | "success" | "error" | "primary"
   duration?: number
+  /** A button on the toast, e.g. Undo. Not kept by `flash()`. */
+  action?: { label: string; onselect: () => void }
 }
 
 const FLASH = "crumb:flash"
@@ -42,9 +44,23 @@ export function toast(t: Toast) {
     el.classList.add("toast-leave")
     setTimeout(() => el.remove(), 200)
   }
+  if (t.action) {
+    const { label, onselect } = t.action
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "toast-action"
+    button.textContent = label
+    button.addEventListener("click", (e) => {
+      e.stopPropagation()
+      dismiss()
+      onselect()
+    })
+    el.classList.add("toast-with-action")
+    el.append(button)
+  }
   el.addEventListener("click", dismiss)
   container().append(el)
-  setTimeout(dismiss, t.duration ?? (t.tone === "error" ? 8000 : 4000))
+  setTimeout(dismiss, t.duration ?? (t.tone === "error" || t.action ? 8000 : 4000))
 }
 
 /** Show a toast after the next navigation. */

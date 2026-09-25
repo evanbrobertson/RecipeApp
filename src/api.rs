@@ -12,9 +12,10 @@ use crate::AppState;
 use crate::auth;
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    RecipeFields, RecipePatch, cookbook_color, cookbook_description, cookbook_name,
+    RecipeFields, RecipePatch, cookbook_color, cookbook_description, cookbook_name, now_secs,
 };
-use crate::recipes::{self, CookbookPatch, ImportSummary};
+use crate::recipes::{self, CookbookPatch, EventKind, ImportSummary};
+use crate::suggestions;
 
 const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
 
@@ -35,6 +36,8 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/recipes/import", routing::post(import_recipe))
         .route("/api/recipes/bulk-delete", routing::post(bulk_delete))
+        .route("/api/recipes/random", routing::get(random_recipe))
+        .route("/api/suggestions", routing::get(suggestions))
         .route(
             "/api/recipes/{id}",
             routing::get(get_recipe)
@@ -44,6 +47,11 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/recipes/{id}/cookbooks",
             routing::get(recipe_cookbooks),
+        )
+        .route("/api/recipes/{id}/viewed", routing::post(recipe_viewed))
+        .route(
+            "/api/recipes/{id}/cooked",
+            routing::post(recipe_cooked).delete(undo_cooked),
         )
         .route(
             "/api/cookbooks",
@@ -129,7 +137,8 @@ pub fn connector_info(state: &AppState, headers: &HeaderMap) -> Value {
     json!({
         "mcpUrl": format!("{}/mcp", state.config.public_origin(headers)),
         "authEnabled": state.config.auth_enabled(),
-        "claudeParsing": crate::claude::available(state),
+        "claudeParsing": crate::llm::available(state),
+        "aiProvider": crate::llm::provider_label(state),
         "browserScraping": state.browser.available(),
     })
 }
@@ -298,6 +307,105 @@ async fn recipe_cookbooks(
         &state.db.lock(),
         id_param(&id, "id")?,
     )?))
+}
+
+fn int_param(
+    q: &HashMap<String, String>,
+    key: &str,
+    range: std::ops::RangeInclusive<u64>,
+    default: u64,
+) -> AppResult<u64> {
+    match q.get(key) {
+        None => Ok(default),
+        Some(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|n| range.contains(n))
+            .ok_or_else(|| {
+                AppError::bad_request(format!(
+                    "{key}: expected an integer from {} to {}",
+                    range.start(),
+                    range.end()
+                ))
+            }),
+    }
+}
+
+async fn suggestions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> AppResult<Json<Value>> {
+    let limit = int_param(&q, "limit", 1..=12, 4)? as usize;
+    let seed = int_param(&q, "seed", 0..=1_000_000, 0)?;
+    let ctx = suggestions::context(&state, &headers, seed);
+    let opts = suggestions::Options {
+        limit,
+        exclude: suggestions::id_set(q.get("exclude")),
+        may_call_ai: true,
+        ..Default::default()
+    };
+    Ok(Json(recipes::to_value(&suggestions::suggestions(
+        &state, ctx, &opts,
+    )?)))
+}
+
+async fn random_recipe(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> AppResult<Json<Value>> {
+    suggestions::zone(&state, &headers);
+    let current = q.get("current").and_then(|c| c.parse().ok());
+    let id = suggestions::random(
+        &state,
+        &suggestions::id_set(q.get("exclude")),
+        current,
+        &Default::default(),
+    )?
+    .ok_or_else(|| AppError::not_found("No recipes saved yet"))?;
+    let summary = recipes::summaries_by_ids(&state.db.lock(), &[id])?;
+    let first = summary
+        .first()
+        .ok_or_else(|| AppError::not_found("Recipe not found"))?;
+    Ok(Json(recipes::to_value(first)))
+}
+
+async fn recipe_viewed(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    let id = id_param(&id, "id")?;
+    recipes::log_event(&state.db.lock(), id, EventKind::Viewed, now_secs())?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn recipe_cooked(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let conn = state.db.lock();
+    // eventId is null when this cook was already logged (nothing to undo)
+    let event = recipes::log_event(&conn, id, EventKind::Cooked, now_secs())?;
+    let mut stats = recipes::to_value(&recipes::cook_stats(&conn, id)?);
+    stats["eventId"] = json!(event);
+    Ok(Json(stats))
+}
+
+async fn undo_cooked(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let event = q.get("event").map(|e| id_param(e, "event")).transpose()?;
+    Ok(Json(recipes::to_value(&recipes::undo_cooked(
+        &state.db.lock(),
+        id,
+        event,
+    )?)))
 }
 
 async fn list_cookbooks(State(state): State<AppState>) -> AppResult<Json<Value>> {

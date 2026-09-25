@@ -16,6 +16,7 @@ use tower_http::services::ServeDir;
 use crate::AppState;
 use crate::error::AppResult;
 use crate::recipes;
+use crate::suggestions;
 
 pub const MARKER: &str = r#"<script type="application/json" id="page-data">null</script>"#;
 
@@ -128,17 +129,53 @@ pub fn routes() -> Router<AppState> {
         .route("/connect", routing::get(connector_page))
         .route("/import", routing::get(connector_page))
         .route("/login", routing::get(login))
+        .route("/random", routing::get(random))
 }
 
-async fn home(State(state): State<AppState>) -> Response {
+async fn home(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let data = (|| {
+        let ctx = suggestions::context(&state, &headers, 0);
+        let opts = suggestions::Options {
+            limit: 4,
+            may_call_ai: true,
+            ..Default::default()
+        };
+        let suggested = suggestions::suggestions(&state, ctx, &opts)?;
         let conn = state.db.lock();
         Ok(json!({
             "recipes": recipes::to_value(&recipes::list_recipes(&conn, None, Some(8), None)?),
             "cookbooks": recipes::to_value(&recipes::list_cookbooks(&conn)?),
+            "suggestions": recipes::to_value(&suggested),
+            "recipeCount": conn.query_row("SELECT count(*) FROM recipes", [], |r| r.get::<_, i64>(0))?,
         }))
     })();
     page(&state, "index.html", data)
+}
+
+/// Surprise me: a redirect to a random recipe. Never cached, and never prerendered
+/// (see speculation-rules.json), or hovering the link would pick one.
+async fn random(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    suggestions::zone(&state, &headers);
+    let current = q.get("current").and_then(|c| c.parse().ok());
+    let picked = suggestions::random(
+        &state,
+        &suggestions::id_set(q.get("exclude")),
+        current,
+        &Default::default(),
+    );
+    let location = match picked {
+        Ok(Some(id)) => format!("/recipes/{id}?from=random"),
+        Ok(None) => "/".into(),
+        Err(err) => return err.into_response(),
+    };
+    let mut res = crate::auth::found(&location);
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
 }
 
 async fn recipe_list(
@@ -176,6 +213,7 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
             "recipe": recipes::to_value(&recipes::require_recipe(&conn, id)?),
             "cookbooks": recipes::to_value(&recipes::list_cookbooks(&conn)?),
             "inCookbooks": recipes::recipe_cookbook_ids(&conn, id)?,
+            "cookStats": recipes::to_value(&recipes::cook_stats(&conn, id)?),
         }))
     })();
     page(&state, "shell/recipe/index.html", data)

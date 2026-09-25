@@ -1,25 +1,30 @@
 <script lang="ts">
-  /** The kitchen's lower half: recently viewed, the shelf, and the newest recipes. */
+  /** The kitchen's lower half: recently viewed, Try next, the shelf, and the newest recipes. */
   import ArrowRight from "@lucide/svelte/icons/arrow-right"
   import CookingPot from "@lucide/svelte/icons/cooking-pot"
   import Bookshelf from "../components/Bookshelf.svelte"
   import GridSkeleton from "../components/GridSkeleton.svelte"
   import OpenBook from "../components/OpenBook.svelte"
   import RecipeCard from "../components/RecipeCard.svelte"
+  import TryNext from "../components/TryNext.svelte"
   import { api } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
   import type { ShelfBook } from "../lib/books"
-  import type { Cookbook, RecipeSummary } from "../lib/recipe"
+  import type { Cookbook, RecipeSummary, Suggestions } from "../lib/recipe"
   import { recentlyViewed } from "../lib/storage"
 
   interface Data {
     recipes: RecipeSummary[]
     cookbooks: Cookbook[]
+    suggestions: Suggestions
+    recipeCount: number
   }
 
   const page = pageState<Data>(async () => ({
     recipes: await api<RecipeSummary[]>("/api/recipes?limit=8"),
     cookbooks: await api<Cookbook[]>("/api/cookbooks"),
+    suggestions: await api<Suggestions>("/api/suggestions"),
+    recipeCount: (await api<RecipeSummary[]>("/api/recipes")).length,
   }))
   const data = $derived(page.data)
   const loading = $derived(page.loading)
@@ -55,6 +60,10 @@
         {/each}
       </div>
     </section>
+  {/if}
+
+  {#if data?.suggestions}
+    <TryNext initial={data.suggestions} total={data.recipeCount} />
   {/if}
 
   {#if data?.cookbooks.length}

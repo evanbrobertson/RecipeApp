@@ -14,6 +14,10 @@ struct TestApp {
 
 impl TestApp {
     fn new(password: Option<&str>) -> Self {
+        Self::with_config(|c| c.app_password = password.map(String::from))
+    }
+
+    fn with_config(configure: impl FnOnce(&mut Config)) -> Self {
         let dist = tempfile::tempdir().unwrap();
         let marker = crumb::web::MARKER;
         for (rel, title) in [
@@ -36,11 +40,11 @@ impl TestApp {
         std::fs::create_dir_all(dist.path().join("_astro")).unwrap();
         std::fs::write(dist.path().join("_astro/app.abc.js"), "console.log(1)").unwrap();
 
-        let config = Config {
-            app_password: password.map(String::from),
+        let mut config = Config {
             web_dist: dist.path().to_path_buf(),
             ..Config::default()
         };
+        configure(&mut config);
         let state = AppState::new(db::open_in_memory().unwrap(), config, Browser::disabled());
         Self { state, _dist: dist }
     }
@@ -553,7 +557,7 @@ async fn oauth_flow_then_mcp_tools() {
         ))
         .await;
     let list: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 14);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
 
     let (_, _, text) = t
         .send(rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
@@ -764,4 +768,450 @@ async fn mcp_organising_tools() {
     assert!(msg.starts_with("Deleted 1 recipe(s)"), "{msg}");
     let (msg, _) = call("search_recipes", json!({})).await;
     assert!(msg.starts_with("1 recipe(s)"), "{msg}");
+}
+
+/// Saves a small recipe and returns its id.
+async fn add_recipe(t: &TestApp, title: &str, category: &str, ingredient: &str, time: &str) -> i64 {
+    let (status, r) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({
+                "title": title,
+                "image": "https://img.test/x.jpg",
+                "totalTime": time,
+                "recipeCategory": category,
+                "ingredients": [{"items": [ingredient, "salt"]}],
+                "instructions": [{"items": ["Cook it.", "Eat it."]}]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{r}");
+    r["id"].as_i64().unwrap()
+}
+
+#[tokio::test]
+async fn cook_log_and_views() {
+    let t = TestApp::new(None);
+    let id = add_recipe(&t, "Chili", "Main", "1 lb beef", "1h").await;
+
+    let (status, stats) = t
+        .json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["count"], 1);
+    assert!(stats["lastCookedAt"].as_str().unwrap().ends_with("Z"));
+    // Finishing again straight away counts once
+    let (_, stats) = t
+        .json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    assert_eq!(stats["count"], 1);
+
+    let (_, _, html) = t.send(get(&format!("/recipes/{id}"))).await;
+    assert!(html.contains(r#""cookStats":{"count":1"#), "{html}");
+
+    let (_, stats) = t
+        .json("DELETE", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    assert_eq!(stats["count"], 0);
+    assert_eq!(stats["lastCookedAt"], Value::Null);
+
+    let (status, _) = t
+        .json("POST", &format!("/api/recipes/{id}/viewed"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, err) = t.json("POST", "/api/recipes/999/cooked", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(err["statusCode"], 404);
+
+    // The cook log goes into backups and comes back on restore, without doubling
+    t.json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    let (_, _, backup) = t.send(get("/api/export")).await;
+    let backup: Value = serde_json::from_str(&backup).unwrap();
+    assert_eq!(
+        backup["recipes"][0]["cookedAt"].as_array().unwrap().len(),
+        1
+    );
+    let fresh = TestApp::new(None);
+    for _ in 0..2 {
+        let boundary = "XBOUNDARY";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"crumb.json\"\r\nContent-Type: application/json\r\n\r\n{backup}\r\n--{boundary}--\r\n"
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/import/files")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        let (status, _, _) = fresh.send(req).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (_, restored) = fresh.json("GET", "/api/recipes", None).await;
+    let rid = restored[0]["id"].as_i64().unwrap();
+    let (_, _, html) = fresh.send(get(&format!("/recipes/{rid}"))).await;
+    assert!(html.contains(r#""cookStats":{"count":1"#));
+
+    // Deleting the recipe clears its events
+    t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    let left: i64 = t
+        .state
+        .db
+        .lock()
+        .query_row("SELECT count(*) FROM recipe_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn suggestions_and_random() {
+    let t = TestApp::new(None);
+    let (status, err) = t.json("GET", "/api/recipes/random", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(err["statusCode"], 404);
+    let (status, headers, _) = t.send(get("/random")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(headers[header::LOCATION], "/");
+
+    let mut ids = Vec::new();
+    for (title, cat, ing) in [
+        ("Lemon Chicken", "Main", "1 chicken"),
+        ("Beef Stew", "Main", "2 lb beef"),
+        ("Salmon Bowl", "Main", "salmon"),
+        ("Tofu Stir Fry", "Main", "tofu"),
+        ("Pork Tacos", "Main", "pork shoulder"),
+        ("Shrimp Pasta", "Main", "shrimp"),
+    ] {
+        ids.push(add_recipe(&t, title, cat, ing, "30m").await);
+    }
+
+    let (_, _, html) = t.send(get("/")).await;
+    assert!(
+        html.contains(r#""suggestions":{"#) && html.contains(r#""items":[{"#),
+        "{html}"
+    );
+
+    let (status, s) = t.json("GET", "/api/suggestions?limit=4", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(s["ai"], "off");
+    let items = s["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    assert!(
+        items
+            .iter()
+            .all(|i| !i["reason"].as_str().unwrap().is_empty())
+    );
+    assert!(items[0]["recipe"]["title"].is_string());
+
+    // Cooked recipes and excluded ones are left out; a new seed shuffles
+    t.json("POST", &format!("/api/recipes/{}/cooked", ids[0]), None)
+        .await;
+    let first: Vec<i64> = {
+        let (_, s) = t.json("GET", "/api/suggestions?limit=4", None).await;
+        s["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["recipe"]["id"].as_i64().unwrap())
+            .collect()
+    };
+    assert!(!first.contains(&ids[0]));
+    let exclude = first
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let (_, s) = t
+        .json(
+            "GET",
+            &format!("/api/suggestions?limit=4&exclude={exclude},junk"),
+            None,
+        )
+        .await;
+    let next: Vec<i64> = s["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["recipe"]["id"].as_i64().unwrap())
+        .collect();
+    assert!(!next.is_empty() && next.iter().all(|id| !first.contains(id) && *id != ids[0]));
+    let (status, _) = t.json("GET", "/api/suggestions?limit=99", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Random: a no-store redirect, and it honours exclude
+    let (status, headers, _) = t.send(get("/random")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    let loc = headers[header::LOCATION].to_str().unwrap();
+    assert!(
+        loc.starts_with("/recipes/") && loc.ends_with("?from=random"),
+        "{loc}"
+    );
+    let all_but_last = ids[..5]
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let (_, headers, _) = t
+        .send(get(&format!("/random?exclude={all_but_last}")))
+        .await;
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("/recipes/{}?from=random", ids[5])
+    );
+    let (_, r) = t
+        .json(
+            "GET",
+            &format!("/api/recipes/random?exclude={all_but_last}"),
+            None,
+        )
+        .await;
+    assert_eq!(r["id"], ids[5]);
+}
+
+async fn mcp_call(t: &TestApp, name: &str, arguments: Value) -> (String, bool) {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}})
+            .to_string(),
+        ))
+        .unwrap();
+    let (_, _, body) = t.send(req).await;
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let text = v["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    (text.to_string(), v["result"]["isError"] == true)
+}
+
+#[tokio::test]
+async fn mcp_suggest_tools() {
+    let t = TestApp::new(None);
+    let chili = add_recipe(&t, "Chili", "Main", "1 lb beef", "1h").await;
+    add_recipe(&t, "Salad", "Salad", "lettuce", "10m").await;
+    add_recipe(&t, "Soup", "Soup", "onions", "45m").await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string(),
+        ))
+        .unwrap();
+    let (_, _, body) = t.send(req).await;
+    for tool in ["suggest_recipes", "random_recipe", "mark_recipe_cooked"] {
+        assert!(body.contains(tool), "{tool}");
+    }
+
+    let (out, err) = mcp_call(&t, "suggest_recipes", json!({})).await;
+    assert!(
+        !err && out.contains("Chili") && out.contains("/recipes/"),
+        "{out}"
+    );
+    let (out, _) = mcp_call(&t, "suggest_recipes", json!({"maxMinutes": 20})).await;
+    assert!(out.contains("Salad") && !out.contains("Chili"), "{out}");
+    let (out, _) = mcp_call(&t, "random_recipe", json!({"query": "onions"})).await;
+    assert!(out.contains("Soup"), "{out}");
+
+    let (out, err) = mcp_call(&t, "mark_recipe_cooked", json!({"id": chili, "daysAgo": 1})).await;
+    assert!(
+        !err && out.contains("Marked \"Chili\" as cooked yesterday"),
+        "{out}"
+    );
+    let (out, _) = mcp_call(&t, "mark_recipe_cooked", json!({"id": chili, "daysAgo": 1})).await;
+    assert!(out.starts_with("Already marked"), "{out}");
+    let (out, _) = mcp_call(&t, "suggest_recipes", json!({})).await;
+    assert!(!out.contains("Chili"), "{out}");
+    let (_, err) = mcp_call(
+        &t,
+        "mark_recipe_cooked",
+        json!({"id": chili, "daysAgo": 90}),
+    )
+    .await;
+    assert!(err);
+    let (_, err) = mcp_call(&t, "mark_recipe_cooked", json!({"id": 999})).await;
+    assert!(err);
+}
+
+/// A fake AI API: answers Anthropic and OpenAI-style requests by picking the first two
+/// candidates plus one made-up id; under /fail it always errors.
+async fn fake_ai() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let reply = |body: &Value| -> String {
+        let user = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "user")
+            .unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let payload: Value = serde_json::from_str(&user).unwrap();
+        let ids: Vec<i64> = payload["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_i64().unwrap())
+            .collect();
+        json!({"picks": [
+            {"id": 424242, "blurb": "Not in your box"},
+            {"id": ids[1], "blurb": "Bright and quick for a weeknight"},
+            {"id": ids[0], "blurb": "You haven't tried this one yet"}
+        ]})
+        .to_string()
+    };
+    let (c1, c2, c3) = (calls.clone(), calls.clone(), calls.clone());
+    let app = axum::Router::new()
+        .route(
+            "/v1/messages",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| async move {
+                c1.fetch_add(1, Ordering::SeqCst);
+                axum::Json(json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": reply(&body)}]}))
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| async move {
+                c2.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(body["response_format"]["type"], "json_schema");
+                axum::Json(json!({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": reply(&body), "refusal": null}}]}))
+            }),
+        )
+        .route(
+            "/fail/v1/messages",
+            axum::routing::post(move || async move {
+                c3.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::INTERNAL_SERVER_ERROR, "boom")
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, calls)
+}
+
+async fn wait_for_ai(t: &TestApp) -> Value {
+    for _ in 0..50 {
+        let (_, s) = t.json("GET", "/api/suggestions", None).await;
+        if s["ai"] != "pending" {
+            return s;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("AI suggestions never finished");
+}
+
+#[tokio::test]
+async fn ai_suggestions_cache_and_fallback() {
+    use crumb::config::{LlmConfig, LlmProvider};
+    use std::sync::atomic::Ordering;
+    let (base, calls) = fake_ai().await;
+
+    for (provider, url) in [
+        (LlmProvider::Anthropic, base.clone()),
+        (LlmProvider::OpenAi, format!("{base}/v1")),
+    ] {
+        let before = calls.load(Ordering::SeqCst);
+        let t = TestApp::with_config(|c| {
+            let mut llm = LlmConfig::new(provider, "test-key");
+            llm.base_url = url.clone();
+            c.llm = Some(llm);
+        });
+        for (title, ing) in [
+            ("Chicken", "chicken"),
+            ("Beef", "beef"),
+            ("Tofu", "tofu"),
+            ("Salmon", "salmon"),
+            ("Pork", "pork"),
+        ] {
+            add_recipe(&t, title, "Main", ing, "30m").await;
+        }
+        let (_, s) = t.json("GET", "/api/suggestions", None).await;
+        assert_eq!(s["ai"], "pending");
+        let s = wait_for_ai(&t).await;
+        assert_eq!(s["ai"], "ready", "{provider:?}: {s}");
+        let items = s["items"].as_array().unwrap();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0]["ai"], true);
+        assert_eq!(items[0]["reasonKind"], "ai");
+        assert_eq!(items[0]["reason"], "Bright and quick for a weeknight");
+        assert_eq!(items[1]["reason"], "You haven't tried this one yet");
+        assert_eq!(items[2]["ai"], false);
+        assert!(items.iter().all(|i| i["recipe"]["id"] != 424242));
+        // Cached: no second call, and shuffles never call
+        t.json("GET", "/api/suggestions", None).await;
+        t.json("GET", "/api/suggestions?seed=1", None).await;
+        assert_eq!(calls.load(Ordering::SeqCst), before + 1, "{provider:?}");
+        // The home page serves the cached blurbs too
+        let (_, _, html) = t.send(get("/")).await;
+        assert!(html.contains("Bright and quick for a weeknight"));
+    }
+
+    // A failing API: the algorithm's list stands, and there's no retry storm
+    let before = calls.load(Ordering::SeqCst);
+    let t = TestApp::with_config(|c| {
+        let mut llm = LlmConfig::new(LlmProvider::Anthropic, "test-key");
+        llm.base_url = format!("{base}/fail");
+        c.llm = Some(llm);
+    });
+    for (title, ing) in [("Chicken", "chicken"), ("Beef", "beef"), ("Tofu", "tofu")] {
+        add_recipe(&t, title, "Main", ing, "30m").await;
+    }
+    t.json("GET", "/api/suggestions", None).await;
+    let s = wait_for_ai(&t).await;
+    assert_eq!(s["ai"], "off");
+    assert_eq!(s["items"].as_array().unwrap().len(), 3);
+    assert!(
+        s["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["ai"] == false)
+    );
+    t.json("GET", "/api/suggestions", None).await;
+    // One request plus its single retry, then the failure is remembered
+    assert_eq!(calls.load(Ordering::SeqCst), before + 2);
+}
+
+#[tokio::test]
+async fn undo_only_removes_its_own_cook() {
+    let t = TestApp::new(None);
+    let id = add_recipe(&t, "Chili", "Main", "1 lb beef", "1h").await;
+    let (_, first) = t
+        .json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    let event = first["eventId"].as_i64().unwrap();
+    // A second tap soon after is a repeat: nothing to undo
+    let (_, again) = t
+        .json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    assert_eq!(again["eventId"], Value::Null);
+    assert_eq!(again["count"], 1);
+    let (_, stats) = t
+        .json(
+            "DELETE",
+            &format!("/api/recipes/{id}/cooked?event={}", event + 100),
+            None,
+        )
+        .await;
+    assert_eq!(stats["count"], 1);
+    let (_, stats) = t
+        .json(
+            "DELETE",
+            &format!("/api/recipes/{id}/cooked?event={event}"),
+            None,
+        )
+        .await;
+    assert_eq!(stats["count"], 0);
 }

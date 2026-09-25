@@ -3,17 +3,19 @@
 pub mod api;
 pub mod auth;
 pub mod browser;
-pub mod claude;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod importers;
+pub mod llm;
 pub mod markdown;
 pub mod mcp;
 pub mod model;
 pub mod oauth;
 pub mod recipes;
 pub mod scraper;
+pub mod suggest;
+pub mod suggestions;
 pub mod text_parser;
 pub mod web;
 
@@ -33,6 +35,10 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub web: Arc<web::Web>,
     pub browser: Arc<browser::Browser>,
+    /// The cook's last-seen time zone, for the Try next context.
+    pub zone: Arc<suggestions::Zone>,
+    /// Cached AI picks for Try next.
+    pub ai: Arc<suggestions::AiState>,
 }
 
 impl AppState {
@@ -48,6 +54,8 @@ impl AppState {
             config: Arc::new(config),
             http,
             browser: Arc::new(browser),
+            zone: Arc::default(),
+            ai: Arc::default(),
         }
     }
 }

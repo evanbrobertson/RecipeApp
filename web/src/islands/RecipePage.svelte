@@ -1,7 +1,9 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
+  import ChefHat from "@lucide/svelte/icons/chef-hat"
   import Clock from "@lucide/svelte/icons/clock"
   import Copy from "@lucide/svelte/icons/copy"
+  import Dices from "@lucide/svelte/icons/dices"
   import ExternalLink from "@lucide/svelte/icons/external-link"
   import FileQuestion from "@lucide/svelte/icons/file-question"
   import Flame from "@lucide/svelte/icons/flame"
@@ -23,6 +25,7 @@
   import { api, errorMessage, pathId } from "../lib/api"
   import { bookPalette } from "../lib/books"
   import { recipeToMarkdown } from "../lib/format"
+  import { cookedLine, logView, markCooked } from "../lib/history"
   import { scaleIngredient } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
   import {
@@ -31,8 +34,10 @@
     kicker,
     nutritionLabels,
     type Cookbook,
+    type CookStats,
     type Recipe,
   } from "../lib/recipe"
+  import { randomHref, rememberRandom } from "../lib/random"
   import { forgetViewed, getScale, rememberViewed, setScale } from "../lib/storage"
   import { flash, toast } from "../lib/toast"
 
@@ -40,6 +45,7 @@
     recipe: Recipe
     cookbooks: Cookbook[]
     inCookbooks: number[]
+    cookStats?: CookStats
   }
 
   const id = pathId()
@@ -53,10 +59,31 @@
   $effect(() => {
     if (recipe) {
       const r = recipe
-      whenActive(() => rememberViewed(r))
+      whenActive(() => {
+        rememberViewed(r)
+        logView(r.id)
+      })
       document.title = `${recipe.title} · Crumb`
     }
   })
+
+  // Landed here from Surprise me: offer another, and don't serve this one again
+  const fromRandom = new URLSearchParams(location.search).get("from") === "random"
+  if (fromRandom) {
+    rememberRandom(id)
+    const url = new URL(location.href)
+    url.searchParams.delete("from")
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash)
+  }
+  let shuffleHref = $state(randomHref(id))
+  const refreshShuffle = () => (shuffleHref = randomHref(id))
+
+  const cooked = $derived(cookedLine(page.data?.cookStats))
+  function cookedNow() {
+    void markCooked(id, (stats) => {
+      if (page.data) page.data.cookStats = stats
+    })
+  }
 
   // ─── Scaling & checklists ───
   let scale = $state(getScale(id))
@@ -146,10 +173,12 @@
 
   const menu: MenuItem[][] = [
     [
+      { label: "Mark as cooked", icon: ChefHat, onselect: cookedNow },
       { label: "Edit", icon: Pencil, onselect: () => (location.href = `/recipes/${id}/edit`) },
       { label: "Copy as text", icon: Copy, onselect: copyRecipe },
       ...("share" in navigator ? [{ label: "Share", icon: Share, onselect: shareRecipe }] : []),
       { label: "Print", icon: Printer, onselect: () => window.print() },
+      { label: "Surprise me", icon: Dices, onselect: () => (location.href = randomHref(id)) },
     ],
     [{ label: "Delete", icon: Trash2, danger: true, onselect: () => (showDelete = true) }],
   ]
@@ -198,7 +227,26 @@
           </h1>
         </div>
       {/if}
-      <div class={["no-print absolute", hasHero ? "top-3 right-3" : "top-2 right-0"]}>
+      <div
+        class={[
+          "no-print absolute flex items-center gap-2",
+          hasHero ? "top-3 right-3" : "top-2 right-0",
+        ]}
+      >
+        {#if fromRandom}
+          <a
+            href={shuffleHref}
+            class={[
+              "btn",
+              hasHero ? "bg-canvas/90 text-ink shadow-sm backdrop-blur" : "btn-soft",
+            ]}
+            data-no-prerender
+            onpointerdown={refreshShuffle}
+            onfocus={refreshShuffle}
+          >
+            <Dices /> Shuffle again
+          </a>
+        {/if}
         <Menu
           groups={menu}
           triggerClass={hasHero
@@ -208,8 +256,14 @@
       </div>
     </div>
 
-    {#if recipe.author || sourceHost}
+    {#if recipe.author || sourceHost || cooked}
       <p class="text-ink-muted -mt-2 mb-4 text-sm">
+        {#if cooked}
+          <span class="text-ink inline-flex items-center gap-1 font-medium">
+            <ChefHat class="text-primary size-3.5" />{cooked}
+          </span>
+          {#if recipe.author || sourceHost}<span> · </span>{/if}
+        {/if}
         {#if recipe.author}<span>By {recipe.author}</span>{/if}
         {#if recipe.author && sourceHost}<span> · </span>{/if}
         {#if sourceHost}

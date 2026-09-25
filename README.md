@@ -7,7 +7,7 @@ from any chat.
 ## Features
 
 - **One box for everything:** paste a URL or raw recipe text (email, notes, PDF text). Several links at once
-  are bulk-imported. Text is parsed by a built-in parser, or by Claude when `ANTHROPIC_API_KEY` is set.
+  are bulk-imported. Text is parsed by a built-in parser, or by an AI model when an API key is set (Anthropic, OpenAI or DeepSeek).
 - **Sites that block scrapers:** if a plain fetch is blocked (403, bot filters) or the recipe is rendered by
   JavaScript, the server retries in headless Chromium (installed in the Docker image).
 - **Cook mode:** full-screen, big type, one step at a time, swipe or tap, screen kept awake, one-tap timers
@@ -65,8 +65,13 @@ See [DEPLOY.md](./DEPLOY.md) for Railway.
 | `APP_PASSWORD`      | Production | Password for the web app and for approving the Claude connector               |
 | `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
-| `ANTHROPIC_API_KEY` | No         | Lets Claude parse text pasted on the Add page (falls back to built-in parser) |
-| `ANTHROPIC_MODEL`   | No         | Model used for parsing, default `claude-sonnet-5`                             |
+| `ANTHROPIC_API_KEY` | No         | Lets Claude parse pasted text and write "Try next" blurbs                     |
+| `OPENAI_API_KEY`    | No         | The same with OpenAI instead                                                  |
+| `DEEPSEEK_API_KEY`  | No         | The same with DeepSeek instead                                                |
+| `LLM_PROVIDER`      | No         | `anthropic`, `openai` or `deepseek`; default: the first one with a key       |
+| `ANTHROPIC_MODEL`   | No         | Default `claude-sonnet-5` (also `OPENAI_MODEL`, default `gpt-5-mini`, and `DEEPSEEK_MODEL`, default `deepseek-chat`) |
+| `SUGGEST_MODEL`     | No         | A different (e.g. cheaper) model for "Try next" blurbs                        |
+| `SUGGESTIONS_AI`    | No         | Set to `off` to keep "Try next" algorithm-only even with a key                |
 | `WEB_DIST`          | No         | Built frontend directory, default `web/dist`                                  |
 | `HOST` / `PORT`     | No         | Listen address, default `0.0.0.0:3000`                                        |
 | `CHROMIUM_PATH`     | No         | Chromium for the scraping fallback (set in the Docker image; auto-detected)   |

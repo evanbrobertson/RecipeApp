@@ -32,6 +32,8 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
+const VIEW_RETENTION_SECS: i64 = 400 * 86_400;
+
 fn recipes_table_sql(name: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {name} (
@@ -96,7 +98,15 @@ fn bootstrap_sql() -> String {
     expires_at integer NOT NULL,
     created_at integer NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at);",
+  CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at);
+
+  CREATE TABLE IF NOT EXISTS recipe_events (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    recipe_id integer NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    kind text NOT NULL,
+    created_at integer NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS recipe_events_recipe_kind_idx ON recipe_events (recipe_id, kind, created_at);",
         recipes_table_sql("recipes")
     )
 }
@@ -216,6 +226,11 @@ fn init(mut conn: Connection) -> anyhow_like::Result<Db> {
     upgrade_legacy_schema(&mut conn)?;
     conn.execute_batch(&bootstrap_sql())?;
     add_missing_columns(&conn)?;
+    // Views only feed suggestions for a few months; cooks are kept for good
+    conn.execute(
+        "DELETE FROM recipe_events WHERE kind = 'viewed' AND created_at < ?1",
+        [crate::model::now_secs() - VIEW_RETENTION_SECS],
+    )?;
     Ok(Db(Arc::new(Mutex::new(conn))))
 }
 
@@ -259,5 +274,16 @@ mod tests {
                 .iter()
                 .any(|col| col.name == "color")
         );
+        // Opening an older database adds the event log, and deleting a recipe clears its events
+        c.execute(
+            "INSERT INTO recipe_events (recipe_id, kind, created_at) VALUES (1, 'cooked', 1)",
+            [],
+        )
+        .unwrap();
+        c.execute("DELETE FROM recipes", []).unwrap();
+        let left: i64 = c
+            .query_row("SELECT count(*) FROM recipe_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }

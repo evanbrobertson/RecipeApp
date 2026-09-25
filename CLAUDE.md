@@ -11,7 +11,7 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** JSON-LD first, HTML/microdata fallback, headless Chromium over CDP for blocked sites
-- **Parsing pasted text:** built-in heuristic parser, or Claude (`ANTHROPIC_API_KEY`) via the Messages API
+- **AI (optional):** Anthropic, OpenAI or DeepSeek (`src/llm.rs`, structured JSON output) parses pasted text and writes "Try next" blurbs; without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium)
 
 ## Commands
@@ -36,7 +36,7 @@ bun run format                   # oxfmt
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
-  config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
+  config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
   model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
@@ -45,7 +45,9 @@ src/
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
-  scraper.rs, text_parser.rs, importers.rs, claude.rs, browser.rs, markdown.rs
+  suggest.rs      # Try next ranking + Surprise me (pure, unit-tested)
+  suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
+  scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
 web/src/
   layouts/Layout.astro   # Head, fonts, header, tab bar, timer dock, theme
@@ -73,6 +75,10 @@ web/src/
   Railway volume must keep working.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
+- **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
+  days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.
+- **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
+  `data-no-prerender`, or hovering the link runs it.
 
 ## Code Style
 

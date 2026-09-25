@@ -75,7 +75,7 @@
     </p>
     <p class="flex items-center gap-2">
       <Sparkles class="size-4" />
-      Pasted text: {info.claudeParsing ? "cleaned up by Claude" : "built-in parser"}
+      Pasted text: {info.aiProvider ? `cleaned up by ${info.aiProvider}` : "built-in parser"}
     </p>
   </section>
 

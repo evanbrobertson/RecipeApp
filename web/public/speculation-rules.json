@@ -6,7 +6,9 @@
         "and": [
           { "href_matches": "/*" },
           {
-            "not": { "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/*/cook", "/*.*"] }
+            "not": {
+              "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/random", "/*/cook", "/*.*"]
+            }
           },
           {
             "not": {

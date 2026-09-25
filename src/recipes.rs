@@ -500,7 +500,7 @@ pub async fn import_from_text(
     }
     let mut fields = None;
     if use_claude {
-        fields = crate::claude::extract_recipe(state, text).await;
+        fields = crate::llm::extract_recipe(state, text).await;
     }
     let mut fields = fields.unwrap_or_else(|| crate::text_parser::parse_recipe_text(text).recipe);
 
@@ -595,6 +595,15 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
                 let id = find_or_create_cookbook(&conn, book)?;
                 add_to_cookbook(&conn, id, &[recipe.id])?;
             }
+            // Restoring the same backup twice doesn't double the cook log
+            for at in &item.cooked {
+                conn.execute(
+                    "INSERT INTO recipe_events (recipe_id, kind, created_at)
+                     SELECT ?1, 'cooked', ?2 WHERE NOT EXISTS (
+                       SELECT 1 FROM recipe_events WHERE recipe_id = ?1 AND kind = 'cooked' AND created_at = ?2)",
+                    params![recipe.id, at],
+                )?;
+            }
             Ok(())
         })();
         if let Err(err) = result {
@@ -619,6 +628,13 @@ pub fn export_backup(conn: &Connection) -> AppResult<Value> {
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
 
+    let mut stmt = conn.prepare(
+        "SELECT recipe_id, created_at FROM recipe_events WHERE kind = 'cooked' ORDER BY created_at",
+    )?;
+    let cooks: Vec<(i64, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+
     let book_name = |id: i64| books.iter().find(|b| b.0 == id).map(|b| b.1.clone());
     let recipes: Vec<Value> = recipes
         .iter()
@@ -630,6 +646,14 @@ pub fn export_backup(conn: &Connection) -> AppResult<Value> {
                 .filter_map(|l| book_name(l.0))
                 .collect();
             m.insert("cookbooks".into(), json!(names));
+            let cooked: Vec<String> = cooks
+                .iter()
+                .filter(|c| c.0 == r.id)
+                .map(|c| iso(c.1))
+                .collect();
+            if !cooked.is_empty() {
+                m.insert("cookedAt".into(), json!(cooked));
+            }
             Value::Object(m)
         })
         .collect();
@@ -639,6 +663,108 @@ pub fn export_backup(conn: &Connection) -> AppResult<Value> {
         "cookbooks": books.iter().map(|b| json!({"name": b.1, "description": b.2})).collect::<Vec<_>>(),
         "recipes": recipes,
     }))
+}
+
+// ─── Cook and view log ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventKind {
+    Viewed,
+    Cooked,
+}
+
+impl EventKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Viewed => "viewed",
+            Self::Cooked => "cooked",
+        }
+    }
+
+    /// Repeat events closer together than this count once (a reload, "start over").
+    fn dedupe_secs(self) -> i64 {
+        match self {
+            Self::Viewed => 30 * 60,
+            Self::Cooked => 6 * 3600,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CookStats {
+    pub count: i64,
+    pub last_cooked_at: Option<String>,
+}
+
+fn require_exists(conn: &Connection, id: i64) -> AppResult<()> {
+    let found: Option<i64> = conn
+        .query_row("SELECT id FROM recipes WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?;
+    found
+        .map(|_| ())
+        .ok_or_else(|| AppError::not_found("Recipe not found"))
+}
+
+/// Logs a view or a cook at `at` (unix seconds), unless one was logged near that time.
+/// Returns the new event's id, or None when a matching one was already logged.
+pub fn log_event(conn: &Connection, id: i64, kind: EventKind, at: i64) -> AppResult<Option<i64>> {
+    require_exists(conn, id)?;
+    let written = conn.execute(
+        "INSERT INTO recipe_events (recipe_id, kind, created_at)
+         SELECT ?1, ?2, ?3 WHERE NOT EXISTS (
+           SELECT 1 FROM recipe_events WHERE recipe_id = ?1 AND kind = ?2 AND abs(created_at - ?3) < ?4)",
+        params![id, kind.as_str(), at, kind.dedupe_secs()],
+    )?;
+    Ok((written > 0).then(|| conn.last_insert_rowid()))
+}
+
+/// The "Undo" on "Marked as cooked": removes that cook (`event`, from [`log_event`]),
+/// or without one the most recently logged cook of the recipe.
+pub fn undo_cooked(conn: &Connection, id: i64, event: Option<i64>) -> AppResult<CookStats> {
+    require_exists(conn, id)?;
+    match event {
+        Some(event) => conn.execute(
+            "DELETE FROM recipe_events WHERE id = ?1 AND recipe_id = ?2 AND kind = 'cooked'",
+            params![event, id],
+        )?,
+        None => conn.execute(
+            "DELETE FROM recipe_events WHERE id = (
+               SELECT max(id) FROM recipe_events WHERE recipe_id = ?1 AND kind = 'cooked')",
+            [id],
+        )?,
+    };
+    cook_stats(conn, id)
+}
+
+pub fn cook_stats(conn: &Connection, id: i64) -> AppResult<CookStats> {
+    let (count, last): (i64, Option<i64>) = conn.query_row(
+        "SELECT count(*), max(created_at) FROM recipe_events WHERE recipe_id = ?1 AND kind = 'cooked'",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(CookStats {
+        count,
+        last_cooked_at: last.map(iso),
+    })
+}
+
+/// Summaries for these ids, in the order given (unknown ids are skipped).
+pub fn summaries_by_ids(conn: &Connection, ids: &[i64]) -> AppResult<Vec<RecipeSummary>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; ids.len()].join(",");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SUMMARY_COLUMNS} FROM recipes r WHERE r.id IN ({marks})"
+    ))?;
+    let rows: Vec<RecipeSummary> = stmt
+        .query_map(params_from_iter(ids.iter()), summary_from_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids
+        .iter()
+        .filter_map(|id| rows.iter().find(|r| r.id == *id).cloned())
+        .collect())
 }
 
 // ─── Cookbooks ──────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
   import Croissant from "@lucide/svelte/icons/croissant"
   import CakeSlice from "@lucide/svelte/icons/cake-slice"
   import Sandwich from "@lucide/svelte/icons/sandwich"
+  import Sparkles from "@lucide/svelte/icons/sparkles"
   import { kicker, type RecipeSummary } from "../lib/recipe"
 
   interface Props {
@@ -17,9 +18,20 @@
     selectable?: boolean
     selected?: boolean
     ontoggle?: (id: number) => void
+    /** Why it's suggested, under the title (Try next). */
+    reason?: string
+    /** The reason was written by the AI layer. */
+    aiReason?: boolean
   }
 
-  let { recipe, selectable = false, selected = false, ontoggle }: Props = $props()
+  let {
+    recipe,
+    selectable = false,
+    selected = false,
+    ontoggle,
+    reason,
+    aiReason = false,
+  }: Props = $props()
   let imageFailed = $state(false)
 
   // A stable, friendly placeholder colour and icon per recipe when there's no photo
@@ -81,6 +93,11 @@
     <h3 class="line-clamp-2 leading-snug font-semibold">{recipe.title}</h3>
     {#if sub}
       <p class="text-ink-muted mt-0.5 truncate text-sm">{sub}</p>
+    {/if}
+    {#if reason}
+      <p class="text-ink-muted mt-1 line-clamp-2 text-sm">
+        {#if aiReason}<Sparkles class="text-primary mr-0.5 inline size-3.5 align-[-2px]" />{/if}{reason}
+      </p>
     {/if}
   </div>
 {/snippet}

@@ -1,6 +1,6 @@
 ---
 import Icon from "../components/Icon.astro"
-import { Plug, FileDown, PenLine, Archive, ChevronRight, Download } from "lucide"
+import { Plug, FileDown, PenLine, Archive, ChevronRight, Download, Dices } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import MoreSettings from "../islands/MoreSettings.svelte"
 
@@ -26,6 +26,21 @@ const links = [
     <h1 class="font-serif text-3xl font-semibold sm:text-4xl">More</h1>
 
     <div class="space-y-2">
+      <a
+        href="/random"
+        data-random
+        data-no-prerender
+        class="card hover:bg-raised flex items-center gap-4 p-4 transition"
+      >
+        <span class="bg-primary/10 text-primary rounded-ui grid size-11 shrink-0 place-items-center">
+          <Icon icon={Dices} class="size-5" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block font-semibold">Surprise me</span>
+          <span class="text-ink-muted text-sm">Open a random recipe from your box</span>
+        </span>
+        <Icon icon={ChevronRight} class="text-ink-dim size-5" />
+      </a>
       {
         links.map((l) => (
           <a href={l.href} class="card hover:bg-raised flex items-center gap-4 p-4 transition">
@@ -57,3 +72,8 @@ const links = [
     <MoreSettings client:only="svelte" />
   </div>
 </Layout>
+
+<script>
+  import { wireRandomLinks } from "../lib/random"
+  wireRandomLinks()
+</script>

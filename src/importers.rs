@@ -18,6 +18,8 @@ use crate::text_parser::parse_recipe_text;
 pub struct ImportedRecipe {
     pub fields: RecipeFields,
     pub cookbooks: Vec<String>,
+    /// When it was cooked (unix seconds), from a Crumb backup's cook log.
+    pub cooked: Vec<i64>,
 }
 
 impl From<RecipeFields> for ImportedRecipe {
@@ -25,6 +27,7 @@ impl From<RecipeFields> for ImportedRecipe {
         Self {
             fields,
             cookbooks: Vec::new(),
+            cooked: Vec::new(),
         }
     }
 }
@@ -124,6 +127,7 @@ fn from_paprika(p: &Map<String, Value>) -> Option<ImportedRecipe> {
             ..Default::default()
         },
         cookbooks: categories,
+        cooked: Vec::new(),
     })
 }
 
@@ -209,6 +213,17 @@ fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                cooked: r
+                    .get("cookedAt")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .filter_map(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                            .map(|t| t.timestamp())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             }),
             Err(err) => {
                 tracing::warn!("[import] skipped a backup recipe: {err}");
@@ -257,7 +272,7 @@ static CHUNK_SEPARATOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^\s*(?:-{3,}|={3,}|\x0c)\s*$").unwrap());
 
 async fn fields_from_text(state: &AppState, text: &str) -> RecipeFields {
-    match crate::claude::extract_recipe(state, text).await {
+    match crate::llm::extract_recipe(state, text).await {
         Some(fields) => fields,
         None => parse_recipe_text(text).recipe,
     }

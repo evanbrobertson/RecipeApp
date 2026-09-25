@@ -62,7 +62,38 @@ export interface ConnectorInfo {
   mcpUrl: string
   authEnabled: boolean
   claudeParsing: boolean
+  /** "Claude", "OpenAI" or "DeepSeek" when an AI API is configured. */
+  aiProvider: string | null
   browserScraping: boolean
+}
+
+export interface CookStats {
+  count: number
+  lastCookedAt: string | null
+}
+
+export type ReasonKind =
+  | "like"
+  | "interest"
+  | "rediscover"
+  | "quick"
+  | "project"
+  | "new"
+  | "season"
+  | "kicker"
+  | "ai"
+
+export interface Suggestion {
+  recipe: RecipeSummary
+  reason: string
+  reasonKind: ReasonKind
+  /** The reason was written by the AI layer. */
+  ai: boolean
+}
+
+export interface Suggestions {
+  items: Suggestion[]
+  ai: "ready" | "pending" | "off"
 }
 
 export const nutritionLabels: Record<string, string> = {

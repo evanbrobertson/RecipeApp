@@ -16,6 +16,7 @@
   import Modal from "../components/Modal.svelte"
   import ScaleControl from "../components/ScaleControl.svelte"
   import { api, pathId } from "../lib/api"
+  import { markCooked } from "../lib/history"
   import { findTimers, parseIngredient, scaleIngredient } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
   import type { Recipe } from "../lib/recipe"
@@ -54,10 +55,16 @@
   let direction = $state(1)
   const step = $derived(steps[index])
 
+  // Reaching the end logs a cook once per visit (the server also ignores repeats)
+  let logged = false
   function go(to: number) {
     if (to < 0) return
     if (to >= steps.length) {
       finished = true
+      if (!logged) {
+        logged = true
+        void markCooked(id)
+      }
       return
     }
     direction = to > index ? 1 : -1

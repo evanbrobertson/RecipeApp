@@ -50,7 +50,7 @@ fn signature(password: &str, issued: i64) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
-fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()

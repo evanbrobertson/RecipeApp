@@ -16,6 +16,7 @@ use crate::model::{
     cookbook_color, cookbook_description, cookbook_name, count_items,
 };
 use crate::recipes;
+use crate::suggestions;
 
 const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"Crumb\").
 - To save a recipe the user pasted or described, structure it yourself and call save_recipe. Keep every ingredient and step exactly as written.
@@ -25,6 +26,7 @@ const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"
 - To tidy the library, search_recipes with `missing` finds recipes without an image, times, a category, a cookbook and so on; refresh_recipe_from_source fills blanks from the recipe's source page without touching what the user set.
 - Cookbooks are the shelf: get_cookbook, update_cookbook (name, description, colour), add_to_cookbook and remove_from_cookbook organise it.
 - delete_recipe and delete_cookbook first return a preview. Show it to the user and call again with confirm: true only after they agree.
+- When the user asks what to cook, call suggest_recipes (or random_recipe for a surprise). When they say they cooked something, call mark_recipe_cooked.
 - Always share the recipe link returned by the tools.";
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -596,6 +598,142 @@ impl Ctx<'_> {
                     Err(err) => tool_error(err.message),
                 }
             }
+            "suggest_recipes" | "random_recipe" => {
+                let max_minutes = match a.get("maxMinutes") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => match v.as_u64().filter(|m| (1..=1440).contains(m)) {
+                        Some(m) => Some(m as u32),
+                        None => {
+                            return Some(invalid("maxMinutes must be an integer from 1 to 1440"));
+                        }
+                    },
+                };
+                let query = a
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|q| !q.is_empty());
+                let only = match query {
+                    None => None,
+                    Some(q) => {
+                        match recipes::search_recipes(&db.lock(), Some(q), &[], Some(100_000), None)
+                        {
+                            Ok(rows) => Some(rows.iter().map(|r| r.id).collect()),
+                            Err(err) => return Some(tool_error(err.message)),
+                        }
+                    }
+                };
+                let ctx = suggestions::context(self.state, &HeaderMap::new(), 0);
+                let filters = match (query, max_minutes) {
+                    (Some(q), Some(m)) => format!(" matching \"{q}\" in {m} minutes or less"),
+                    (Some(q), None) => format!(" matching \"{q}\""),
+                    (None, Some(m)) => format!(" in {m} minutes or less"),
+                    (None, None) => String::new(),
+                };
+                if name == "random_recipe" {
+                    let opts = suggestions::Options {
+                        max_minutes,
+                        only,
+                        ..Default::default()
+                    };
+                    let picked = suggestions::random(self.state, &Default::default(), None, &opts)
+                        .and_then(|id| {
+                            recipes::summaries_by_ids(
+                                &db.lock(),
+                                &id.into_iter().collect::<Vec<_>>(),
+                            )
+                        });
+                    return Some(match picked {
+                        Ok(rows) if !rows.is_empty() => text(format!(
+                            "How about this one?\n{}",
+                            self.recipe_line(&rows[0])
+                        )),
+                        Ok(_) => text(format!("No recipes{filters} to pick from.")),
+                        Err(err) => tool_error(err.message),
+                    });
+                }
+                let limit = match a.get("limit") {
+                    None => 5,
+                    Some(v) => match v.as_u64().filter(|l| (1..=10).contains(l)) {
+                        Some(l) => l as usize,
+                        None => return Some(invalid("limit must be an integer from 1 to 10")),
+                    },
+                };
+                let opts = suggestions::Options {
+                    limit,
+                    max_minutes,
+                    only,
+                    ..Default::default()
+                };
+                match suggestions::suggestions(self.state, ctx, &opts) {
+                    Ok(s) if s.items.is_empty() => text(format!(
+                        "Nothing{filters} to suggest right now (recipes cooked in the last {} days are left out).",
+                        crate::suggest::COOLDOWN_DAYS
+                    )),
+                    Ok(s) => {
+                        let lines: Vec<String> = s
+                            .items
+                            .iter()
+                            .map(|i| {
+                                let why = if i.reason.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("\n  {}", i.reason)
+                                };
+                                format!("{}{why}", self.recipe_line(&i.recipe))
+                            })
+                            .collect();
+                        text(format!(
+                            "Worth cooking next{filters}:\n{}",
+                            lines.join("\n")
+                        ))
+                    }
+                    Err(err) => tool_error(err.message),
+                }
+            }
+            "mark_recipe_cooked" => {
+                let Some(id) = int("id") else {
+                    return Some(invalid("id must be an integer"));
+                };
+                let days_ago = match a.get("daysAgo") {
+                    None => 0,
+                    Some(v) => match v.as_i64().filter(|d| (0..=30).contains(d)) {
+                        Some(d) => d,
+                        None => return Some(invalid("daysAgo must be an integer from 0 to 30")),
+                    },
+                };
+                let conn = db.lock();
+                let at = crate::model::now_secs() - days_ago * crate::suggest::DAY;
+                let result = recipes::log_event(&conn, id, recipes::EventKind::Cooked, at)
+                    .and_then(|event| {
+                        Ok((
+                            event.is_some(),
+                            recipes::cook_stats(&conn, id)?,
+                            recipes::require_recipe(&conn, id)?,
+                        ))
+                    });
+                match result {
+                    Ok((new, stats, r)) => {
+                        let when = match days_ago {
+                            0 => "today".to_string(),
+                            1 => "yesterday".to_string(),
+                            d => format!("{d} days ago"),
+                        };
+                        let times = if stats.count == 1 {
+                            "once".to_string()
+                        } else {
+                            format!("{} times", stats.count)
+                        };
+                        text(format!(
+                            "{} \"{}\" as cooked {when}. Cooked {times} so far.\n{}",
+                            if new { "Marked" } else { "Already marked" },
+                            r.title,
+                            self.link(r.id)
+                        ))
+                    }
+                    Err(err) => tool_error(err.message),
+                }
+            }
             "refresh_recipe_from_source" => {
                 let Some(id) = int("id") else {
                     return Some(invalid("id must be an integer"));
@@ -745,6 +883,36 @@ pub fn tool_definitions() -> Vec<Value> {
                 "overwrite": {"type": "array", "items": {"type": "string", "enum": recipes::REFRESHABLE}, "description": "Fields to replace from the source even if already set. Only include these when the user asked."}
             })), &["id"]),
             "annotations": {"openWorldHint": true}
+        }),
+        json!({
+            "name": "suggest_recipes",
+            "title": "Suggest what to cook",
+            "description": "Recipes from the user's box worth cooking next, each with a short reason. Favours things they haven't made, variety, and what suits today; leaves out anything cooked in the last two weeks.",
+            "inputSchema": object(props(json!({
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                "maxMinutes": {"type": "integer", "minimum": 1, "maximum": 1440, "description": "Only recipes with a known total time up to this"},
+                "query": {"type": "string", "description": "Only recipes matching these words, as in search_recipes"}
+            })), &[]),
+            "annotations": {"readOnlyHint": true}
+        }),
+        json!({
+            "name": "random_recipe",
+            "title": "Random recipe",
+            "description": "One recipe picked at random from the user's box (avoiding anything cooked in the last two weeks when possible).",
+            "inputSchema": object(props(json!({
+                "maxMinutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+                "query": {"type": "string"}
+            })), &[]),
+            "annotations": {"readOnlyHint": true}
+        }),
+        json!({
+            "name": "mark_recipe_cooked",
+            "title": "Mark recipe as cooked",
+            "description": "Record that the user cooked a recipe (today, or daysAgo days ago), so suggestions can learn what they like and not repeat it.",
+            "inputSchema": object(props(json!({
+                "id": {"type": "integer"},
+                "daysAgo": {"type": "integer", "minimum": 0, "maximum": 30, "default": 0}
+            })), &["id"])
         }),
         json!({
             "name": "delete_recipe",

@@ -74,6 +74,13 @@ const links = [
         const dark =
           pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
         document.documentElement.classList.toggle("dark", dark)
+        // Local time for "Try next": the UTC offset, and the zone for the hemisphere
+        const age = "; path=/; max-age=31536000; samesite=lax"
+        document.cookie = "crumb_tz=" + -new Date().getTimezoneOffset() + age
+        try {
+          const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          if (zone && /^[\w+/-]+$/.test(zone)) document.cookie = "crumb_zone=" + zone + age
+        } catch {}
       })()
     </script>
   </head>
