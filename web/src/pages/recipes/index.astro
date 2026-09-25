@@ -7,7 +7,8 @@ import GridSkeleton from "../../components/GridSkeleton.svelte"
 <Layout title="Recipes" section="recipes" data>
   <RecipesPage client:only="svelte">
     <div slot="fallback">
-      <h1 class="mb-5 font-serif text-3xl font-semibold sm:text-4xl">Recipes</h1>
+      <h1 class="page-title mb-5 flex min-h-11 items-center">Recipes</h1>
+      <div class="skeleton rounded-ui mb-7 h-14 max-w-2xl"></div>
       <GridSkeleton />
     </div>
   </RecipesPage>

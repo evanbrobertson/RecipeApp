@@ -966,7 +966,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 "cookbook": cookbook_ref(),
                 "name": {"type": "string", "minLength": 1, "maxLength": 100},
                 "description": {"anyOf": [{"type": "string", "maxLength": 500}, {"type": "null"}]},
-                "color": {"type": "string", "enum": BOOK_COLORS}
+                "color": {"type": "string", "enum": BOOK_COLORS, "description": "Cloth colour on the shelf"}
             })), &["cookbook"]),
             "annotations": {"idempotentHint": true}
         }),

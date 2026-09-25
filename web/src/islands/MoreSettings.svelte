@@ -1,42 +1,148 @@
 <script lang="ts">
+  import Check from "@lucide/svelte/icons/check"
   import Globe from "@lucide/svelte/icons/globe"
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle"
+  import LocateFixed from "@lucide/svelte/icons/locate-fixed"
   import LogOut from "@lucide/svelte/icons/log-out"
-  import Monitor from "@lucide/svelte/icons/monitor"
+  import MonitorSmartphone from "@lucide/svelte/icons/monitor-smartphone"
   import Moon from "@lucide/svelte/icons/moon"
   import Sparkles from "@lucide/svelte/icons/sparkles"
   import Sun from "@lucide/svelte/icons/sun"
+  import Sunrise from "@lucide/svelte/icons/sunrise"
   import { api } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
   import type { ConnectorInfo } from "../lib/recipe"
+  import type { ThemeMode } from "../lib/theme"
+  import { toast } from "../lib/toast"
 
   const page = pageState<{ connector: ConnectorInfo }>(async () => ({
     connector: await api<ConnectorInfo>("/api/connector"),
   }))
   const info = $derived(page.data?.connector)
 
-  const modes = [
-    { value: "light", icon: Sun, label: "Light" },
-    { value: "dark", icon: Moon, label: "Dark" },
-    { value: "system", icon: Monitor, label: "Auto" },
+  // ─── Theme (the logic lives in lib/theme-boot.js, inlined in the head) ───
+  const theme = window.crumbTheme
+  const modes: { value: ThemeMode; icon: typeof Sun; label: string; text: string }[] = [
+    { value: "light", icon: Sun, label: "Light", text: "Always light" },
+    { value: "dark", icon: Moon, label: "Dark", text: "Always dark" },
+    { value: "system", icon: MonitorSmartphone, label: "System", text: "Follows your device" },
+    { value: "sun", icon: Sunrise, label: "Sunrise & sunset", text: "Dark from sunset to sunrise" },
   ]
-  // A bare string (not JSON), shared with the theme script in the page head
-  let mode = $state("system")
-  try {
-    mode = localStorage.getItem("crumb:theme") || "system"
-  } catch {
-    // storage blocked
+
+  let mode = $state<ThemeMode>(theme.mode())
+  let saved = $state(savedLocation())
+  let locating = $state(false)
+  // Hidden when a Permissions-Policy header blocks geolocation (Chromium can tell us)
+  const policy = (document as { featurePolicy?: { allowsFeature(f: string): boolean } })
+    .featurePolicy
+  const canLocate = "geolocation" in navigator && (policy?.allowsFeature("geolocation") ?? true)
+
+  function savedLocation(): boolean {
+    try {
+      const loc = JSON.parse(localStorage.getItem(theme.LOC) || "null")
+      return !!loc && isFinite(loc.lat) && isFinite(loc.lng)
+    } catch {
+      return false
+    }
   }
 
-  function setMode(value: string) {
+  // Re-read after any change (here or in another tab) so the times follow the location
+  const sun = $derived.by(() => {
+    void saved
+    return mode === "sun" ? theme.sun() : null
+  })
+
+  // One decimal (about 10 km) is plenty for sunrise and sunset
+  const round = (n: number) => Math.round(n * 10) / 10
+
+  const time = (ms: number) =>
+    new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase()
+
+  function setMode(value: ThemeMode) {
     mode = value
     try {
-      localStorage.setItem("crumb:theme", value)
+      localStorage.setItem(theme.KEY, value)
     } catch {
       // storage blocked: applies to this page only
+      document.documentElement.classList.toggle(
+        "dark",
+        value === "dark" ||
+          (value === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ||
+          (value === "sun" && theme.sun().dark),
+      )
+      return
     }
-    const dark =
-      value === "dark" || (value === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
-    document.documentElement.classList.toggle("dark", dark)
+    theme.apply()
+  }
+
+  // Radio group keys: arrows move and select, Home/End jump
+  let group: HTMLElement | undefined = $state()
+  function onkey(e: KeyboardEvent) {
+    const i = modes.findIndex((m) => m.value === mode)
+    const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key]
+    let next = step === undefined ? -1 : (i + step + modes.length) % modes.length
+    if (e.key === "Home") next = 0
+    if (e.key === "End") next = modes.length - 1
+    if (next < 0) return
+    e.preventDefault()
+    setMode(modes[next]!.value)
+    group?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus()
+  }
+
+  function locate() {
+    if (locating) return
+    locating = true
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        locating = false
+        try {
+          localStorage.setItem(
+            theme.LOC,
+            JSON.stringify({ lat: round(pos.coords.latitude), lng: round(pos.coords.longitude) }),
+          )
+        } catch {
+          toast({ title: "Couldn't save your location", tone: "error" })
+          return
+        }
+        saved = true
+        theme.apply()
+        toast({ title: "Using your location", description: "Sunrise and sunset are exact now." })
+      },
+      (err) => {
+        locating = false
+        toast(
+          err.code === err.PERMISSION_DENIED
+            ? {
+                title: "Location is blocked",
+                description:
+                  "Allow it in your browser's site settings, or keep the time-zone estimate.",
+                tone: "error",
+              }
+            : {
+                title: "Couldn't find your location",
+                description: "Still using the estimate from your time zone.",
+                tone: "error",
+              },
+        )
+      },
+      { timeout: 15000, maximumAge: 3600000 },
+    )
+  }
+
+  function forget() {
+    try {
+      localStorage.removeItem(theme.LOC)
+    } catch {
+      // storage blocked: nothing was saved
+    }
+    saved = false
+    theme.apply()
+  }
+
+  // Changed in another tab
+  function sync(e: StorageEvent) {
+    if (e.key === theme.KEY) mode = theme.mode()
+    if (e.key === theme.LOC) saved = savedLocation()
   }
 
   async function signOut() {
@@ -45,43 +151,92 @@
   }
 </script>
 
-<section>
-  <h2 class="mb-2 font-semibold">Appearance</h2>
-  <div class="bg-raised rounded-ui inline-flex p-1" role="radiogroup" aria-label="Theme">
-    {#each modes as m (m.value)}
-      <button
-        type="button"
-        role="radio"
-        aria-checked={mode === m.value}
-        class={[
-          "rounded-ui flex h-9 items-center gap-1.5 px-4 text-sm font-semibold transition",
-          mode === m.value ? "bg-canvas text-primary shadow-sm" : "text-ink-muted",
-        ]}
-        onclick={() => setMode(m.value)}
-      >
-        <m.icon class="size-4" />{m.label}
-      </button>
-    {/each}
-  </div>
-</section>
+<svelte:window onstorage={sync} />
 
-{#if info}
-  <section class="text-ink-muted space-y-1.5 text-sm">
-    <p class="flex items-center gap-2">
-      <Globe class="size-4" />
-      Tricky sites: {info.browserScraping
-        ? "a real browser steps in when a site blocks us"
-        : "browser fallback not installed"}
-    </p>
-    <p class="flex items-center gap-2">
-      <Sparkles class="size-4" />
-      Pasted text: {info.aiProvider ? `cleaned up by ${info.aiProvider}` : "built-in parser"}
-    </p>
+<div class="min-w-0 space-y-7">
+  <section>
+    <h2 class="section-title mb-3.5" id="theme-title">Theme</h2>
+    <div class="list-card">
+      <div role="radiogroup" aria-labelledby="theme-title" bind:this={group} onkeydown={onkey}>
+        {#each modes as m (m.value)}
+          {@const on = mode === m.value}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={on}
+            tabindex={on ? 0 : -1}
+            class="list-row w-full text-left"
+            onclick={() => setMode(m.value)}
+          >
+            <span class="well"><m.icon /></span>
+            <span class="min-w-0 flex-1">
+              <span class="block text-[17px] leading-tight font-bold">{m.label}</span>
+              <span class="text-ink-muted block text-sm">{m.text}</span>
+            </span>
+            <Check class={["text-primary size-5 flex-none", !on && "invisible"]} />
+          </button>
+        {/each}
+      </div>
+
+      {#if sun}
+        <div class="border-line mx-3 border-t py-3 pl-[3.625rem]">
+          <p class="text-[15px] font-bold" aria-live="polite">
+            {#if sun.rise !== undefined && sun.set !== undefined}
+              Dark from {time(sun.set)} until {time(sun.rise)}
+            {:else}
+              No sunset here today, so it stays {sun.dark ? "dark" : "light"}
+            {/if}
+          </p>
+          <p class="meta mt-0.5">
+            {saved ? "Using your saved location" : "Estimated from your time zone"}
+          </p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            {#if canLocate}
+              <button type="button" class="btn btn-soft" onclick={locate}>
+                {#if locating}<LoaderCircle class="animate-spin" />{:else}<LocateFixed />{/if}
+                {saved ? "Update my location" : "Use my location for exact times"}
+              </button>
+            {/if}
+            {#if saved}
+              <button type="button" class="btn btn-ghost" onclick={forget}>Forget location</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
   </section>
 
-  {#if info.authEnabled}
-    <button type="button" class="btn btn-ghost -ml-3" onclick={signOut}>
-      <LogOut /> Sign out
-    </button>
+  {#if info}
+    <section>
+      <h2 class="section-title mb-3.5">Settings</h2>
+      <div class="list-card">
+        <div class="list-row">
+          <span class="well"><Globe /></span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[17px] leading-tight font-bold">Tricky sites</span>
+            <span class="text-ink-muted block text-sm">
+              {info.browserScraping
+                ? "A real browser steps in when a site blocks us"
+                : "Browser fallback not installed"}
+            </span>
+          </span>
+        </div>
+        <div class="list-row">
+          <span class="well"><Sparkles /></span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[17px] leading-tight font-bold">Pasted text</span>
+            <span class="text-ink-muted block text-sm">
+              {info.aiProvider ? `Cleaned up by ${info.aiProvider}` : "Read by the built-in parser"}
+            </span>
+          </span>
+        </div>
+        {#if info.authEnabled}
+          <button type="button" class="list-row w-full text-left" onclick={signOut}>
+            <span class="well"><LogOut /></span>
+            <span class="min-w-0 flex-1 text-[17px] leading-tight font-bold">Sign out</span>
+          </button>
+        {/if}
+      </div>
+    </section>
   {/if}
-{/if}
+</div>

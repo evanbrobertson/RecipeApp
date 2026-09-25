@@ -7,6 +7,7 @@
   import Check from "@lucide/svelte/icons/check"
   import Flame from "@lucide/svelte/icons/flame"
   import Hand from "@lucide/svelte/icons/hand"
+  import Moon from "@lucide/svelte/icons/moon"
   import Slice from "@lucide/svelte/icons/slice"
   import Soup from "@lucide/svelte/icons/soup"
   import { fly } from "svelte/transition"
@@ -115,47 +116,50 @@
     <div class="min-w-0">
       <a
         href={`/recipes/${id}`}
-        class="text-ink-muted hover:text-primary inline-flex items-center gap-1 text-sm"
+        class="text-ink-muted hover:text-primary -ml-1 inline-flex min-h-11 max-w-full items-center gap-1 px-1 text-[15px] font-semibold"
       >
-        <ArrowLeft class="size-4" />
+        <ArrowLeft class="size-[18px] shrink-0" />
         <span class="truncate">{recipe?.title ?? "Recipe"}</span>
       </a>
-      <h1 class="mt-1 font-serif text-3xl font-semibold sm:text-4xl">Mise en place</h1>
-      <p class="text-ink-muted mt-1">
+      <h1 class="page-title mt-1 sm:text-4xl">Mise en place</h1>
+      <p class="text-ink-muted mt-2 max-w-2xl">
         <em>“Everything in its place.”</em> Prep and measure it all before you start cooking. Tap each
         one when it's ready.
       </p>
     </div>
-    <ScaleControl bind:value={scale} class="hidden shrink-0 sm:inline-flex" />
+    <div class="hidden shrink-0 sm:block"><ScaleControl bind:value={scale} /></div>
   </div>
 
   {#if vesselCounts.length}
     <!-- What to get out -->
-    <div class="card mb-6 flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 text-sm">
-      <span class="font-semibold">Get out:</span>
+    <div class="card mb-6 flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 text-[15px]">
+      <span class="font-bold">Get out:</span>
       {#each vesselCounts as [v, n] (v)}
         <span class="text-ink-muted">
           <strong class="text-ink">{n}</strong> × {VESSEL_LABEL[v].toLowerCase()}{n > 1 ? "s" : ""}
         </span>
       {/each}
-      <ScaleControl bind:value={scale} class="ml-auto sm:hidden" />
+      <div class="ml-auto sm:hidden"><ScaleControl bind:value={scale} /></div>
     </div>
   {/if}
 
   <!-- Progress -->
-  <div class="border-line bg-canvas/90 sticky top-14 z-20 -mx-4 mb-6 border-b px-4 py-3 backdrop-blur">
+  <div
+    class="border-line bg-canvas/90 sticky top-0 z-20 -mx-5 mb-6 border-b px-5 py-3 backdrop-blur md:-mx-8 md:px-8"
+  >
     <div class="flex items-center gap-3">
-      <div class="bg-raised h-3 flex-1 overflow-hidden rounded-full">
-        <div
-          class="bg-primary h-full rounded-full transition-all duration-500"
-          style:width={`${progress * 100}%`}
-        ></div>
+      <div class="progress h-2.5 flex-1">
+        <span class="transition-all duration-500" style:width={`${progress * 100}%`}></span>
       </div>
-      <span class="text-sm font-semibold tabular-nums">{ready.length}/{items.length} ready</span>
+      <span class="text-[15px] font-bold tabular-nums">{ready.length}/{items.length} ready</span>
     </div>
     {#if awake.supported && !awake.active}
-      <button type="button" class="text-primary mt-1 text-xs" onclick={awake.request}>
-        Tap to keep the screen on while you prep
+      <button
+        type="button"
+        class="link -mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm"
+        onclick={awake.request}
+      >
+        <Moon class="size-4" /> Tap to keep the screen on while you prep
       </button>
     {/if}
   </div>
@@ -167,12 +171,12 @@
       <a href={`/recipes/${id}`} class="btn btn-soft">Back to recipe</a>
     </EmptyState>
   {:else}
-    <div class="counter rounded-ui space-y-10 p-4 sm:p-8">
+    <div class="counter rounded-ui space-y-7 p-4 sm:p-7">
       {#each groups as group (group.title)}
         <section>
-          <div class="mb-4 flex items-center gap-2">
-            <group.icon class="text-primary size-5" />
-            <h2 class="font-serif text-xl font-semibold">{group.title}</h2>
+          <div class="mb-3.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            <span class="well"><group.icon /></span>
+            <h2 class="section-title">{group.title}</h2>
             <span class="text-ink-muted hidden text-sm sm:inline">· {group.hint}</span>
           </div>
           <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -181,41 +185,44 @@
               <button
                 type="button"
                 class={[
-                  "group rounded-ui relative flex flex-col items-center px-2 pt-4 pb-3 text-center transition active:scale-[0.97]",
-                  isReady ? "bg-primary/10" : "bg-canvas/70 hover:bg-canvas shadow-sm",
+                  "group rounded-ui relative flex flex-col items-center border px-2 pt-4 pb-3 text-center transition active:scale-[0.97]",
+                  isReady ? "bg-tint border-transparent" : "bg-paper border-line hover:border-line-strong",
                 ]}
                 aria-pressed={isReady}
                 onclick={() => toggle(item.key)}
               >
                 <span
                   class={[
-                    "absolute top-2 right-2 grid size-6 place-items-center rounded-full transition",
+                    "absolute top-2 right-2 grid size-7 place-items-center rounded-full transition",
                     isReady
-                      ? "bg-primary scale-100 text-white"
+                      ? "bg-tile text-on-tile scale-100"
                       : "border-line-strong scale-75 border-2",
                   ]}
                 >
-                  {#if isReady}<Check class="size-4" />{/if}
+                  {#if isReady}<Check class="size-4" strokeWidth={2.5} />{/if}
                 </span>
                 <div class="flex h-28 items-end justify-center transition group-hover:-translate-y-0.5">
                   <PrepBowl vessel={item.vessel} filled={isReady} color={ingredientColor(item.name)} />
                 </div>
-                <p class="mt-2 text-lg leading-tight font-semibold tabular-nums">
+                <p class="mt-2 text-lg leading-tight font-bold tabular-nums">
                   {amount(item) || " "}
                 </p>
-                <p class={["line-clamp-2 leading-snug", isReady && "text-ink-muted line-through"]}>
+                <p
+                  class={[
+                    "mt-0.5 line-clamp-2 text-base leading-snug",
+                    isReady && "text-ink-muted line-through",
+                  ]}
+                >
                   {item.name}
                 </p>
                 {#if item.task}
-                  <span
-                    class="rounded-ui mt-1.5 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 capitalize dark:bg-amber-900/50 dark:text-amber-200"
-                  >
+                  <span class="task mt-1.5 rounded-full px-2.5 py-0.5 text-[13px] font-bold capitalize">
                     {item.task}
                   </span>
                 {:else if item.prep}
-                  <span class="text-ink-muted mt-1 line-clamp-1 text-xs">{item.prep}</span>
+                  <span class="text-ink-muted mt-1 line-clamp-1 text-[13px]">{item.prep}</span>
                 {/if}
-                <span class="text-ink-dim mt-1 text-[11px] tracking-wide uppercase">
+                <span class="meta mt-1.5 tracking-wide uppercase">
                   {VESSEL_LABEL[item.vessel]}
                 </span>
               </button>
@@ -228,10 +235,10 @@
 
   {#if allReady}
     <div
-      class="fixed inset-x-0 bottom-24 z-30 flex justify-center px-4 md:bottom-8"
+      class="fixed inset-x-0 bottom-24 z-30 flex justify-center px-4 md:bottom-8 md:left-60"
       transition:fly={{ y: 24, duration: 300 }}
     >
-      <a href={`/recipes/${id}/cook`} class="btn btn-primary btn-xl shadow-xl" data-no-prerender>
+      <a href={`/recipes/${id}/cook`} class="btn btn-primary btn-xl cta" data-no-prerender>
         <Flame /> Everything's in its place. Start cooking
       </a>
     </div>
@@ -239,13 +246,34 @@
 </div>
 
 <style>
-  /* A warm speckled countertop */
+  /* A cream speckled countertop the bowls sit on */
   .counter {
     background:
-      radial-gradient(circle at 20% 30%, rgb(0 0 0 / 0.025) 0 1px, transparent 1.5px) 0 0 / 14px
+      radial-gradient(circle at 20% 30%, rgb(28 43 34 / 0.05) 0 1px, transparent 1.5px) 0 0 / 14px
         14px,
-      radial-gradient(circle at 70% 60%, rgb(0 0 0 / 0.03) 0 1px, transparent 1.5px) 0 0 / 19px 19px,
+      radial-gradient(circle at 70% 60%, rgb(28 43 34 / 0.05) 0 1px, transparent 1.5px) 0 0 / 19px
+        19px,
       var(--bg-muted);
-    border: 1px solid var(--border-muted);
+    border: 1px solid var(--border);
+  }
+  :global(.dark) .counter {
+    background:
+      radial-gradient(circle at 20% 30%, rgb(255 255 255 / 0.04) 0 1px, transparent 1.5px) 0 0 /
+        14px 14px,
+      radial-gradient(circle at 70% 60%, rgb(255 255 255 / 0.03) 0 1px, transparent 1.5px) 0 0 /
+        19px 19px,
+      var(--bg-muted);
+  }
+  /* Clay accent for the knife work still to do ("chop", "dice") */
+  .task {
+    color: #8f4b34;
+    background: color-mix(in srgb, #a55a40 12%, transparent);
+  }
+  :global(.dark) .task {
+    color: #e6ad95;
+    background: color-mix(in srgb, #a55a40 26%, transparent);
+  }
+  .cta {
+    box-shadow: var(--menu-shadow);
   }
 </style>

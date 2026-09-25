@@ -28,8 +28,9 @@
 </script>
 
 {#if page.loading}
-  <div class="mx-auto max-w-4xl space-y-4">
-    <div class="skeleton h-10 w-1/2"></div>
+  <div class="space-y-4">
+    <div class="skeleton h-5 w-40"></div>
+    <div class="skeleton h-9 w-1/2"></div>
     <div class="skeleton h-64 w-full"></div>
   </div>
 {:else if !page.data}
@@ -37,11 +38,15 @@
     <a href="/recipes" class="btn btn-soft">Back to recipes</a>
   </EmptyState>
 {:else}
-  <div class="mx-auto max-w-4xl">
-    <a href={`/recipes/${id}`} class="text-ink-muted hover:text-primary inline-flex items-center gap-1 text-sm">
-      <ArrowLeft class="size-4" /><span class="truncate">{page.data.recipe.title}</span>
+  <div>
+    <a
+      href={`/recipes/${id}`}
+      class="link -ml-1 inline-flex min-h-11 max-w-full items-center gap-1.5 px-1"
+    >
+      <ArrowLeft class="size-[18px] flex-none" />
+      <span class="truncate">{page.data.recipe.title}</span>
     </a>
-    <h1 class="mt-1 mb-6 font-serif text-3xl font-semibold">Edit recipe</h1>
+    <h1 class="page-title mt-1 mb-7">Edit recipe</h1>
     <RecipeEditor
       initial={page.data.recipe}
       {saving}

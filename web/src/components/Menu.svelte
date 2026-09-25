@@ -51,26 +51,23 @@
     <Ellipsis />
   </button>
   {#if open}
-    <div
-      role="menu"
-      class="border-line bg-paper rounded-ui absolute top-full right-0 z-30 mt-2 w-52 border p-1.5 shadow-xl"
-    >
+    <div role="menu" class="menu-surface menu-pop absolute top-full right-0 z-30 mt-2 w-56 py-1">
       {#each groups as group, gi (gi)}
-        {#if gi > 0}<div class="bg-line my-1.5 h-px"></div>{/if}
+        {#if gi > 0}<div class="bg-line mx-3 my-1 h-px"></div>{/if}
         {#each group as item (item.label)}
           <button
             type="button"
             role="menuitem"
             class={[
-              "hover:bg-raised rounded-ui flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-medium",
-              item.danger && "text-error",
+              "hover:bg-tint active:bg-tint flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left text-[15px] font-bold transition-colors",
+              item.danger ? "text-error" : "text-ink",
             ]}
             onclick={() => {
               open = false
               item.onselect()
             }}
           >
-            <item.icon class="size-4" />
+            <item.icon class={item.danger ? "size-[18px] flex-none" : "text-primary size-[18px] flex-none"} />
             {item.label}
           </button>
         {/each}
@@ -78,3 +75,15 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .menu-pop {
+    animation: menu-in 0.16s ease-out;
+  }
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+</style>

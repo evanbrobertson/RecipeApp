@@ -13,6 +13,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 hmac = "0.12"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 pdf-extract = "0.7"
 percent-encoding = "2"
 rand = "0.8"
@@ -33,6 +34,7 @@ tower-http = { version = "0.6", features = ["fs", "compression-br", "compression
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+webp = { version = "0.3.1", default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

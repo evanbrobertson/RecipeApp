@@ -2,10 +2,21 @@
 /* Served at /cookbooks/:id with the cookbook inlined as #page-data. */
 import Layout from "../../../layouts/Layout.astro"
 import CookbookPage from "../../../islands/CookbookPage.svelte"
+import GridSkeleton from "../../../components/GridSkeleton.svelte"
 ---
 
 <Layout title="Cookbook" section="shelf" data>
   <CookbookPage client:only="svelte">
-    <div slot="fallback" class="skeleton h-64 w-full"></div>
+    <div slot="fallback">
+      <div class="mb-3 h-11"></div>
+      <div class="mb-7 flex items-end gap-4">
+        <div class="skeleton h-32 w-12 rounded-[3px_3px_0_0]"></div>
+        <div class="flex-1 space-y-2.5 pb-1">
+          <div class="skeleton h-8 w-1/2"></div>
+          <div class="skeleton h-4 w-1/4"></div>
+        </div>
+      </div>
+      <GridSkeleton />
+    </div>
   </CookbookPage>
 </Layout>

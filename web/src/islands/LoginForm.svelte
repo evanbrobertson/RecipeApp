@@ -35,7 +35,7 @@
       autofocus
       required
     />
-    {#if error}<p class="text-error mt-1.5 text-sm">{error}</p>{/if}
+    {#if error}<p class="text-error mt-1.5 text-sm" role="alert">{error}</p>{/if}
   </div>
   <button type="submit" class="btn btn-primary btn-lg w-full" disabled={loading}>
     {#if loading}<LoaderCircle class="animate-spin" />{/if} Sign in

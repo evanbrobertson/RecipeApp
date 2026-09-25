@@ -20,6 +20,7 @@
   import EmptyState from "../components/EmptyState.svelte"
   import Menu, { type MenuItem } from "../components/Menu.svelte"
   import Modal from "../components/Modal.svelte"
+  import Photo from "../components/Photo.svelte"
   import ScaleControl from "../components/ScaleControl.svelte"
   import { whenActive } from "../lib/active"
   import { api, errorMessage, pathId } from "../lib/api"
@@ -115,8 +116,7 @@
   const sourceHost = $derived(hostOf(recipe?.url))
   const ingredientCount = $derived(recipe ? countItems(recipe.ingredients) : 0)
   const sub = $derived(recipe ? kicker(recipe) : "")
-  let imageFailed = $state(false)
-  const hasHero = $derived(!!recipe?.image && !imageFailed)
+  const hasHero = $derived(!!recipe?.image)
 
   function stepOffset(sectionIndex: number) {
     return (recipe?.instructions ?? [])
@@ -185,9 +185,9 @@
 </script>
 
 {#if page.loading}
-  <div class="mx-auto max-w-4xl space-y-4">
-    <div class="skeleton aspect-[16/8] w-full"></div>
-    <div class="skeleton h-10 w-2/3"></div>
+  <div class="space-y-4">
+    <div class="skeleton aspect-[4/3] w-full lg:max-w-[640px]"></div>
+    <div class="skeleton h-9 w-2/3"></div>
     <div class="skeleton h-4 w-1/2"></div>
   </div>
 {:else if !recipe}
@@ -195,210 +195,198 @@
     <a href="/recipes" class="btn btn-soft">Back to recipes</a>
   </EmptyState>
 {:else}
-  <article class="mx-auto max-w-4xl">
-    <!-- Hero -->
-    <div class="relative mb-6">
+  <article class="space-y-7">
+    <!-- Hero: photo left, title and actions right on wide screens. Its box matches the
+         skeleton in shell/recipe/index.astro so the card photo morphs onto it. -->
+    <header
+      class={[
+        "grid gap-5",
+        hasHero && "lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-8",
+      ]}
+    >
       {#if hasHero}
-        <div class="rounded-ui relative aspect-[16/10] overflow-hidden shadow-sm sm:aspect-[16/8]">
-          <img
-            src={recipe.image}
-            alt={recipe.title}
-            referrerpolicy="no-referrer"
-            decoding="async"
-            fetchpriority="high"
-            class="size-full object-cover"
-            onerror={() => (imageFailed = true)}
-          />
-          <div
-            class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent"
-          ></div>
-          <div class="absolute inset-x-0 bottom-0 p-5 text-white sm:p-8">
-            {#if sub}<p class="text-sm font-medium opacity-90">{sub}</p>{/if}
-            <h1 class="font-serif text-3xl leading-tight font-semibold text-balance sm:text-5xl">
-              {recipe.title}
-            </h1>
-          </div>
-        </div>
-      {:else}
-        <div class="pt-2 pr-12">
-          {#if sub}<p class="text-primary text-sm font-semibold">{sub}</p>{/if}
-          <h1 class="font-serif text-4xl leading-tight font-semibold text-balance sm:text-5xl">
-            {recipe.title}
-          </h1>
-        </div>
-      {/if}
-      <div
-        class={[
-          "no-print absolute flex items-center gap-2",
-          hasHero ? "top-3 right-3" : "top-2 right-0",
-        ]}
-      >
-        {#if fromRandom}
-          <a
-            href={shuffleHref}
-            class={[
-              "btn",
-              hasHero ? "bg-canvas/90 text-ink shadow-sm backdrop-blur" : "btn-soft",
-            ]}
-            data-no-prerender
-            onpointerdown={refreshShuffle}
-            onfocus={refreshShuffle}
-          >
-            <Dices /> Shuffle again
-          </a>
-        {/if}
-        <Menu
-          groups={menu}
-          triggerClass={hasHero
-            ? "btn btn-icon bg-canvas/90 text-ink shadow-sm backdrop-blur"
-            : "btn btn-outline btn-icon"}
+        <Photo
+          {recipe}
+          width={768}
+          sizes="(min-width: 1024px) 640px, 100vw"
+          alt={recipe.title}
+          eager
+          hero
+          iconClass="size-14"
+          class="rounded-ctl aspect-[4/3] w-full"
         />
-      </div>
-    </div>
+      {/if}
 
-    {#if recipe.author || sourceHost || cooked}
-      <p class="text-ink-muted -mt-2 mb-4 text-sm">
-        {#if cooked}
-          <span class="text-ink inline-flex items-center gap-1 font-medium">
-            <ChefHat class="text-primary size-3.5" />{cooked}
-          </span>
-          {#if recipe.author || sourceHost}<span> · </span>{/if}
+      <div class="min-w-0 space-y-4">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            {#if sub}<p class="kicker mb-1.5">{sub}</p>{/if}
+            <h1 class="page-title text-balance">{recipe.title}</h1>
+          </div>
+          <Menu groups={menu} triggerClass="btn btn-outline btn-icon no-print -mt-1 flex-none" />
+        </div>
+
+        {#if recipe.author || sourceHost || cooked}
+          <p class="text-ink-muted flex flex-wrap items-center gap-x-1.5 text-sm">
+            {#if cooked}
+              <span class="text-ink inline-flex items-center gap-1.5 font-bold">
+                <ChefHat class="text-primary size-4" />{cooked}
+              </span>
+              {#if recipe.author || sourceHost}<span aria-hidden="true">·</span>{/if}
+            {/if}
+            {#if recipe.author}<span>By {recipe.author}</span>{/if}
+            {#if recipe.author && sourceHost}<span aria-hidden="true">·</span>{/if}
+            {#if sourceHost}
+              <a
+                href={recipe.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="link inline-flex min-h-11 items-center gap-1 text-sm"
+              >
+                {sourceHost}<ExternalLink class="size-3.5" />
+              </a>
+            {/if}
+          </p>
         {/if}
-        {#if recipe.author}<span>By {recipe.author}</span>{/if}
-        {#if recipe.author && sourceHost}<span> · </span>{/if}
-        {#if sourceHost}
-          <a
-            href={recipe.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="hover:text-primary inline-flex items-center gap-1 underline-offset-2 hover:underline"
-          >
-            {sourceHost}<ExternalLink class="size-3" />
+
+        {#if recipe.description}
+          <p class="text-ink-muted text-[17px] leading-relaxed text-pretty">
+            {recipe.description}
+          </p>
+        {/if}
+
+        {#if meta.length || scaledYield}
+          <dl class="card grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))]">
+            {#each meta as m (m.label)}
+              <div class="px-3 py-3">
+                <dt class="meta flex items-center gap-1.5">
+                  <m.icon class="text-primary size-4" />{m.label}
+                </dt>
+                <dd class="mt-0.5 font-bold">{m.value}</dd>
+              </div>
+            {/each}
+            {#if scaledYield}
+              <div class="px-3 py-3">
+                <dt class="meta flex items-center gap-1.5">
+                  <Users class="text-primary size-4" />Serves
+                </dt>
+                <dd class="mt-0.5 font-bold">{scaledYield}</dd>
+              </div>
+            {/if}
+          </dl>
+        {/if}
+
+        <!-- Cooking mode is the one main action here -->
+        <div class="no-print grid grid-cols-2 gap-3 lg:grid-cols-1 2xl:grid-cols-2">
+          <a href={`/recipes/${id}/cook`} class="btn btn-primary btn-xl" data-no-prerender>
+            <Flame /> Cooking mode
           </a>
-        {/if}
-      </p>
-    {/if}
-
-    {#if recipe.description}
-      <p class="text-ink-muted mb-6 text-lg text-pretty">{recipe.description}</p>
-    {/if}
-
-    <!-- Primary actions -->
-    <div class="no-print mb-6 grid grid-cols-2 gap-3 sm:flex">
-      <a href={`/recipes/${id}/cook`} class="btn btn-primary btn-xl" data-no-prerender>
-        <Flame /> Start cooking
-      </a>
-      <a href={`/recipes/${id}/prep`} class="btn btn-soft btn-xl"><Soup /> Mise en place</a>
-    </div>
-
-    {#if meta.length || scaledYield}
-      <div class="border-line mb-8 flex flex-wrap items-center gap-x-6 gap-y-3 border-y py-4">
-        {#each meta as m (m.label)}
-          <div class="flex items-center gap-2 text-sm">
-            <m.icon class="text-primary size-4" />
-            <span class="text-ink-muted">{m.label}</span>
-            <span class="font-semibold">{m.value}</span>
-          </div>
-        {/each}
-        {#if scaledYield}
-          <div class="flex items-center gap-2 text-sm">
-            <Users class="text-primary size-4" />
-            <span class="font-semibold">{scaledYield}</span>
-          </div>
-        {/if}
+          <a href={`/recipes/${id}/prep`} class="btn btn-tile btn-xl"><Soup /> Mise en place</a>
+          {#if fromRandom}
+            <a
+              href={shuffleHref}
+              class="btn btn-soft btn-lg col-span-2 lg:col-span-1 2xl:col-span-2"
+              data-no-prerender
+              onpointerdown={refreshShuffle}
+              onfocus={refreshShuffle}
+            >
+              <Dices /> Shuffle again
+            </a>
+          {/if}
+        </div>
       </div>
-    {/if}
+    </header>
 
-    <div class="grid gap-10 md:grid-cols-5">
-      <section class="md:col-span-2">
-        <div class="md:sticky md:top-20">
-          <div class="mb-3 flex items-center justify-between gap-2">
-            <h2 class="font-serif text-2xl font-semibold">Ingredients</h2>
+    <div class="grid gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-10">
+      <section>
+        <div class="lg:sticky lg:top-6">
+          <div class="mb-3.5 flex min-h-11 items-center justify-between gap-2">
+            <h2 class="section-title">Ingredients</h2>
             {#if ingredientCount}<ScaleControl bind:value={scale} class="no-print" />{/if}
           </div>
           {#if !ingredientCount}<p class="text-ink-muted text-sm">No ingredients listed.</p>{/if}
-          {#each recipe.ingredients as section, si (si)}
-            <div class={si > 0 ? "mt-5" : ""}>
-              {#if section.name}<h3 class="kicker mb-1">{section.name}</h3>{/if}
-              <ul>
-                {#each section.items as item, ii (ii)}
-                  {@const key = `${si}-${ii}`}
-                  <li>
-                    <button
-                      type="button"
-                      class="hover:bg-raised/60 rounded-ui flex w-full items-start gap-3 px-2 py-2.5 text-left transition"
-                      aria-pressed={checked.has(key)}
-                      onclick={() => toggle(key)}
-                    >
-                      <span
-                        class={[
-                          "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 transition",
-                          checked.has(key) ? "bg-primary border-primary" : "border-line-strong",
-                        ]}
+          <div class="space-y-5">
+            {#each recipe.ingredients as section, si (si)}
+              <div>
+                {#if section.name}<h3 class="kicker mb-2">{section.name}</h3>{/if}
+                <ul class="ingredients list-card">
+                  {#each section.items as item, ii (ii)}
+                    {@const key = `${si}-${ii}`}
+                    {@const on = checked.has(key)}
+                    <li class="relative">
+                      <button
+                        type="button"
+                        class="hover:bg-tint/55 active:bg-tint flex min-h-12 w-full items-start gap-3 px-3.5 py-3 text-left transition-colors"
+                        aria-pressed={on}
+                        onclick={() => toggle(key)}
                       >
-                        {#if checked.has(key)}<Check class="size-3.5 text-white" />{/if}
-                      </span>
-                      <span
-                        class={[
-                          "leading-snug transition",
-                          checked.has(key) && "text-ink-dim line-through",
-                        ]}
-                      >
-                        {scaleIngredient(item, scale)}
-                      </span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          {/each}
+                        <span
+                          class={[
+                            "mt-px grid size-[22px] shrink-0 place-items-center rounded-full border-2 transition",
+                            on ? "bg-tile border-tile" : "border-line-strong",
+                          ]}
+                        >
+                          {#if on}<Check class="text-on-tile size-3.5" strokeWidth={3} />{/if}
+                        </span>
+                        <span
+                          class={["leading-snug transition", on && "text-ink-muted line-through"]}
+                        >
+                          {scaleIngredient(item, scale)}
+                        </span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/each}
+          </div>
         </div>
       </section>
 
-      <section class="md:col-span-3">
-        <h2 class="mb-3 font-serif text-2xl font-semibold">Method</h2>
+      <section>
+        <h2 class="section-title mb-3.5 flex min-h-11 items-center">Method</h2>
         {#if !recipe.instructions.length}<p class="text-ink-muted text-sm">No steps listed.</p>{/if}
-        {#each recipe.instructions as section, si (si)}
-          <div class={si > 0 ? "mt-6" : ""}>
-            {#if section.name}<h3 class="kicker mb-2">{section.name}</h3>{/if}
-            <ol class="space-y-4">
-              {#each section.items as step, i (i)}
-                <li class="flex gap-4">
-                  <span
-                    class="bg-primary/10 text-primary grid size-8 shrink-0 place-items-center rounded-full font-serif font-semibold"
-                  >
-                    {stepOffset(si) + i + 1}
-                  </span>
-                  <p class="pt-1 text-[1.05rem] leading-relaxed">{step}</p>
-                </li>
-              {/each}
-            </ol>
-          </div>
-        {/each}
+        <div class="space-y-6">
+          {#each recipe.instructions as section, si (si)}
+            <div>
+              {#if section.name}<h3 class="kicker mb-3">{section.name}</h3>{/if}
+              <ol class="space-y-5">
+                {#each section.items as step, i (i)}
+                  <li class="flex gap-4">
+                    <span
+                      class="text-primary w-9 shrink-0 text-right text-[28px] leading-none font-extrabold tabular-nums"
+                      aria-hidden="true"
+                    >
+                      {stepOffset(si) + i + 1}
+                    </span>
+                    <p class="pt-0.5 text-[17px] leading-relaxed">
+                      <span class="sr-only">Step {stepOffset(si) + i + 1}: </span>{step}
+                    </p>
+                  </li>
+                {/each}
+              </ol>
+            </div>
+          {/each}
+        </div>
 
         {#if recipe.notes}
-          <div class="rounded-ui mt-8 bg-amber-50 p-5 dark:bg-amber-950/30">
-            <h2
-              class="mb-1 flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-300"
-            >
-              <StickyNote class="size-4" /> Notes
+          <!-- The cook's own notes are the one place for handwriting -->
+          <div class="card mt-8 p-5">
+            <h2 class="text-primary flex items-center gap-2 font-bold">
+              <StickyNote class="size-[18px]" /> Notes
             </h2>
-            <p class="text-sm whitespace-pre-line text-amber-900/90 dark:text-amber-100/80">
-              {recipe.notes}
-            </p>
+            <p class="hand mt-2 text-[26px] leading-tight whitespace-pre-line">{recipe.notes}</p>
           </div>
         {/if}
 
         {#if recipe.nutrition && Object.keys(recipe.nutrition).length}
           <div class="mt-8">
-            <h2 class="mb-3 font-semibold">Nutrition</h2>
-            <dl class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <h2 class="section-title mb-3.5">Nutrition</h2>
+            <dl class="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {#each Object.entries(recipe.nutrition) as [key, value] (key)}
-                <div class="card px-3 py-2">
-                  <dt class="text-ink-muted text-xs">
-                    {nutritionLabels[key] ?? key.replace(/Content$/, "")}
-                  </dt>
-                  <dd class="text-sm font-semibold">{value}</dd>
+                <div class="card px-3.5 py-3">
+                  <dt class="meta">{nutritionLabels[key] ?? key.replace(/Content$/, "")}</dt>
+                  <dd class="mt-0.5 font-bold">{value}</dd>
                 </div>
               {/each}
             </dl>
@@ -408,26 +396,28 @@
     </div>
 
     {#if page.data?.cookbooks.length}
-      <section class="border-line no-print mt-12 border-t pt-6">
-        <h2 class="text-ink-muted mb-3 text-sm font-semibold">On the shelf in</h2>
+      <section class="no-print">
+        <h2 class="section-title mb-3.5">On the shelf in</h2>
         <div class="flex flex-wrap gap-2">
           {#each page.data.cookbooks as book (book.id)}
             {@const inBook = page.data.inCookbooks.includes(book.id)}
             <button
               type="button"
               class={[
-                "rounded-ui flex h-9 items-center gap-2 border pr-3 pl-1.5 text-sm font-medium transition",
+                "chip h-11 border pr-3.5 pl-2.5",
                 inBook
-                  ? "bg-raised border-transparent"
-                  : "border-line text-ink-muted hover:text-ink",
+                  ? "bg-tint text-primary border-transparent"
+                  : "border-line bg-paper text-ink-muted hover:text-ink",
               ]}
               aria-pressed={inBook}
               onclick={() => toggleCookbook(book.id)}
             >
-              <span class="h-6 w-2.5 rounded-sm" style:background={bookPalette(book.color).cloth}
+              <span
+                class="h-6 w-2.5 rounded-[3px_3px_0_0] shadow-[inset_0_0_0_1px_rgb(28_43_34/0.22)] dark:shadow-[inset_0_0_0_1px_rgb(239_233_218/0.25)]"
+                style:background={bookPalette(book.color).cloth}
               ></span>
               {book.name}
-              {#if inBook}<Check class="size-3.5" />{:else}<Plus class="size-3.5" />{/if}
+              {#if inBook}<Check class="size-4" />{:else}<Plus class="size-4" />{/if}
             </button>
           {/each}
         </div>
@@ -442,3 +432,16 @@
     <button type="button" class="btn btn-danger" onclick={deleteRecipe}>Delete</button>
   {/snippet}
 </Modal>
+
+<style>
+  /* Inset dividers between ingredient rows, as in .list-row */
+  .ingredients > li + li::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0.875rem;
+    right: 0.875rem;
+    border-top: 1px solid var(--border);
+    pointer-events: none;
+  }
+</style>

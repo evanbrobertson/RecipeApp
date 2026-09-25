@@ -21,18 +21,35 @@ impl Section {
 pub type Nutrition = Map<String, Value>;
 
 /// Cloth colours for cookbooks on the shelf.
-pub const BOOK_COLORS: [&str; 10] = [
-    "tomato",
-    "sage",
-    "mustard",
-    "plum",
-    "ocean",
-    "terracotta",
-    "forest",
-    "navy",
-    "rose",
-    "charcoal",
+pub const BOOK_COLORS: [&str; 6] = ["forest", "tile", "sage", "butter", "clay", "cream"];
+
+/// Colour names from the previous palette, mapped to the closest current colour so
+/// older clients, saved prompts and scripts keep working. `forest` is a current name
+/// and is taken as the current `forest`.
+pub const LEGACY_BOOK_COLORS: [(&str, &str); 8] = [
+    ("tomato", "clay"),
+    ("terracotta", "clay"),
+    ("mustard", "butter"),
+    ("ocean", "tile"),
+    ("plum", "forest"),
+    ("navy", "forest"),
+    ("charcoal", "forest"),
+    ("rose", "cream"),
 ];
+
+/// A current or legacy colour name as a current one.
+pub fn book_color(name: &str) -> Option<&'static str> {
+    BOOK_COLORS
+        .iter()
+        .copied()
+        .find(|c| *c == name)
+        .or_else(|| {
+            LEGACY_BOOK_COLORS
+                .iter()
+                .find(|(old, _)| *old == name)
+                .map(|(_, new)| *new)
+        })
+}
 
 pub const SOURCES: [&str; 5] = ["url", "text", "claude", "manual", "import"];
 
@@ -554,7 +571,7 @@ pub fn cookbook_description(v: &Value) -> AppResult<Option<String>> {
 
 pub fn cookbook_color(v: &Value) -> AppResult<String> {
     v.as_str()
-        .filter(|c| BOOK_COLORS.contains(c))
+        .and_then(book_color)
         .map(String::from)
         .ok_or_else(|| {
             AppError::bad_request(format!("color: expected one of {}", BOOK_COLORS.join(", ")))
@@ -565,6 +582,33 @@ pub fn cookbook_color(v: &Value) -> AppResult<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn cookbook_colours_accept_legacy_names() {
+        for c in BOOK_COLORS {
+            assert_eq!(cookbook_color(&json!(c)).unwrap(), c);
+        }
+        for (old, new) in [
+            ("tomato", "clay"),
+            ("terracotta", "clay"),
+            ("mustard", "butter"),
+            ("ocean", "tile"),
+            ("plum", "forest"),
+            ("navy", "forest"),
+            ("charcoal", "forest"),
+            ("rose", "cream"),
+            ("sage", "sage"),
+            ("forest", "forest"),
+        ] {
+            assert_eq!(cookbook_color(&json!(old)).unwrap(), new, "{old}");
+        }
+        let err = cookbook_color(&json!("neon")).unwrap_err();
+        assert!(
+            err.message
+                .contains("forest, tile, sage, butter, clay, cream")
+        );
+        assert!(cookbook_color(&json!(3)).is_err());
+    }
 
     #[test]
     fn normalizes_legacy_flat_lists() {

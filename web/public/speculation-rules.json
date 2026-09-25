@@ -4,7 +4,9 @@
       "source": "document",
       "where": {
         "and": [
-          { "href_matches": "/*" },
+          {
+            "href_matches": "/*"
+          },
           {
             "not": {
               "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/random", "/*/cook", "/*.*"]
@@ -18,6 +20,27 @@
         ]
       },
       "eagerness": "moderate"
+    },
+    {
+      "source": "document",
+      "where": {
+        "and": [
+          {
+            "not": {
+              "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/random", "/*/cook", "/*.*"]
+            }
+          },
+          {
+            "not": {
+              "selector_matches": "a[href^='#'], a[target='_blank'], a[download], [data-no-prerender]"
+            }
+          },
+          {
+            "selector_matches": "a[data-prerender-eager], [data-prerender-eager] a"
+          }
+        ]
+      },
+      "eagerness": "eager"
     }
   ]
 }

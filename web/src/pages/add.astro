@@ -1,8 +1,8 @@
 ---
 import Icon from "../components/Icon.astro"
-import { Link, ClipboardType, List, PenLine, FileDown } from "lucide"
+import { Link, ClipboardType, List, PenLine, FileDown, ChevronRight } from "lucide"
 import Layout from "../layouts/Layout.astro"
-import AddRecipeBox from "../islands/AddRecipeBox.svelte"
+import TopBox from "../islands/TopBox.svelte"
 
 const tips = [
   {
@@ -24,44 +24,52 @@ const tips = [
 ---
 
 <Layout title="Add a recipe" section="add">
-  <div class="mx-auto max-w-2xl">
-    <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Add a recipe</h1>
-    <p class="text-ink-muted mt-1">Paste a link or the recipe itself.</p>
-    <div class="mt-5"><AddRecipeBox client:load autofocus /></div>
-
-    <div class="mt-8 grid gap-3 sm:grid-cols-3">
-      {
-        tips.map((tip) => (
-          <div class="card p-4">
-            <Icon icon={tip.icon} class="text-primary size-5" />
-            <p class="mt-2 text-sm font-semibold">{tip.title}</p>
-            <p class="text-ink-muted mt-0.5 text-sm">{tip.text}</p>
-          </div>
-        ))
-      }
+  <div class="mx-auto max-w-3xl space-y-7">
+    <div>
+      <h1 class="page-title">Add a recipe</h1>
+      <p class="text-ink-muted mt-2">Paste a link or the recipe itself.</p>
+      <div class="mt-5"><TopBox client:load tabs={false} onTile={false} autofocus /></div>
     </div>
 
-    <div class="mt-6 grid gap-3 sm:grid-cols-2">
-      <a
-        href="/recipes/new"
-        class="border-line hover:border-primary rounded-ui flex items-center gap-3 border p-4 transition"
-      >
-        <Icon icon={PenLine} class="text-primary size-6 shrink-0" />
-        <span>
-          <span class="block font-semibold">Write from scratch</span>
-          <span class="text-ink-muted text-sm">Grandma's card, your own creation</span>
-        </span>
-      </a>
-      <a
-        href="/import"
-        class="border-line hover:border-primary rounded-ui flex items-center gap-3 border p-4 transition"
-      >
-        <Icon icon={FileDown} class="text-primary size-6 shrink-0" />
-        <span>
-          <span class="block font-semibold">Import from another app</span>
-          <span class="text-ink-muted text-sm">Just the Recipe, Paprika, Mealie…</span>
-        </span>
-      </a>
-    </div>
+    <section>
+      <h2 class="section-title mb-3.5">What you can paste</h2>
+      <div class="list-card">
+        {
+          tips.map((tip) => (
+            <div class="list-row">
+              <span class="well">
+                <Icon icon={tip.icon} />
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block text-[17px] leading-tight font-bold">{tip.title}</span>
+                <span class="text-ink-muted block text-sm">{tip.text}</span>
+              </span>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title mb-3.5">Other ways in</h2>
+      <div class="list-card">
+        <a href="/recipes/new" class="list-row">
+          <span class="well"><Icon icon={PenLine} /></span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[17px] leading-tight font-bold">Write from scratch</span>
+            <span class="text-ink-muted block text-sm">Grandma's card, your own creation</span>
+          </span>
+          <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
+        </a>
+        <a href="/import" class="list-row">
+          <span class="well"><Icon icon={FileDown} /></span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[17px] leading-tight font-bold">Import from another app</span>
+            <span class="text-ink-muted block text-sm">Just the Recipe, Paprika, Mealie…</span>
+          </span>
+          <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
+        </a>
+      </div>
+    </section>
   </div>
 </Layout>

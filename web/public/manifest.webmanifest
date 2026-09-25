@@ -4,8 +4,8 @@
   "description": "Recipes, minus the life story.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fbf7f1",
-  "theme_color": "#ee5a3a",
+  "background_color": "#f5f1e6",
+  "theme_color": "#2f6b4f",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

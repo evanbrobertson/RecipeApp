@@ -1,53 +1,44 @@
 ---
 import Layout from "../layouts/Layout.astro"
-import AddRecipeBox from "../islands/AddRecipeBox.svelte"
+import TopBox from "../islands/TopBox.svelte"
 import HomeFeed from "../islands/HomeFeed.svelte"
 import GridSkeleton from "../components/GridSkeleton.svelte"
 ---
 
-<Layout title="Kitchen" section="kitchen" data>
-  <div class="space-y-12">
-    <section class="mx-auto max-w-2xl pt-2 text-center sm:pt-6">
-      <p class="text-primary font-semibold" id="greeting">Hello</p>
-      <h1
-        class="mt-1 font-serif text-4xl font-semibold tracking-tight text-balance sm:text-5xl"
-        id="prompt"
-      >
-        What's cooking?
-      </h1>
-      <p class="text-ink-muted mt-3 sm:text-lg">
-        Paste a link or the recipe itself. You get the ingredients and the steps, and none of the
-        life story.
-      </p>
-      <div class="mt-6">
-        <AddRecipeBox client:load />
+<Layout
+  title="Home"
+  section="kitchen"
+  data
+  hand
+  themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}
+>
+  <header slot="hero" class="tile-surface">
+    <div class="mx-auto flex max-w-[75rem] flex-col gap-3.5 px-5 pt-[calc(env(safe-area-inset-top)+1.375rem)] pb-6 md:px-8 md:pt-10 md:pb-9">
+      <a href="/" class="page-title text-on-tile w-fit md:hidden">Crumb</a>
+      <p class="hand mb-1.5 text-[2.375rem] md:text-5xl" id="greeting">what's cooking tonight?</p>
+      <!-- Set before first paint: the greeting follows the viewer's clock -->
+      <script is:inline>
+        ;(() => {
+          const h = new Date().getHours()
+          document.getElementById("greeting").textContent =
+            h < 5
+              ? "midnight snack?"
+              : h < 11
+                ? "what's for breakfast?"
+                : h < 15
+                  ? "what's for lunch?"
+                  : h < 21
+                    ? "what's cooking tonight?"
+                    : "something sweet?"
+        })()
+      </script>
+      <div class="w-full max-w-[40rem]">
+        <TopBox client:load />
       </div>
-      <div class="text-ink-muted mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm">
-        <a href="/recipes/new" class="hover:text-primary">Write one from scratch</a>
-        <a href="/import" class="hover:text-primary">Import from another app</a>
-        <a href="/connect" class="hover:text-primary">Save from Claude</a>
-      </div>
-    </section>
+    </div>
+  </header>
 
-    <HomeFeed client:only="svelte">
-      <div slot="fallback"><GridSkeleton count={4} /></div>
-    </HomeFeed>
-  </div>
+  <HomeFeed client:only="svelte">
+    <div slot="fallback"><GridSkeleton count={4} /></div>
+  </HomeFeed>
 </Layout>
-
-<script>
-  // The greeting follows the viewer's clock, so it's set in the browser
-  const hour = new Date().getHours()
-  const [greeting, prompt] =
-    hour < 5
-      ? ["Still up?", "Midnight snack?"]
-      : hour < 11
-        ? ["Good morning", "What's for breakfast?"]
-        : hour < 15
-          ? ["Good afternoon", "What's for lunch?"]
-          : hour < 18
-            ? ["Good afternoon", "What's cooking tonight?"]
-            : ["Good evening", "What's cooking tonight?"]
-  document.getElementById("greeting")!.textContent = greeting
-  document.getElementById("prompt")!.textContent = prompt
-</script>

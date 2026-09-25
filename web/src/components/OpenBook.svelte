@@ -62,6 +62,7 @@
       style:--cloth={palette.cloth}
       style:--shade={palette.shade}
       style:--foil={palette.foil}
+      style:--edge={palette.border}
       role="dialog"
       aria-modal="true"
       aria-label={book.name}
@@ -69,15 +70,15 @@
       <!-- Right page: contents -->
       <section class="page right">
         <header class="mb-4 flex items-baseline justify-between gap-2">
-          <h2 class="font-serif text-2xl font-semibold">Contents</h2>
-          <span class="text-ink-muted text-xs">{book.recipeCount} recipes</span>
+          <h2 class="section-title">Contents</h2>
+          <span class="meta">{book.recipeCount} recipes</span>
         </header>
         {#if loading}
           <div class="space-y-3">
             {#each { length: 5 }, i (i)}<div class="skeleton h-4 w-full"></div>{/each}
           </div>
         {:else if !details?.recipes.length}
-          <p class="text-ink-muted text-sm italic">
+          <p class="text-ink-muted text-sm">
             Blank pages, for now. Add recipes from any recipe page or with “Select” on the recipes
             list.
           </p>
@@ -95,7 +96,7 @@
           </ol>
         {/if}
         <footer class="mt-auto flex justify-end pt-4">
-          <a href={`/cookbooks/${book.id}`} class="btn btn-soft btn-sm">
+          <a href={`/cookbooks/${book.id}`} class="btn btn-soft">
             Open cookbook <ArrowRight />
           </a>
         </footer>
@@ -106,23 +107,25 @@
         <div class="cover-front">
           <div class="frame">
             <ChefHat class="size-8" />
-            <h2 class="font-serif text-2xl leading-tight font-semibold sm:text-3xl">
+            <h2 class="font-serif text-[26px] leading-tight sm:text-[30px]">
               {book.name}
             </h2>
             <span class="rule"></span>
-            <span class="text-xs tracking-[0.2em] uppercase">Recipes</span>
+            <span class="text-[13px] font-bold tracking-[0.2em] uppercase">Recipes</span>
           </div>
         </div>
         <div class="cover-inside">
-          <p class="font-serif text-xs tracking-[0.3em] uppercase opacity-60">Ex libris</p>
-          <h3 class="mt-3 font-serif text-2xl font-semibold">{book.name}</h3>
-          {#if book.description}<p class="mt-3 text-sm opacity-80">{book.description}</p>{/if}
-          <p class="mt-auto text-xs opacity-60">A cookbook of {book.recipeCount} recipes</p>
+          <p class="endpaper-muted text-[13px] font-bold tracking-[0.3em] uppercase">Ex libris</p>
+          <h3 class="mt-3 font-serif text-[24px] leading-tight">{book.name}</h3>
+          {#if book.description}<p class="mt-3 text-sm">{book.description}</p>{/if}
+          <p class="endpaper-muted mt-auto text-[13px] font-semibold">
+            A cookbook of {book.recipeCount} recipes
+          </p>
         </div>
       </div>
 
       <button type="button" class="close" aria-label="Close book" onclick={close}>
-        <X class="size-5" />
+        <X class="size-[22px]" />
       </button>
     </div>
   </div>
@@ -136,7 +139,7 @@
     display: grid;
     place-items: center;
     padding: 16px;
-    background: rgb(20 12 6 / 0.55);
+    background: rgb(13 19 15 / 0.6);
     backdrop-filter: blur(6px);
     perspective: 2200px;
     animation: fade 0.3s;
@@ -176,8 +179,8 @@
     padding: 28px 26px 20px;
     background: linear-gradient(90deg, rgb(0 0 0 / 0.08), transparent 8%), var(--paper);
     color: var(--text);
-    border-radius: 2px var(--radius) var(--radius) 2px;
-    box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.5);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    box-shadow: var(--menu-shadow);
     overflow: hidden;
   }
   .page.right {
@@ -192,8 +195,9 @@
     display: flex;
     align-items: baseline;
     gap: 6px;
-    padding: 7px 0;
-    font-size: 0.95rem;
+    min-height: 44px;
+    padding: 10px 0;
+    font-size: 1rem;
   }
   .toc-link:hover .toc-title {
     color: var(--primary);
@@ -211,7 +215,7 @@
   .toc-num {
     font-variant-numeric: tabular-nums;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: 0.875rem;
   }
 
   .cover {
@@ -232,17 +236,16 @@
     position: absolute;
     inset: 0;
     backface-visibility: hidden;
-    border-radius: 3px var(--radius) var(--radius) 3px;
+    border-radius: 0 var(--radius) var(--radius) 0;
   }
   .cover-front {
     display: grid;
     place-items: center;
     padding: 28px;
     color: var(--foil);
-    background:
-      linear-gradient(90deg, rgb(0 0 0 / 0.35), rgb(255 255 255 / 0.08) 4%, transparent 9%),
-      repeating-linear-gradient(45deg, transparent 0 3px, rgb(0 0 0 / 0.03) 3px 4px), var(--cloth);
-    box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.6);
+    /* Flat cloth, with a soft shadow along the hinge */
+    background: linear-gradient(90deg, rgb(0 0 0 / 0.22), transparent 7%), var(--cloth);
+    box-shadow: var(--edge), var(--menu-shadow);
   }
   .frame {
     display: flex;
@@ -253,10 +256,10 @@
     height: 100%;
     justify-content: center;
     text-align: center;
-    border: 2px solid var(--foil);
+    border: 1.5px solid var(--foil);
     outline: 1px solid var(--foil);
     outline-offset: 5px;
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 20px;
   }
   .rule {
@@ -269,27 +272,34 @@
     display: flex;
     flex-direction: column;
     padding: 34px 30px;
-    color: var(--shade);
-    background:
-      radial-gradient(circle at 20% 20%, rgb(255 255 255 / 0.5), transparent 40%),
-      repeating-linear-gradient(
-        135deg,
-        color-mix(in srgb, var(--cloth) 16%, #fff8ec) 0 10px,
-        color-mix(in srgb, var(--cloth) 10%, #fff8ec) 10px 20px
-      );
-    border-radius: var(--radius) 3px 3px var(--radius);
+    /* Endpaper: paper faintly striped with the cover colour */
+    color: var(--text);
+    background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--cloth) 12%, var(--paper)) 0 10px,
+      color-mix(in srgb, var(--cloth) 7%, var(--paper)) 10px 20px
+    );
+    box-shadow: inset 0 0 0 1px var(--border);
+    border-radius: var(--radius) 0 0 var(--radius);
+  }
+  .endpaper-muted {
+    color: var(--text-muted);
   }
   .close {
     position: absolute;
-    top: -44px;
+    top: -52px;
     right: 0;
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border-radius: 999px;
-    color: white;
-    background: rgb(255 255 255 / 0.15);
+    color: #fffdf8;
+    background: rgb(255 253 248 / 0.16);
+    transition: background-color 0.15s ease-out;
+  }
+  .close:hover {
+    background: rgb(255 253 248 / 0.26);
   }
 
   /* Phones: a single page; the cover swings away to reveal the contents */
@@ -306,6 +316,11 @@
     .page.right,
     .cover {
       left: 0;
+    }
+    /* No gutter on a single page */
+    .page {
+      background: var(--paper);
+      border-radius: var(--radius);
     }
     .stage.open .cover {
       transform: rotateY(-180deg) translateX(-8px);

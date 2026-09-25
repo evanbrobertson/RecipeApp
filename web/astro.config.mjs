@@ -35,6 +35,8 @@ const precompress = () => ({
 
 export default defineConfig({
   output: "static",
+  // Parallel local builds (one per worktree or agent) can write to their own folder
+  outDir: process.env.CRUMB_OUT_DIR ?? "./dist",
   trailingSlash: "ignore",
   build: { format: "directory", inlineStylesheets: "auto" },
   // The Rust server owns routing; in dev, proxy the API and dynamic pages to it

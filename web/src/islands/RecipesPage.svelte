@@ -1,5 +1,4 @@
 <script lang="ts">
-  import BookMarked from "@lucide/svelte/icons/book-marked"
   import BookOpen from "@lucide/svelte/icons/book-open"
   import BookPlus from "@lucide/svelte/icons/book-plus"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
@@ -141,20 +140,26 @@
 
 <div>
   <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-    <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Recipes</h1>
+    <h1 class="page-title">Recipes</h1>
     <div class="flex gap-2">
       {#if recipes.length}
-        <button type="button" class="btn btn-outline" onclick={toggleSelecting}>
+        <button
+          type="button"
+          class={["btn", selecting ? "btn-tile" : "btn-outline"]}
+          aria-pressed={selecting}
+          onclick={toggleSelecting}
+        >
           {#if selecting}<X /> Done{:else}<SquareCheck /> Select{/if}
         </button>
       {/if}
-      <a href="/add" class="btn btn-primary"><Plus /> Add</a>
+      <!-- The rail carries the same butter "Add recipe" on wider screens -->
+      <a href="/add" class="btn btn-primary md:hidden"><Plus /> Add</a>
     </div>
   </div>
 
-  <div class="mb-6 space-y-3">
-    <div class="relative">
-      <span class="text-ink-dim pointer-events-none absolute top-1/2 left-4 -translate-y-1/2">
+  <div class="mb-7 space-y-3">
+    <div class="relative max-w-2xl">
+      <span class="text-ink-muted pointer-events-none absolute top-1/2 left-4 -translate-y-1/2">
         {#if searching}<LoaderCircle class="size-5 animate-spin" />{:else}<Search
             class="size-5"
           />{/if}
@@ -163,14 +168,16 @@
         type="search"
         bind:value={search}
         oninput={onsearch}
-        class="input input-lg pr-12 pl-12"
-        placeholder="Search by name or ingredient…"
+        class="input input-lg rounded-ui pr-14 pl-12 [&::-webkit-search-cancel-button]:appearance-none"
+        placeholder={recipes.length && !q
+          ? `Search ${recipes.length} recipes`
+          : "Search by name or ingredient…"}
         aria-label="Search recipes"
       />
       {#if search}
         <button
           type="button"
-          class="btn btn-ghost btn-sm btn-icon absolute top-1/2 right-2 -translate-y-1/2"
+          class="btn btn-ghost btn-icon absolute top-1/2 right-1.5 -translate-y-1/2"
           aria-label="Clear search"
           onclick={clearSearch}
         >
@@ -179,14 +186,21 @@
       {/if}
     </div>
     {#if categories.length > 1}
-      <div class="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+      <div
+        class="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 md:mx-0 md:flex-wrap md:px-0"
+        role="group"
+        aria-label="Category"
+      >
         {#each [{ label: "Everything", value: "all" }, ...categories.map( (c) => ({ label: c, value: c }), )] as c (c.value)}
           <button
             type="button"
             class={[
-              "chip flex-none",
-              category === c.value ? "bg-primary text-white" : "bg-raised text-ink-muted hover:text-ink",
+              "chip h-11 flex-none",
+              category === c.value
+                ? "bg-tile text-on-tile"
+                : "bg-tint text-primary hover:bg-accented",
             ]}
+            aria-pressed={category === c.value}
             onclick={() => (category = c.value)}
           >
             {c.label}
@@ -215,10 +229,13 @@
       <button type="button" class="btn btn-soft" onclick={clearSearch}>Clear search</button>
     </EmptyState>
   {:else}
-    <div class="grid grid-cols-2 gap-x-3 gap-y-6 sm:gap-x-5 md:grid-cols-3 lg:grid-cols-4">
+    <div
+      class="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 sm:gap-x-4 lg:grid-cols-4 xl:grid-cols-5"
+    >
       {#each visible as recipe (recipe.id)}
         <RecipeCard
           {recipe}
+          sizes="(min-width: 1280px) 12rem, (min-width: 1024px) 18vw, (min-width: 768px) 21vw, (min-width: 640px) 31vw, 46vw"
           selectable={selecting}
           selected={selected.has(recipe.id)}
           ontoggle={toggle}
@@ -228,19 +245,23 @@
   {/if}
 
   {#if selecting}
+    <!-- Room to scroll the last row out from under the bar -->
+    <div class="h-20" aria-hidden="true"></div>
     <div
       transition:fly={{ y: 80, duration: 200 }}
-      class="border-line bg-raised fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 border-t px-4 py-3 shadow-lg md:bottom-0"
+      class="border-line bg-paper fixed inset-x-0 bottom-[calc(3.75rem+max(env(safe-area-inset-bottom),0.875rem))] z-30 border-t px-3 py-2.5 md:bottom-0 md:left-60 md:px-8"
+      role="toolbar"
+      aria-label="Selection"
     >
-      <div class="mx-auto flex max-w-5xl items-center justify-between gap-2">
-        <button type="button" class="btn btn-ghost btn-sm" onclick={toggleAll}>
+      <div class="mx-auto flex max-w-[71rem] items-center justify-between gap-2">
+        <button type="button" class="btn btn-ghost px-3" onclick={toggleAll}>
           {allSelected ? "Clear" : "Select all"}
         </button>
-        <span class="text-sm font-medium">{selected.size} selected</span>
+        <span class="text-[15px] font-bold" aria-live="polite">{selected.size} selected</span>
         <div class="flex gap-2">
           <button
             type="button"
-            class="btn btn-soft btn-sm"
+            class="btn btn-soft px-3.5"
             disabled={!selected.size}
             onclick={() => (showCookbooks = true)}
           >
@@ -248,7 +269,7 @@
           </button>
           <button
             type="button"
-            class="btn btn-sm btn-icon bg-error/10 text-error"
+            class="btn btn-outline btn-icon text-error"
             aria-label="Delete selected"
             disabled={!selected.size}
             onclick={() => (showDelete = true)}
@@ -267,16 +288,27 @@
         <a href="/cookbooks" class="btn btn-soft mt-3">Create a cookbook</a>
       </div>
     {:else}
-      <div class="flex flex-col gap-1">
+      <div class="-mx-2 flex flex-col">
         {#each cookbooks as book (book.id)}
+          {@const pal = bookPalette(book.color)}
           <button
             type="button"
-            class="btn btn-ghost justify-start text-ink"
+            class="rounded-ctl hover:bg-tint active:bg-tint flex min-h-14 items-center gap-3 px-2 text-left transition-colors disabled:opacity-60"
             disabled={busy}
             onclick={() => addToCookbook(book)}
           >
-            <BookMarked style={`color: ${bookPalette(book.color).cloth}`} />
-            {book.name}
+            <!-- a tiny spine in the book's cloth -->
+            <span
+              class="h-9 w-4 flex-none rounded-[3px_3px_0_0] shadow-[inset_0_0_0_1px_rgb(28_43_34/0.22)] dark:shadow-[inset_0_0_0_1px_rgb(239_233_218/0.25)]"
+              style:background={pal.cloth}
+              aria-hidden="true"
+            ></span>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-base font-bold">{book.name}</span>
+              <span class="meta block">
+                {book.recipeCount} recipe{book.recipeCount === 1 ? "" : "s"}
+              </span>
+            </span>
           </button>
         {/each}
       </div>

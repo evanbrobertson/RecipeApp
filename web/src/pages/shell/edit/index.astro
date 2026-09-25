@@ -6,6 +6,10 @@ import EditPage from "../../../islands/EditPage.svelte"
 
 <Layout title="Edit recipe" section="recipes" data>
   <EditPage client:only="svelte">
-    <div slot="fallback" class="skeleton mx-auto h-64 max-w-4xl"></div>
+    <div slot="fallback" class="space-y-4">
+      <div class="skeleton h-5 w-40"></div>
+      <div class="skeleton h-9 w-1/2"></div>
+      <div class="skeleton h-64 w-full"></div>
+    </div>
   </EditPage>
 </Layout>

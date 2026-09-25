@@ -1,12 +1,10 @@
 <script lang="ts">
-  /** "Try next" on the home page: a few recipes worth cooking soon, with Shuffle. */
-  import Dices from "@lucide/svelte/icons/dices"
+  /** "What should I cook next?": four recipes worth cooking soon, with Shuffle. */
   import Shuffle from "@lucide/svelte/icons/shuffle"
   import { onMount } from "svelte"
   import GridSkeleton from "./GridSkeleton.svelte"
   import RecipeCard from "./RecipeCard.svelte"
   import { api, errorMessage } from "../lib/api"
-  import { randomHref, wireRandomLinks } from "../lib/random"
   import type { Suggestions } from "../lib/recipe"
   import { read, write } from "../lib/storage"
   import { toast } from "../lib/toast"
@@ -31,7 +29,6 @@
   let loading = $state(false)
   let saved: Saved = read<Saved | null>(KEY, null, "session") ?? { date: today, seed: 0, shown: [] }
   if (saved.date !== today) saved = { date: today, seed: 0, shown: [] }
-  let section: HTMLElement | undefined = $state()
 
   const ids = () => data.items.map((i) => i.recipe.id)
 
@@ -67,7 +64,6 @@
   }
 
   onMount(() => {
-    if (section) wireRandomLinks(section)
     // Back on the home page after a shuffle today: show that set again
     if (saved.seed > 0) {
       loading = true
@@ -95,30 +91,27 @@
 </script>
 
 {#if data.items.length >= 2}
-  <section bind:this={section}>
-    <div class="mb-4 flex items-center justify-between gap-2">
-      <h2 class="font-serif text-xl font-semibold">Try next</h2>
-      <div class="flex items-center gap-1">
-        {#if total > COUNT}
-          <button type="button" class="btn btn-link" disabled={loading} onclick={shuffle}>
-            <Shuffle class="size-4" /> Shuffle
-          </button>
-        {/if}
-        <a href={randomHref()} class="btn btn-link" data-random data-no-prerender>
-          <Dices class="size-4" /> Surprise me
-        </a>
-      </div>
+  {#if loading}
+    <GridSkeleton count={COUNT} />
+  {:else}
+    <div class="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-4 sm:gap-x-4" data-prerender-eager>
+      {#each data.items as item (item.recipe.id)}
+        <RecipeCard
+          recipe={item.recipe}
+          reason={item.reason}
+          aiReason={item.ai}
+          sizes="(min-width: 1200px) 17rem, (min-width: 640px) 24vw, 50vw"
+        />
+      {/each}
     </div>
-    {#if loading}
-      <GridSkeleton count={COUNT} />
-    {:else}
-      <div
-        class="grid grid-cols-2 gap-x-3 gap-y-6 transition-opacity sm:gap-x-5 md:grid-cols-3 lg:grid-cols-4"
-      >
-        {#each data.items as item (item.recipe.id)}
-          <RecipeCard recipe={item.recipe} reason={item.reason} aiReason={item.ai} />
-        {/each}
-      </div>
-    {/if}
-  </section>
+  {/if}
+  {#if total > COUNT}
+    <div class="mt-4 flex justify-center">
+      <button type="button" class="btn btn-soft" disabled={loading} onclick={shuffle}>
+        <Shuffle /> Shuffle
+      </button>
+    </div>
+  {/if}
+{:else}
+  <p class="text-ink-muted text-sm">Add a few more recipes and Crumb will start suggesting some.</p>
 {/if}

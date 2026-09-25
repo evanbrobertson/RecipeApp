@@ -19,7 +19,7 @@
 
   let opened = $state<ShelfBook | null>(null)
   let showCreate = $state(false)
-  let form = $state({ name: "", description: "", color: "tomato" as string })
+  let form = $state({ name: "", description: "", color: "tile" as string })
   let creating = $state(false)
 
   function startCreate() {
@@ -45,18 +45,21 @@
 </script>
 
 <div>
-  <div class="mb-8 flex items-end justify-between gap-3">
+  <div class="mb-7 flex items-end justify-between gap-3">
     <div>
-      <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Your shelf</h1>
-      <p class="text-ink-muted mt-1">Pull a cookbook off the shelf to open it.</p>
+      <h1 class="page-title">Your shelf</h1>
+      <p class="text-ink-muted mt-2 text-sm">Pull a book off the shelf to open it.</p>
     </div>
-    <button type="button" class="btn btn-primary" onclick={startCreate}>
-      <Plus /> New cookbook
-    </button>
+    <!-- An empty shelf has its own call to action -->
+    {#if page.data?.cookbooks.length}
+      <button type="button" class="btn btn-primary shrink-0" onclick={startCreate}>
+        <Plus /> New book
+      </button>
+    {/if}
   </div>
 
   {#if page.loading}
-    <div class="skeleton h-64 w-full"></div>
+    <div class="skeleton rounded-ui h-52 w-full"></div>
   {:else if !page.data?.cookbooks.length}
     <EmptyState
       icon={LibraryBig}
@@ -68,30 +71,45 @@
       </button>
     </EmptyState>
   {:else}
-    <Bookshelf
-      books={page.data.cookbooks}
-      pulledId={opened?.id}
-      addable
-      onopen={(b) => (opened = b)}
-      onadd={startCreate}
-    />
+    <div class="bg-tint rounded-ui overflow-hidden pt-5">
+      <Bookshelf
+        books={page.data.cookbooks}
+        pulledId={opened?.id}
+        addable
+        onopen={(b) => (opened = b)}
+        onadd={startCreate}
+      />
+    </div>
   {/if}
 
   <OpenBook book={opened} onclose={() => (opened = null)} />
 
-  <Modal bind:open={showCreate} title="A new cookbook">
+  <Modal bind:open={showCreate} title="New book">
     <form id="create-cookbook" class="space-y-4" onsubmit={create}>
       <div>
         <label class="label" for="cb-name">Name</label>
         <!-- svelte-ignore a11y_autofocus -->
-        <input id="cb-name" bind:value={form.name} class="input" placeholder="Weeknight dinners" autofocus />
+        <input
+          id="cb-name"
+          bind:value={form.name}
+          class="input"
+          placeholder="Weeknight dinners"
+          autofocus
+        />
       </div>
       <div>
         <label class="label" for="cb-desc">Description</label>
-        <textarea id="cb-desc" use:autosize bind:value={form.description} rows="2" class="input"></textarea>
+        <textarea
+          id="cb-desc"
+          use:autosize
+          bind:value={form.description}
+          rows="2"
+          class="input"
+          placeholder="Optional"
+        ></textarea>
       </div>
       <div>
-        <span class="label">Cover</span>
+        <span class="label">Cover colour</span>
         <BookColorPicker bind:value={form.color} />
       </div>
     </form>

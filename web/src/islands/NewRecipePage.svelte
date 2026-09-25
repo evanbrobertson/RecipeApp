@@ -5,6 +5,8 @@
   import { toast } from "../lib/toast"
 
   let saving = $state(false)
+  // "From scratch" in the top box passes the name that was typed
+  const title = new URLSearchParams(location.search).get("title")?.trim() ?? ""
 
   async function save(fields: RecipeFields) {
     saving = true
@@ -18,4 +20,4 @@
   }
 </script>
 
-<RecipeEditor {saving} submitLabel="Save recipe" onsave={save} oncancel={() => history.back()} />
+<RecipeEditor initial={title ? { title } : {}} {saving} submitLabel="Save recipe" onsave={save} oncancel={() => history.back()} />

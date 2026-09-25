@@ -102,6 +102,9 @@ pub struct Config {
     pub site_url: Option<String>,
     pub railway_domain: Option<String>,
     pub web_dist: PathBuf,
+    /// Where resized recipe photos are kept (`img-cache/` next to the database).
+    /// None = resize on every request.
+    pub image_cache: Option<PathBuf>,
     pub host: String,
     pub port: u16,
 }
@@ -116,6 +119,7 @@ impl Default for Config {
             site_url: None,
             railway_domain: None,
             web_dist: PathBuf::from("web/dist"),
+            image_cache: None,
             host: "0.0.0.0".into(),
             port: 3000,
         }
@@ -174,6 +178,7 @@ impl Config {
             site_url: env(&["SITE_URL", "NUXT_PUBLIC_SITE_URL"]),
             railway_domain: env(&["RAILWAY_PUBLIC_DOMAIN"]),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),
+            image_cache: Some(crate::db::image_cache_dir(&crate::db::database_path())),
             host: env(&["HOST"]).unwrap_or(d.host),
             port: env(&["PORT"])
                 .and_then(|p| p.parse().ok())

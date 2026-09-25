@@ -7,7 +7,10 @@ in a clean UI. Also a remote MCP connector for Claude.
 
 - **Server:** Rust (axum 0.8, tokio, rusqlite bundled, scraper, reqwest/rustls), crate `crumb` at the repo root
 - **Frontend:** Astro 7 static build + Svelte 5 islands, in `web/`
-- **Styling:** Tailwind CSS 4 with semantic tokens (`web/src/styles/app.css`), no component library
+- **Styling:** Tailwind CSS 4, "Green Tile" design language: semantic tokens and shared classes in
+  `web/src/styles/app.css` (cream/paper/tint/line, tile green, one butter accent), no component library
+- **Fonts:** self-hosted woff2 in `web/src/assets/fonts`: Nunito Sans (body), DM Serif Display (titles), Caveat
+  (greetings and the cook's notes only), each with metric-matched fallbacks
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** JSON-LD first, HTML/microdata fallback, headless Chromium over CDP for blocked sites
@@ -47,10 +50,11 @@ src/
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
   suggest.rs      # Try next ranking + Surprise me (pure, unit-tested)
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
+  images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
 web/src/
-  layouts/Layout.astro   # Head, fonts, header, tab bar, timer dock, theme
+  layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
   islands/               # Svelte islands (one per interactive page/section)
   components/            # Shared Svelte + Astro components
@@ -70,7 +74,16 @@ web/src/
   toast that should appear after navigating.
 - **Islands:** `client:load` for data-independent UI (SSR'd at build), `client:only="svelte"` for anything
   reading page data, with a skeleton `slot="fallback"`.
-- **One corner radius everywhere:** `--radius` / `rounded-ui` (1rem). Circles use `rounded-full`.
+- **Four radii only:** `rounded-ui` (16px) cards/containers/menus, `rounded-ctl` (12px) controls and photos,
+  `rounded-full` pills and circles, `3px 3px 0 0` book spines. Flat: 1px `border-line`, shadows only on menus.
+- **Colour roles:** `text-primary` is text-weight green; fills behind text use `bg-tile text-on-tile`. Butter
+  (`.btn-primary`) is only the one main action and the active nav item. Nothing under 13px.
+- **Theme:** `web/src/lib/theme-boot.js` is inlined in every head: light, dark, system, or sun (dark from sunset to
+  sunrise, from a saved location or a time-zone estimate). `window.crumbTheme` drives the More page setting.
+- **Recipe photos:** always via `Photo.svelte` → `/img/{id}/{width}?v={fnv1a(image)}` (`src/images.rs` resizes to
+  WebP and caches in `img-cache/` beside the DB). A card photo morphs into the recipe hero
+  (`web/src/lib/transitions-boot.js`, `data-photo` / `data-photo-hero`).
+- **Parallel builds:** `CRUMB_OUT_DIR=./dist-name bun run build` writes to its own folder (git-ignored).
 - **DB compatibility:** timestamps are unix seconds, JSON columns are text; the production DB on the
   Railway volume must keep working.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.

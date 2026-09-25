@@ -5,7 +5,7 @@
 </script>
 
 <div
-  class={["bg-raised rounded-ui inline-flex p-1", className]}
+  class={["bg-tint rounded-ui inline-flex gap-0.5 p-1", className]}
   role="radiogroup"
   aria-label="Scale recipe"
 >
@@ -15,8 +15,8 @@
       role="radio"
       aria-checked={value === n}
       class={[
-        "rounded-ui px-3 py-1 text-sm font-semibold transition",
-        value === n ? "bg-canvas text-primary shadow-sm" : "text-ink-muted hover:text-ink",
+        "rounded-ctl h-11 min-w-11 px-2.5 text-[15px] font-bold tabular-nums transition-colors",
+        value === n ? "bg-tile text-on-tile" : "text-ink-muted hover:text-ink",
       ]}
       onclick={() => (value = n)}
     >

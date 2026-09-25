@@ -6,9 +6,42 @@ import RecipePage from "../../../islands/RecipePage.svelte"
 
 <Layout title="Recipe" section="recipes" data>
   <RecipePage client:only="svelte">
-    <div slot="fallback" class="mx-auto max-w-4xl space-y-4">
-      <div class="skeleton aspect-[16/8] w-full"></div>
-      <div class="skeleton h-10 w-2/3"></div>
+    <!-- Same box as the island's hero, so a card photo can morph onto it at pagereveal,
+         before the island mounts (mounting clears this fallback, so only one
+         [data-photo-hero] exists at a time). -->
+    <div slot="fallback" class="space-y-7">
+      <div class="grid gap-5 lg:grid-cols-[minmax(0,640px)_minmax(16rem,1fr)] lg:gap-8">
+        <div
+          id="hero-skeleton"
+          data-photo-hero
+          class="rounded-ctl bg-tint aspect-[4/3] w-full bg-cover bg-center"
+        >
+        </div>
+        <script is:inline>
+          ;(() => {
+            const el = document.getElementById("hero-skeleton")
+            let r = null
+            try {
+              r = JSON.parse(document.getElementById("page-data")?.textContent || "null")?.recipe
+            } catch {}
+            if (!r?.image) return el.remove()
+            // FNV-1a 32-bit over UTF-8 bytes: imageKey() in lib/img.ts
+            let h = 0x811c9dc5
+            for (const b of new TextEncoder().encode(r.image)) {
+              h = Math.imul(h ^ b, 0x01000193) >>> 0
+            }
+            // Same file the hero's srcset/sizes (and the server's preload) will pick
+            const slot = innerWidth >= 1024 ? 640 : innerWidth
+            const w = slot * devicePixelRatio <= 768 ? 768 : 1200
+            el.style.backgroundImage = `url(/img/${r.id}/${w}?v=${h.toString(16).padStart(8, "0")})`
+          })()
+        </script>
+        <div class="space-y-4">
+          <div class="skeleton h-9 w-2/3"></div>
+          <div class="skeleton h-4 w-1/2"></div>
+          <div class="skeleton h-14 w-full"></div>
+        </div>
+      </div>
     </div>
   </RecipePage>
 </Layout>

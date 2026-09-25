@@ -1,14 +1,13 @@
 <script lang="ts">
-  import ChefHat from "@lucide/svelte/icons/chef-hat"
-  import { bookPalette, bookSize, seeded, type ShelfBook } from "../lib/books"
+  import { bookPalette, bookSize, spineBands, type ShelfBook } from "../lib/books"
 
   let { book, pulled = false, onopen }: { book: ShelfBook; pulled?: boolean; onopen: () => void } =
     $props()
 
   const palette = $derived(bookPalette(book.color))
   const size = $derived(bookSize(book))
-  // Alternate spine designs so the shelf doesn't look cloned
-  const variant = $derived(Math.floor(seeded(book.id, 3) * 3))
+  // Only six cover colours, so some spines get bands to keep the shelf from looking cloned
+  const bands = $derived(spineBands(book))
 </script>
 
 <button
@@ -20,14 +19,13 @@
   style:--cloth={palette.cloth}
   style:--shade={palette.shade}
   style:--foil={palette.foil}
+  style:--edge={palette.border}
+  style:--band={bands ?? "transparent"}
   aria-label={`Open ${book.name}, ${book.recipeCount} recipes`}
   onclick={onopen}
 >
-  <span class="face spine" data-style={variant}>
-    <span class="band"></span>
+  <span class={["face spine", bands && "banded"]}>
     <span class="title font-serif">{book.name}</span>
-    <span class="band"></span>
-    <ChefHat class="emblem" />
   </span>
   <span class="face cover">
     <span class="cover-title font-serif">{book.name}</span>
@@ -43,16 +41,20 @@
     height: var(--h);
     flex: none;
     transform-style: preserve-3d;
-    transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
     cursor: pointer;
     outline: none;
   }
   .book:hover,
   .book:focus-visible {
-    transform: translateZ(36px) translateY(-10px) rotateY(-22deg);
+    transform: translateZ(30px) translateY(-8px) rotateY(-22deg);
+  }
+  .book:focus-visible .spine {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
   .book.pulled {
-    transform: translateZ(140px) translateY(-40px) rotateY(-70deg);
+    transform: translateZ(120px) translateY(-32px) rotateY(-70deg);
   }
 
   .face {
@@ -62,79 +64,38 @@
     pointer-events: none;
   }
 
-  /* The spine faces the viewer */
+  /* The spine faces the viewer: flat cloth, square at the foot */
   .spine {
     pointer-events: auto;
     inset: 0;
     transform: translateZ(calc(var(--d) / 2));
     display: flex;
-    flex-direction: column;
     align-items: center;
-    padding: 14px 0 10px;
-    border-radius: 3px 3px 2px 2px;
+    justify-content: center;
+    padding: 12px 0;
+    border-radius: 3px 3px 0 0;
     color: var(--foil);
+    background: var(--cloth);
+    box-shadow: var(--edge);
+  }
+  /* Two 2px bands, 10px in from the top and bottom */
+  .spine.banded {
+    padding: 22px 0;
     background:
-      linear-gradient(
-        90deg,
-        rgb(0 0 0 / 0.28),
-        transparent 18%,
-        rgb(255 255 255 / 0.14) 45%,
-        transparent 60%,
-        rgb(0 0 0 / 0.3)
-      ),
+      linear-gradient(var(--band), var(--band)) 0 10px / 100% 2px no-repeat,
+      linear-gradient(var(--band), var(--band)) 0 calc(100% - 10px) / 100% 2px no-repeat,
       var(--cloth);
-    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
-  }
-  .spine[data-style="1"] {
-    background:
-      linear-gradient(
-        90deg,
-        rgb(0 0 0 / 0.28),
-        transparent 18%,
-        rgb(255 255 255 / 0.14) 45%,
-        transparent 60%,
-        rgb(0 0 0 / 0.3)
-      ),
-      linear-gradient(var(--shade) 0 18%, var(--cloth) 18% 82%, var(--shade) 82%);
-  }
-  .spine[data-style="2"] {
-    background:
-      linear-gradient(
-        90deg,
-        rgb(0 0 0 / 0.28),
-        transparent 18%,
-        rgb(255 255 255 / 0.14) 45%,
-        transparent 60%,
-        rgb(0 0 0 / 0.3)
-      ),
-      repeating-linear-gradient(0deg, transparent 0 6px, rgb(0 0 0 / 0.05) 6px 7px), var(--cloth);
-  }
-  .band {
-    width: 70%;
-    height: 5px;
-    border-block: 1px solid var(--foil);
-    opacity: 0.8;
   }
   .title {
-    flex: 1;
-    margin: 10px 0;
+    /* Vertical, reading bottom to top */
     writing-mode: vertical-rl;
-    text-orientation: mixed;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
+    transform: rotate(180deg);
+    font-size: 14px;
     line-height: 1.1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-height: calc(var(--h) - 80px);
-    text-shadow: 0 1px 0 rgb(0 0 0 / 0.25);
-  }
-  .spine :global(.emblem) {
-    width: 16px;
-    height: 16px;
-    margin-top: 6px;
-    opacity: 0.85;
+    max-height: 100%;
   }
 
   /* Front cover: revealed as the book turns */
@@ -144,20 +105,18 @@
     width: var(--d);
     height: var(--h);
     transform: rotateY(90deg) translateZ(calc(var(--w) / 2));
-    background: linear-gradient(90deg, rgb(0 0 0 / 0.3), transparent 12%), var(--cloth);
+    background: var(--cloth);
+    box-shadow: var(--edge);
     display: grid;
     place-items: center;
-    padding: 14px;
-    border-radius: 0 4px 4px 0;
+    padding: 12px;
+    border-radius: 0 3px 0 0;
   }
   .cover-title {
     color: var(--foil);
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.15;
     text-align: center;
-    border: 1px solid var(--foil);
-    padding: 10px 8px;
-    border-radius: 3px;
   }
   .back {
     top: 0;
@@ -174,7 +133,7 @@
     width: var(--w);
     height: var(--d);
     transform: rotateX(90deg) translateZ(calc(var(--h) / 2));
-    background: repeating-linear-gradient(90deg, #efe6d4 0 2px, #e2d6bf 2px 3px);
+    background: repeating-linear-gradient(90deg, #f8f3e6 0 2px, #e3dfd0 2px 3px);
     border: 2px solid var(--cloth);
   }
 </style>

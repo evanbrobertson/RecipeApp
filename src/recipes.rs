@@ -840,7 +840,7 @@ pub fn create_cookbook(
 ) -> AppResult<Cookbook> {
     let pick = *BOOK_COLORS
         .choose(&mut rand::thread_rng())
-        .unwrap_or(&"tomato");
+        .unwrap_or(&"forest");
     let description = description.map(str::trim).filter(|d| !d.is_empty());
     conn.execute(
         "INSERT INTO cookbooks (name, description, color, created_at) VALUES (?1, ?2, ?3, ?4)",

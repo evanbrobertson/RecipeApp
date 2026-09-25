@@ -116,59 +116,55 @@
 
 {#snippet sections(kind: "ingredients" | "instructions")}
   {@const list = draft[kind]}
-  <div class="flex items-center justify-between">
-    <h2 class="font-serif text-lg font-semibold">
-      {kind === "ingredients" ? "Ingredients" : "Instructions"}
-    </h2>
-    <button
-      type="button"
-      class="btn btn-soft btn-sm"
-      onclick={() => list.push({ name: "", text: "" })}
-    >
+  <div class="mb-3.5 flex items-center justify-between gap-3">
+    <div>
+      <h2 class="section-title">{kind === "ingredients" ? "Ingredients" : "Instructions"}</h2>
+      <p class="hint">One {kind === "ingredients" ? "ingredient" : "step"} per line.</p>
+    </div>
+    <button type="button" class="btn btn-soft" onclick={() => list.push({ name: "", text: "" })}>
       <Plus /> Section
     </button>
   </div>
-  <p class="text-ink-muted text-xs">
-    One {kind === "ingredients" ? "ingredient" : "step"} per line.
-  </p>
-  {#each list as section, si (si)}
-    <div class="space-y-2">
-      {#if list.length > 1 || section.name}
-        <div class="flex gap-2">
-          <input
-            bind:value={section.name}
-            class="input flex-1"
-            placeholder={kind === "ingredients"
-              ? "Section name, e.g. For the sauce"
-              : "Section name, e.g. Make the icing"}
-            aria-label="Section name"
-          />
-          <button
-            type="button"
-            class="btn btn-ghost btn-icon text-error"
-            aria-label="Remove section"
-            onclick={() => list.splice(si, 1)}
-          >
-            <Trash2 />
-          </button>
-        </div>
-      {/if}
-      <textarea
-        use:autosize
-        bind:value={section.text}
-        rows={kind === "ingredients" ? 6 : 8}
-        class="input"
-        aria-label={kind === "ingredients" ? "Ingredients" : "Steps"}
-        placeholder={kind === "ingredients"
-          ? "2 cups flour\n1 tsp salt"
-          : "Preheat the oven to 180°C.\nMix the dry ingredients."}
-      ></textarea>
-    </div>
-  {/each}
+  <div class="space-y-4">
+    {#each list as section, si (si)}
+      <div class="space-y-2">
+        {#if list.length > 1 || section.name}
+          <div class="flex gap-2">
+            <input
+              bind:value={section.name}
+              class="input flex-1 font-bold"
+              placeholder={kind === "ingredients"
+                ? "Section name, e.g. For the sauce"
+                : "Section name, e.g. Make the icing"}
+              aria-label="Section name"
+            />
+            <button
+              type="button"
+              class="btn btn-ghost btn-icon text-error"
+              aria-label="Remove section"
+              onclick={() => list.splice(si, 1)}
+            >
+              <Trash2 />
+            </button>
+          </div>
+        {/if}
+        <textarea
+          use:autosize
+          bind:value={section.text}
+          rows={kind === "ingredients" ? 6 : 8}
+          class="input leading-relaxed"
+          aria-label={kind === "ingredients" ? "Ingredients" : "Steps"}
+          placeholder={kind === "ingredients"
+            ? "2 cups flour\n1 tsp salt"
+            : "Preheat the oven to 180°C.\nMix the dry ingredients."}
+        ></textarea>
+      </div>
+    {/each}
+  </div>
 {/snippet}
 
-<form class="space-y-8" onsubmit={submit}>
-  <div class="space-y-4">
+<form class="space-y-7" onsubmit={submit}>
+  <div class="card space-y-4 p-4 sm:p-5">
     <div>
       <label class="label" for="r-title">Title <span class="text-error">*</span></label>
       <input
@@ -176,69 +172,93 @@
         bind:value={draft.title}
         class="input input-lg"
         placeholder="Grandma's lasagne"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? "r-title-error" : undefined}
       />
-      {#if error}<p class="text-error mt-1 text-sm">{error}</p>{/if}
+      {#if error}<p id="r-title-error" class="text-error mt-1.5 text-sm font-bold">{error}</p>{/if}
     </div>
     <div>
       <label class="label" for="r-desc">Description</label>
-      <textarea use:autosize id="r-desc" bind:value={draft.description} rows="2" class="input"></textarea>
+      <textarea use:autosize id="r-desc" bind:value={draft.description} rows="2" class="input"
+      ></textarea>
     </div>
   </div>
 
-  <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-    {#each metaFields as f (f.key)}
+  <section>
+    <h2 class="section-title mb-3.5">Details</h2>
+    <div class="card grid grid-cols-2 gap-x-3 gap-y-4 p-4 sm:grid-cols-4 sm:p-5">
+      {#each metaFields as f (f.key)}
+        <div>
+          <label class="label" for={`r-${f.key}`}>{f.label}</label>
+          <input
+            id={`r-${f.key}`}
+            bind:value={draft[f.key]}
+            placeholder={f.placeholder}
+            class="input"
+          />
+        </div>
+      {/each}
+    </div>
+  </section>
+
+  <div class="grid gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-10">
+    <section>{@render sections("ingredients")}</section>
+    <section>{@render sections("instructions")}</section>
+  </div>
+
+  <section>
+    <h2 class="section-title mb-3.5">Notes and sources</h2>
+    <div class="card grid gap-4 p-4 sm:grid-cols-2 sm:p-5">
       <div>
-        <label class="label" for={`r-${f.key}`}>{f.label}</label>
+        <label class="label" for="r-notes">Notes</label>
+        <!-- The cook's own notes, in their own hand (as on the recipe page) -->
+        <textarea
+          use:autosize
+          id="r-notes"
+          bind:value={draft.notes}
+          rows="3"
+          class="input hand text-[24px] leading-snug"
+          placeholder="Less sugar next time…"
+        ></textarea>
+      </div>
+      <div>
+        <label class="label" for="r-nutrition">Nutrition</label>
+        <textarea
+          use:autosize
+          id="r-nutrition"
+          bind:value={draft.nutrition}
+          rows="3"
+          class="input"
+          aria-describedby="r-nutrition-hint"
+        ></textarea>
+        <p id="r-nutrition-hint" class="hint">One per line, e.g. calories: 320</p>
+      </div>
+      <div>
+        <label class="label" for="r-url">Source link</label>
         <input
-          id={`r-${f.key}`}
-          bind:value={draft[f.key]}
-          placeholder={f.placeholder}
+          id="r-url"
+          bind:value={draft.url}
+          type="url"
+          placeholder="https://…"
           class="input"
         />
       </div>
-    {/each}
-  </div>
+      <div>
+        <label class="label" for="r-image">Image link</label>
+        <input
+          id="r-image"
+          bind:value={draft.image}
+          type="url"
+          placeholder="https://…"
+          class="input"
+        />
+      </div>
+    </div>
+  </section>
 
-  <div class="grid gap-8 lg:grid-cols-5">
-    <div class="space-y-3 lg:col-span-2">{@render sections("ingredients")}</div>
-    <div class="space-y-3 lg:col-span-3">{@render sections("instructions")}</div>
-  </div>
-
-  <div class="grid gap-4 sm:grid-cols-2">
-    <div>
-      <label class="label" for="r-notes">Notes</label>
-      <textarea use:autosize id="r-notes" bind:value={draft.notes} rows="3" class="input"></textarea>
-    </div>
-    <div>
-      <label class="label" for="r-nutrition">Nutrition</label>
-      <textarea use:autosize id="r-nutrition" bind:value={draft.nutrition} rows="3" class="input"></textarea>
-      <p class="hint">One per line, e.g. calories: 320</p>
-    </div>
-    <div>
-      <label class="label" for="r-url">Source link</label>
-      <input
-        id="r-url"
-        bind:value={draft.url}
-        type="url"
-        placeholder="https://…"
-        class="input"
-      />
-    </div>
-    <div>
-      <label class="label" for="r-image">Image link</label>
-      <input
-        id="r-image"
-        bind:value={draft.image}
-        type="url"
-        placeholder="https://…"
-        class="input"
-      />
-    </div>
-  </div>
-
-  <div class="border-line flex justify-end gap-2 border-t pt-4">
-    <button type="button" class="btn btn-ghost" onclick={oncancel}>Cancel</button>
-    <button type="submit" class="btn btn-primary" disabled={saving}>
+  <div class="border-line flex justify-end gap-2 border-t pt-5">
+    <button type="button" class="btn btn-ghost btn-lg" onclick={oncancel}>Cancel</button>
+    <button type="submit" class="btn btn-primary btn-lg" disabled={saving}>
       {#if saving}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
       {submitLabel}
     </button>

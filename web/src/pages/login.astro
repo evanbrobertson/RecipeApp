@@ -1,18 +1,21 @@
 ---
 import Layout from "../layouts/Layout.astro"
-import Logo from "../components/Logo.astro"
 import LoginForm from "../islands/LoginForm.svelte"
 ---
 
-<Layout title="Sign in" bare>
-  <div class="grid min-h-dvh place-items-center px-4 py-10">
-    <div class="w-full max-w-sm">
-      <div class="mb-6 flex flex-col items-center text-center">
-        <Logo class="size-14" />
-        <h1 class="mt-3 font-serif text-3xl font-semibold">Crumb</h1>
-        <p class="text-ink-muted text-sm">Enter your password to open your recipe box.</p>
+<Layout title="Sign in" bare hand themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}>
+  <div class="flex min-h-dvh flex-col">
+    <header class="tile-surface">
+      <div
+        class="mx-auto flex w-full max-w-sm flex-col gap-2 px-5 pt-[calc(env(safe-area-inset-top)+3rem)] pb-10 sm:pt-20 sm:pb-14"
+      >
+        <h1 class="page-title">Crumb</h1>
+        <p class="hand text-[2.375rem]">welcome back, cook</p>
       </div>
+    </header>
+    <main class="mx-auto w-full max-w-sm flex-1 px-5 pt-7 pb-10">
+      <p class="text-ink-muted mb-5">Enter your password to open your recipe box.</p>
       <LoginForm client:load />
-    </div>
+    </main>
   </div>
 </Layout>

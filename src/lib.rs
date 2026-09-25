@@ -6,6 +6,7 @@ pub mod browser;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod images;
 pub mod importers;
 pub mod llm;
 pub mod markdown;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub zone: Arc<suggestions::Zone>,
     /// Cached AI picks for Try next.
     pub ai: Arc<suggestions::AiState>,
+    /// Sized recipe photos: disk cache and failure memory.
+    pub images: Arc<images::Images>,
 }
 
 impl AppState {
@@ -51,6 +54,10 @@ impl AppState {
         Self {
             db,
             web: Arc::new(web::Web::new(config.web_dist.clone())),
+            images: Arc::new(images::Images::new(
+                config.image_cache.clone(),
+                images::CACHE_CAP_BYTES,
+            )),
             config: Arc::new(config),
             http,
             browser: Arc::new(browser),
@@ -73,6 +80,7 @@ pub fn app(state: AppState) -> Router {
         .merge(api::routes())
         .merge(oauth::routes())
         .merge(mcp::routes())
+        .merge(images::routes())
         .merge(web::routes())
         .fallback(web::static_files)
         .layer(axum::middleware::from_fn_with_state(
@@ -80,6 +88,8 @@ pub fn app(state: AppState) -> Router {
             auth::require_login,
         ))
         .layer(CompressionLayer::new())
+        // Outside compression, so it sees (and tags) the encoding actually sent
+        .layer(axum::middleware::from_fn(web::conditional))
         .layer(security_header("x-content-type-options", "nosniff"))
         .layer(security_header(
             "referrer-policy",
@@ -88,7 +98,7 @@ pub fn app(state: AppState) -> Router {
         .layer(security_header("x-frame-options", "DENY"))
         .layer(security_header(
             "permissions-policy",
-            "camera=(), microphone=(), geolocation=()",
+            "camera=(), microphone=(), geolocation=(self)",
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

@@ -46,12 +46,12 @@
   <div class="modal-panel">
     <header class="flex items-start justify-between gap-3">
       <div>
-        <h2 class="font-serif text-xl font-semibold">{title}</h2>
-        {#if description}<p class="text-ink-muted mt-1 text-sm">{description}</p>{/if}
+        <h2 class="section-title">{title}</h2>
+        {#if description}<p class="text-ink-muted mt-1.5 text-sm">{description}</p>{/if}
       </div>
       <button
         type="button"
-        class="btn btn-ghost btn-sm btn-icon -mt-1 -mr-2"
+        class="btn btn-ghost btn-icon -mt-1.5 -mr-2.5"
         aria-label="Close"
         onclick={() => (open = false)}
       >
@@ -59,7 +59,7 @@
       </button>
     </header>
     {#if children}<div class="modal-body">{@render children()}</div>{/if}
-    {#if footer}<footer class="mt-5 flex justify-end gap-2">{@render footer()}</footer>{/if}
+    {#if footer}<footer class="mt-6 flex flex-wrap justify-end gap-2">{@render footer()}</footer>{/if}
   </div>
 </dialog>
 
@@ -73,17 +73,20 @@
     border-radius: var(--radius);
     background: var(--paper);
     color: var(--text);
-    box-shadow: 0 30px 80px -20px rgb(40 20 10 / 0.45);
+    box-shadow: var(--menu-shadow);
   }
   .modal[open] {
-    animation: modal-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: modal-in 0.2s ease-out;
   }
+  /* Forest wash; the evening kitchen gets a deeper one */
   .modal::backdrop {
-    background: rgb(20 12 6 / 0.45);
-    backdrop-filter: blur(4px);
+    background: rgb(28 43 34 / 0.45);
+  }
+  :global(.dark) .modal::backdrop {
+    background: rgb(5 9 7 / 0.65);
   }
   .modal-panel {
-    padding: 1.25rem 1.25rem 1.25rem;
+    padding: 1.25rem;
   }
   .modal-body {
     margin-top: 1rem;
@@ -102,7 +105,7 @@
   @keyframes modal-in {
     from {
       opacity: 0;
-      transform: translateY(8px) scale(0.98);
+      transform: translateY(4px);
     }
   }
   @keyframes side-in {

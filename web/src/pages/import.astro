@@ -6,45 +6,46 @@ import ImportTools from "../islands/ImportTools.svelte"
 ---
 
 <Layout title="Import" section="more" data>
-  <div class="mx-auto max-w-3xl space-y-10">
-    <div>
-      <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Bring your recipes over</h1>
-      <p class="text-ink-muted mt-1">
+  <div class="mx-auto grid max-w-5xl gap-7 lg:grid-cols-2 lg:gap-8">
+    <div class="max-w-2xl lg:col-span-2">
+      <h1 class="page-title">Bring your recipes over</h1>
+      <p class="text-ink-muted mt-2">
         From Just the Recipe, Paprika, Mealie, or a folder of saved pages.
       </p>
     </div>
 
-    <section class="rounded-ui bg-amber-50 p-5 sm:p-6 dark:bg-amber-950/25">
-      <div class="flex items-center gap-2">
-        <Icon icon={Info} class="size-5 text-amber-700 dark:text-amber-300" />
-        <h2 class="font-semibold text-amber-900 dark:text-amber-200">Moving from Just the Recipe</h2>
+    <section class="card p-4 sm:p-5 lg:col-span-2">
+      <div class="flex items-center gap-3.5">
+        <span class="well"><Icon icon={Info} /></span>
+        <h2 class="text-[17px] leading-tight font-bold">Moving from Just the Recipe</h2>
       </div>
-      <p class="mt-2 text-sm text-amber-900/80 dark:text-amber-100/80">
+      <p class="text-ink-muted mt-3 text-sm">
         Just the Recipe doesn't have a “download everything” button, so pick whichever of these is
         easiest:
       </p>
-      <ol class="mt-3 space-y-2 text-sm text-amber-950/90 dark:text-amber-50/90">
-        <li class="flex gap-2">
-          <span class="font-bold">1.</span>
-          <span>
-            <strong>Links (best):</strong> open each saved recipe, tap <em>Share</em> and copy the link
-            (or open the original site and copy its address), and paste them all below. Share links are
-            unwrapped to the original page automatically.
-          </span>
+      <ol class="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+        <li class="bg-tint rounded-ctl p-3.5">
+          <p class="text-primary font-bold">1. Links (best)</p>
+          <p class="mt-1">
+            Open each saved recipe, tap <em>Share</em> and copy the link (or open the original site
+            and copy its address), and paste them all below. Share links are unwrapped to the original
+            page automatically.
+          </p>
         </li>
-        <li class="flex gap-2">
-          <span class="font-bold">2.</span>
-          <span>
-            <strong>PDFs:</strong> with Premium, use <em>Print → Save as PDF</em> on each recipe and drop
-            the PDFs in the box further down. Handy for recipes you edited or typed in yourself.
-          </span>
+        <li class="bg-tint rounded-ctl p-3.5">
+          <p class="text-primary font-bold">2. PDFs</p>
+          <p class="mt-1">
+            With Premium, use <em>Print → Save as PDF</em> on each recipe and drop the PDFs into
+            the <em>Upload files</em> box. Handy for recipes you edited or typed in yourself.
+          </p>
         </li>
-        <li class="flex gap-2">
-          <span class="font-bold">3.</span>
-          <span>
-            <strong>Text:</strong> copy a recipe's text and paste it on the
-            <a href="/add" class="font-semibold underline">Add</a> page.
-          </span>
+        <li class="bg-tint rounded-ctl p-3.5">
+          <p class="text-primary font-bold">3. Text</p>
+          <p class="mt-1">
+            Copy a recipe's text and paste it on the <a href="/add" class="link text-sm underline"
+              >Add</a
+            > page.
+          </p>
         </li>
       </ol>
     </section>

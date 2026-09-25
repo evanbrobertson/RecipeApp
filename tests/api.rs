@@ -210,6 +210,44 @@ async fn recipes_crud_search_and_cookbooks() {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Names from the old palette map onto the new one
+    let (status, recoloured) = t
+        .json(
+            "PATCH",
+            &format!("/api/cookbooks/{book_id}"),
+            Some(json!({"color": "tomato"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(recoloured["color"], "clay");
+    let (_, legacy) = t
+        .json(
+            "POST",
+            "/api/cookbooks",
+            Some(json!({"name": "Old blue", "color": "ocean"})),
+        )
+        .await;
+    assert_eq!(legacy["color"], "tile");
+    let (_, random) = t
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Any"})))
+        .await;
+    assert!(
+        crumb::model::BOOK_COLORS.contains(&random["color"].as_str().unwrap()),
+        "{random}"
+    );
+    for name in ["Old blue", "Any"] {
+        let (_, books) = t.json("GET", "/api/cookbooks", None).await;
+        let id = books
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == name)
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        t.json("DELETE", &format!("/api/cookbooks/{id}"), None)
+            .await;
+    }
 
     // Export → import round trip
     let (status, headers, body) = t.send(get("/api/export")).await;
@@ -733,6 +771,8 @@ async fn mcp_organising_tools() {
     );
     let (msg, err) = call("update_cookbook", json!({"cookbook": 1, "color": "neon"})).await;
     assert!(err && msg.contains("expected one of"), "{msg}");
+    let (msg, err) = call("update_cookbook", json!({"cookbook": 1, "color": "plum"})).await;
+    assert!(!err && msg.contains("(id 1, forest)"), "{msg}");
     let (msg, err) = call("update_cookbook", json!({"cookbook": 1, "name": "other"})).await;
     assert!(err && msg.contains("already called \"Other\""), "{msg}");
     let (msg, err) = call("get_cookbook", json!({"cookbook": 99})).await;
@@ -1214,4 +1254,293 @@ async fn undo_only_removes_its_own_cook() {
         )
         .await;
     assert_eq!(stats["count"], 0);
+}
+
+fn png_bytes(w: u32, h: u32) -> Vec<u8> {
+    let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 120]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn clear_image(t: &TestApp, id: i64) {
+    t.state
+        .db
+        .lock()
+        .execute("UPDATE recipes SET image = NULL WHERE id = ?1", [id])
+        .unwrap();
+}
+
+fn set_image(t: &TestApp, id: i64, image: &str) {
+    t.state
+        .db
+        .lock()
+        .execute(
+            "UPDATE recipes SET image = ?1 WHERE id = ?2",
+            rusqlite::params![image, id],
+        )
+        .unwrap();
+}
+
+async fn send_raw(t: &TestApp, req: Request<Body>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let svc = NormalizePathLayer::trim_trailing_slash().layer(app(t.state.clone()));
+    let res = svc.oneshot(req).await.unwrap();
+    let (parts, body) = res.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes().to_vec();
+    (parts.status, parts.headers, bytes)
+}
+
+fn webp_size(bytes: &[u8]) -> (u32, u32) {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::WebP).unwrap();
+    (img.width(), img.height())
+}
+
+#[tokio::test]
+async fn sized_images_from_data_uris() {
+    use base64::Engine;
+    let cache = tempfile::tempdir().unwrap();
+    let dir = cache.path().join("img-cache");
+    let t = TestApp::with_config(|c| c.image_cache = Some(dir.clone()));
+    let id = add_recipe(&t, "Photo", "Dinner", "eggs", "10 min").await;
+    let bare = add_recipe(&t, "No photo", "Dinner", "eggs", "10 min").await;
+    clear_image(&t, bare);
+
+    // No image, unknown recipe, junk ids: 404
+    for uri in [
+        format!("/img/{bare}/320"),
+        "/img/9999/320".to_string(),
+        "/img/abc/320".to_string(),
+        format!("/img/{id}/wide"),
+    ] {
+        let (status, _, _) = send_raw(&t, get(&uri)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes(1600, 800));
+    let image = format!("data:image/png;base64,{b64}");
+    set_image(&t, id, &image);
+    let key = crumb::images::image_key(&image);
+
+    let (status, headers, body) = send_raw(&t, get(&format!("/img/{id}/700?v={key}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
+    assert_eq!(
+        headers[header::CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+    // 700 snaps to 768
+    assert_eq!(webp_size(&body), (768, 384));
+    assert!(dir.join(format!("{id}-{key}-768.webp")).exists());
+    let etag = headers[header::ETAG].to_str().unwrap().to_string();
+    assert_eq!(etag, format!("\"{key}-768\""));
+
+    // Served from the cache, still revalidatable
+    let req = Request::builder()
+        .uri(format!("/img/{id}/768?v={key}"))
+        .header(header::IF_NONE_MATCH, &etag)
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = send_raw(&t, req).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(body.is_empty());
+    assert_eq!(headers[header::ETAG], etag.as_str());
+
+    // Stale or missing key: the current image, but not cached forever
+    for uri in [
+        format!("/img/{id}/1200?v=deadbeef"),
+        format!("/img/{id}/1200"),
+    ] {
+        let (status, headers, body) = send_raw(&t, get(&uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(webp_size(&body), (1200, 600));
+    }
+
+    // Never upscaled
+    let small = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png_bytes(200, 100))
+    );
+    set_image(&t, id, &small);
+    let (status, _, body) = send_raw(&t, get(&format!("/img/{id}/1200"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(webp_size(&body), (200, 100));
+
+    // Broken image: 404
+    set_image(&t, id, "data:image/png;base64,bm90IGFuIGltYWdl");
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{id}/320"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn sized_images_are_behind_the_login() {
+    let t = TestApp::new(Some("pw"));
+    let (status, headers, _) = send_raw(&t, get("/img/1/320")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/login")
+    );
+}
+
+#[tokio::test]
+async fn sized_images_fetch_remote_photos_and_remember_failures() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = Arc::new(AtomicUsize::new(0));
+    let png = png_bytes(900, 600);
+    let counter = hits.clone();
+    let origin = axum::Router::new()
+        .route(
+            "/photo.png",
+            axum::routing::get(move || {
+                let png = png.clone();
+                async move { ([(header::CONTENT_TYPE, "image/png")], png) }
+            }),
+        )
+        .route(
+            "/broken.jpg",
+            axum::routing::get(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        [(header::CONTENT_TYPE, "text/html")],
+                        "<html>blocked</html>",
+                    )
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+
+    let t = TestApp::new(None);
+    let id = add_recipe(&t, "Remote", "Dinner", "eggs", "10 min").await;
+    set_image(&t, id, &format!("http://{addr}/photo.png"));
+    let (status, headers, body) = send_raw(&t, get(&format!("/img/{id}/320"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
+    assert_eq!(webp_size(&body), (320, 213));
+
+    set_image(&t, id, &format!("http://{addr}/broken.jpg"));
+    for _ in 0..3 {
+        let (status, _, _) = send_raw(&t, get(&format!("/img/{id}/320"))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{id}/768"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn recipe_pages_preload_the_hero() {
+    let t = TestApp::new(None);
+    let id = add_recipe(&t, "Hero", "Dinner", "eggs", "10 min").await;
+    clear_image(&t, id);
+    let (_, headers, _) = t.send(get(&format!("/recipes/{id}"))).await;
+    assert!(headers.get(header::LINK).is_none());
+
+    let image = "https://photos.test/hero.jpg";
+    set_image(&t, id, image);
+    let key = crumb::images::image_key(image);
+    let (status, headers, _) = t.send(get(&format!("/recipes/{id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::LINK],
+        format!(
+            "</img/{id}/768?v={key}>; rel=preload; as=image; fetchpriority=high; \
+             imagesrcset=\"/img/{id}/768?v={key} 768w, /img/{id}/1200?v={key} 1200w\"; \
+             imagesizes=\"(min-width: 1024px) 640px, 100vw\""
+        )
+        .as_str()
+    );
+    // Only the detail page
+    let (_, headers, _) = t.send(get(&format!("/recipes/{id}/cook"))).await;
+    assert!(headers.get(header::LINK).is_none());
+    let (status, headers, _) = t.send(get("/recipes/424242")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(headers.get(header::LINK).is_none());
+}
+
+#[tokio::test]
+async fn pages_revalidate_with_etags() {
+    let t = TestApp::new(None);
+    add_recipe(&t, "Soup", "Dinner", "leeks", "10 min").await;
+
+    let (status, headers, body) = t.send(get("/")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+    let etag = headers[header::ETAG].to_str().unwrap().to_string();
+    assert!(etag.starts_with('"') && etag.ends_with('"'), "{etag}");
+
+    let conditional = |uri: &str, tag: &str, encoding: Option<&str>| {
+        let mut req = Request::builder()
+            .uri(uri)
+            .header(header::IF_NONE_MATCH, tag);
+        if let Some(e) = encoding {
+            req = req.header(header::ACCEPT_ENCODING, e);
+        }
+        req.body(Body::empty()).unwrap()
+    };
+    let (status, headers, empty) = t.send(conditional("/", &etag, None)).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(empty.is_empty());
+    assert_eq!(headers[header::ETAG], etag.as_str());
+    assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+
+    // New data, new tag
+    add_recipe(&t, "Stew", "Dinner", "beef", "10 min").await;
+    let (status, headers, again) = t.send(conditional("/", &etag, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(again, body);
+    assert_ne!(headers[header::ETAG], etag.as_str());
+
+    // Each content encoding carries its own strong tag
+    let (status, headers, _) = t.send(conditional("/", "\"nope\"", Some("br"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_ENCODING], "br");
+    let br_tag = headers[header::ETAG].to_str().unwrap().to_string();
+    assert!(br_tag.ends_with("-br\""), "{br_tag}");
+    let (status, _, _) = t.send(conditional("/", &br_tag, Some("br"))).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+
+    // Static pages without data get one too
+    let (status, headers, _) = t.send(get("/add")).await;
+    assert_eq!(status, StatusCode::OK);
+    let tag = headers[header::ETAG].to_str().unwrap().to_string();
+    let (status, _, _) = t.send(conditional("/add", &tag, None)).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn served_html_files_keep_their_validators() {
+    let t = TestApp::new(None);
+    let dist = &t.state.config.web_dist;
+    std::fs::write(
+        dist.join("offline.html"),
+        "<!doctype html><title>offline</title>",
+    )
+    .unwrap();
+    std::fs::write(dist.join("offline.html.br"), b"not really brotli").unwrap();
+
+    let br = Request::builder()
+        .uri("/offline.html")
+        .header(header::ACCEPT_ENCODING, "br")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = t.send(br).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_ENCODING], "br");
+    let modified = headers[header::LAST_MODIFIED].to_str().unwrap().to_string();
+
+    let again = Request::builder()
+        .uri("/offline.html")
+        .header(header::ACCEPT_ENCODING, "br")
+        .header(header::IF_MODIFIED_SINCE, &modified)
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, _) = t.send(again).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
 }

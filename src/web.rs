@@ -69,9 +69,21 @@ impl Web {
     }
 }
 
+/// A strong validator for a response body: quoted hex of its SHA-256 (truncated).
+pub fn etag_for(body: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(body);
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!("\"{hex}\"")
+}
+
 fn html_response(status: StatusCode, body: String) -> Response {
+    let tag = etag_for(body.as_bytes());
     let mut res = (status, body).into_response();
     let h = res.headers_mut();
+    if let Ok(tag) = HeaderValue::from_str(&tag) {
+        h.insert(header::ETAG, tag);
+    }
     h.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),
@@ -207,16 +219,26 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
     let Some(id) = numeric(&id) else {
         return static_files(State(state), req).await;
     };
+    let mut hero = None;
     let data = (|| {
         let conn = state.db.lock();
+        let recipe = recipes::require_recipe(&conn, id)?;
+        hero = recipe.image.clone().filter(|i| !i.is_empty());
         Ok(json!({
-            "recipe": recipes::to_value(&recipes::require_recipe(&conn, id)?),
+            "recipe": recipes::to_value(&recipe),
             "cookbooks": recipes::to_value(&recipes::list_cookbooks(&conn)?),
             "inCookbooks": recipes::recipe_cookbook_ids(&conn, id)?,
             "cookStats": recipes::to_value(&recipes::cook_stats(&conn, id)?),
         }))
     })();
-    page(&state, "shell/recipe/index.html", data)
+    let mut res = page(&state, "shell/recipe/index.html", data);
+    if res.status() == StatusCode::OK
+        && let Some(link) =
+            hero.and_then(|i| HeaderValue::from_str(&crate::images::hero_preload(id, &i)).ok())
+    {
+        res.headers_mut().insert(header::LINK, link);
+    }
+    res
 }
 
 async fn recipe_view(
@@ -339,6 +361,70 @@ pub async fn static_files(State(state): State<AppState>, req: Request) -> Respon
     res
 }
 
+fn header_str(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// Whether an `If-None-Match` value matches `tag` (weak comparison, as RFC 9110 asks).
+fn none_match(if_none_match: &str, tag: &str) -> bool {
+    let bare = |t: &str| t.trim().trim_start_matches("W/").to_string();
+    let tag = bare(tag);
+    if_none_match
+        .split(',')
+        .any(|t| t.trim() == "*" || bare(t) == tag)
+}
+
+/// Answers `If-None-Match` for responses that carry an `ETag` (pages with injected data,
+/// sized images) with an empty 304. Runs outside compression: a compressed body gets
+/// its own tag (`"…-br"`), so each encoding keeps a strong validator of its own.
+pub async fn conditional(req: Request, next: axum::middleware::Next) -> Response {
+    let cacheable = matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    );
+    let if_none_match = header_str(req.headers(), header::IF_NONE_MATCH).map(String::from);
+    let mut res = next.run(req).await;
+    if res.status() != StatusCode::OK {
+        return res;
+    }
+    let Some(mut tag) = header_str(res.headers(), header::ETAG).map(String::from) else {
+        return res;
+    };
+    if let Some(enc) = header_str(res.headers(), header::CONTENT_ENCODING)
+        .filter(|e| !e.eq_ignore_ascii_case("identity"))
+        && tag.len() >= 2
+        && tag.starts_with('"')
+        && tag.ends_with('"')
+    {
+        tag = format!("{}-{}\"", &tag[..tag.len() - 1], enc.trim());
+        match HeaderValue::from_str(&tag) {
+            Ok(v) => {
+                res.headers_mut().insert(header::ETAG, v);
+            }
+            Err(_) => {
+                res.headers_mut().remove(header::ETAG);
+                return res;
+            }
+        }
+    }
+    if !cacheable || !if_none_match.is_some_and(|inm| none_match(&inm, &tag)) {
+        return res;
+    }
+    let mut not_modified = StatusCode::NOT_MODIFIED.into_response();
+    for name in [
+        header::ETAG,
+        header::CACHE_CONTROL,
+        header::VARY,
+        header::CONTENT_LOCATION,
+        header::EXPIRES,
+    ] {
+        if let Some(v) = res.headers().get(&name) {
+            not_modified.headers_mut().insert(name, v.clone());
+        }
+    }
+    not_modified
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +434,15 @@ mod tests {
         let s = inline_json(&json!({"t": "</script><script>alert(1)</script>"}));
         assert!(!s.contains("</"));
         assert!(s.contains("\\u003c/script>"));
+    }
+
+    #[test]
+    fn if_none_match_uses_weak_comparison() {
+        assert!(none_match("\"abc\"", "\"abc\""));
+        assert!(none_match("W/\"abc\", \"def\"", "\"def\""));
+        assert!(none_match("W/\"abc\"", "\"abc\""));
+        assert!(none_match("*", "\"abc\""));
+        assert!(!none_match("\"abc\"", "\"abc-br\""));
+        assert_eq!(etag_for(b"x").len(), 34);
     }
 }

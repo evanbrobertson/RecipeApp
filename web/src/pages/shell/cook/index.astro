@@ -4,8 +4,16 @@ import Layout from "../../../layouts/Layout.astro"
 import CookPage from "../../../islands/CookPage.svelte"
 ---
 
-<Layout title="Cooking" bare themeColor="#15110d" data bodyClass="overflow-hidden">
+<Layout
+  title="Cooking"
+  bare
+  themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}
+  data
+  bodyClass="overflow-hidden"
+>
   <CookPage client:only="svelte">
-    <div slot="fallback" class="dark bg-canvas fixed inset-0"></div>
+    <div slot="fallback" class="bg-canvas fixed inset-0">
+      <div class="tile-surface h-28"></div>
+    </div>
   </CookPage>
 </Layout>

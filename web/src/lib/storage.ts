@@ -54,6 +54,10 @@ export interface Viewed {
   id: number
   title: string
   image: string | null
+  /** When it was last opened (ms). Missing on entries saved before this was recorded. */
+  at?: number
+  /** Number of steps, for "Step 4 of 9" while cooking. */
+  steps?: number
 }
 
 const RECENT = "crumb:recent"
@@ -62,14 +66,25 @@ export function recentlyViewed(): Viewed[] {
   return read<Viewed[]>(RECENT, [])
 }
 
-export function rememberViewed(r: Viewed) {
+export function rememberViewed(r: {
+  id: number
+  title: string
+  image: string | null
+  instructions?: { items: string[] }[]
+}) {
+  const steps = r.instructions?.reduce((n, s) => n + s.items.length, 0)
   write(
     RECENT,
     [
-      { id: r.id, title: r.title, image: r.image },
+      { id: r.id, title: r.title, image: r.image, at: Date.now(), steps },
       ...recentlyViewed().filter((v) => v.id !== r.id),
     ].slice(0, 6),
   )
+}
+
+/** The step cook mode is on for this recipe in this tab (0-based), if it has been opened. */
+export function cookStep(id: number): number | null {
+  return read<number | null>(`crumb:cook:${id}`, null, "session")
 }
 
 export function forgetViewed(ids: number[]) {

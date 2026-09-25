@@ -1,35 +1,65 @@
-/** Cloth colours for cookbooks on the shelf. */
-export const BOOK_COLORS = [
-  "tomato",
-  "sage",
-  "mustard",
-  "plum",
-  "ocean",
-  "terracotta",
-  "forest",
-  "navy",
-  "rose",
-  "charcoal",
-] as const
+/** Cover colours for cookbooks on the shelf (the server stores these six names). */
+export const BOOK_COLORS = ["forest", "tile", "sage", "butter", "clay", "cream"] as const
 
 export type BookColor = (typeof BOOK_COLORS)[number]
 
-/** Cloth, darker shade (for depth) and foil colour per cookbook colour. */
-export const BOOK_PALETTE: Record<BookColor, { cloth: string; shade: string; foil: string }> = {
-  tomato: { cloth: "#c8442c", shade: "#8f2c1b", foil: "#f6d38b" },
-  sage: { cloth: "#7d9471", shade: "#56684c", foil: "#f3ecd2" },
-  mustard: { cloth: "#d4a233", shade: "#9b7219", foil: "#3b2a12" },
-  plum: { cloth: "#7b4a6b", shade: "#52304a", foil: "#f1cfa0" },
-  ocean: { cloth: "#2f6f8f", shade: "#1e4a60", foil: "#f3dca5" },
-  terracotta: { cloth: "#b8643f", shade: "#84432a", foil: "#fbe6c4" },
-  forest: { cloth: "#2f5d46", shade: "#1d3d2d", foil: "#e9cf86" },
-  navy: { cloth: "#2b3a5c", shade: "#1a2440", foil: "#e8c979" },
-  rose: { cloth: "#c77d8a", shade: "#955562", foil: "#fff1e0" },
-  charcoal: { cloth: "#3b3a38", shade: "#222120", foil: "#d9b86c" },
+export interface BookLook {
+  /** Cover cloth */
+  cloth: string
+  /** Darker cloth for the hidden faces, for depth */
+  shade: string
+  /** Title text on the cloth */
+  foil: string
+  /** Inset edge for covers that would vanish against a light page ("none" otherwise) */
+  border: string
+  /** Contrasting palette colours for the optional spine bands */
+  bands: [string, string]
 }
 
-export function bookPalette(color: string | null | undefined) {
-  return BOOK_PALETTE[(color as BookColor) ?? "tomato"] ?? BOOK_PALETTE.tomato
+const FOREST = "#1C2B22"
+const TILE = "#2F6B4F"
+const SAGE = "#A9C4AE"
+const BUTTER = "#F3DA8B"
+const CLAY = "#A55A40"
+const CREAM = "#F8F3E6"
+
+/** The same in light and dark mode. */
+export const BOOK_PALETTE: Record<BookColor, BookLook> = {
+  forest: { cloth: FOREST, shade: "#111a15", foil: BUTTER, border: "none", bands: [BUTTER, SAGE] },
+  tile: { cloth: TILE, shade: "#224f3a", foil: "#FFFDF8", border: "none", bands: [BUTTER, CREAM] },
+  sage: { cloth: SAGE, shade: "#8aa890", foil: FOREST, border: "none", bands: [FOREST, TILE] },
+  butter: { cloth: BUTTER, shade: "#d9bd67", foil: FOREST, border: "none", bands: [FOREST, CLAY] },
+  clay: { cloth: CLAY, shade: "#7e412d", foil: "#FFF8EA", border: "none", bands: [BUTTER, CREAM] },
+  cream: {
+    cloth: CREAM,
+    shade: "#ddd5c1",
+    foil: FOREST,
+    border: "inset 0 0 0 1px rgb(28 43 34 / 0.22)",
+    bands: [TILE, CLAY],
+  },
+}
+
+/** Names from the old ten-colour palette, in case one slips through. */
+const LEGACY: Record<string, BookColor> = {
+  tomato: "clay",
+  terracotta: "clay",
+  mustard: "butter",
+  ocean: "tile",
+  plum: "forest",
+  navy: "forest",
+  charcoal: "forest",
+  rose: "cream",
+}
+
+/** Normalise any stored colour name to one of the six. */
+export function bookColor(color: string | null | undefined): BookColor {
+  const c = (color ?? "").toLowerCase()
+  if ((BOOK_COLORS as readonly string[]).includes(c)) return c as BookColor
+  return LEGACY[c] ?? "tile"
+}
+
+export function bookPalette(color: string | null | undefined): BookLook {
+  return BOOK_PALETTE[bookColor(color)]
 }
 
 export function randomBookColor(): BookColor {
@@ -52,7 +82,14 @@ export interface ShelfBook {
 
 /** Spine size: thicker books hold more recipes; heights vary a little like a real shelf. */
 export function bookSize(book: ShelfBook) {
-  const width = Math.round(Math.min(74, 34 + book.recipeCount * 2.2))
-  const height = Math.round(178 + seeded(book.id) * 52)
-  return { width, height, depth: 132 }
+  const width = Math.round(Math.min(48, 30 + book.recipeCount * 1.5))
+  const height = Math.round(118 + seeded(book.id) * 42)
+  return { width, height, depth: 104 }
+}
+
+/** Spine decoration: about half the books get two bands, in one of two contrasting colours. */
+export function spineBands(book: ShelfBook): string | null {
+  const r = seeded(book.id, 3)
+  if (r < 0.45) return null
+  return bookPalette(book.color).bands[r < 0.75 ? 0 : 1]
 }

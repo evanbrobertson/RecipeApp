@@ -104,16 +104,16 @@
 </script>
 
 <!-- Links -->
-<section>
-  <h2 class="font-serif text-xl font-semibold">Paste links</h2>
-  <p class="text-ink-muted mt-1 text-sm">
+<section class="min-w-0">
+  <h2 class="section-title">Paste links</h2>
+  <p class="text-ink-muted mt-1.5 text-sm">
     One per line, or any text with links in it. Already-saved recipes are skipped.
   </p>
   <textarea
     use:autosize
     bind:value={linksText}
     rows="5"
-    class="input mt-3 max-h-80 font-mono text-sm"
+    class="input mt-3.5 max-h-80 font-mono text-sm"
     aria-label="Links to import"
     placeholder={"https://www.justtherecipe.com/?url=https://…\nhttps://cooking.site/recipe/…"}
   ></textarea>
@@ -131,10 +131,10 @@
     </button>
   </div>
   {#if jobs.length}
-    <ul class="border-line divide-line rounded-ui mt-4 divide-y border">
+    <ul class="list-card mt-4">
       {#each jobs as job (job.url)}
         {@const Icon = linkIcon[job.state]}
-        <li class="flex items-start gap-3 px-4 py-3 text-sm">
+        <li class="list-row items-start text-sm">
           <Icon
             class={[
               "mt-0.5 size-5 shrink-0",
@@ -146,11 +146,13 @@
           />
           <div class="min-w-0 flex-1">
             {#if job.id}
-              <a href={`/recipes/${job.id}`} class="font-semibold hover:underline">{job.title}</a>
+              <a href={`/recipes/${job.id}`} class="block text-[15px] font-bold hover:underline"
+                >{job.title}</a
+              >
             {/if}
-            <p class={["text-ink-muted truncate", job.id && "text-xs"]}>{job.url}</p>
-            {#if job.state === "duplicate"}<p class="text-ink-muted text-xs">Already saved</p>{/if}
-            {#if job.message}<p class="text-error text-xs">{job.message}</p>{/if}
+            <p class={["text-ink-muted truncate", job.id && "meta font-normal"]}>{job.url}</p>
+            {#if job.state === "duplicate"}<p class="meta">Already saved</p>{/if}
+            {#if job.message}<p class="text-error text-[13px]">{job.message}</p>{/if}
           </div>
         </li>
       {/each}
@@ -159,9 +161,9 @@
 </section>
 
 <!-- Files -->
-<section>
-  <h2 class="font-serif text-xl font-semibold">Upload files</h2>
-  <p class="text-ink-muted mt-1 text-sm">
+<section class="min-w-0">
+  <h2 class="section-title">Upload files</h2>
+  <p class="text-ink-muted mt-1.5 text-sm">
     Just the Recipe PDFs · Paprika (<code>.paprikarecipes</code>) · Mealie / schema.org JSON · saved
     web pages · text files (separate recipes with <code>---</code>) · a <code>.zip</code> of any of
     these · a backup from Crumb.
@@ -169,8 +171,8 @@
   <button
     type="button"
     class={[
-      "rounded-ui mt-3 flex w-full flex-col items-center justify-center gap-2 border-2 border-dashed px-6 py-10 transition",
-      dragging ? "border-primary bg-primary/5" : "border-line-strong hover:border-primary",
+      "rounded-ui bg-paper mt-3.5 flex w-full flex-col items-center justify-center gap-2 border-2 border-dashed px-6 py-10 transition",
+      dragging ? "border-tile bg-tint" : "border-line-strong hover:border-tile",
     ]}
     onclick={() => fileInput?.click()}
     ondragover={(e) => {
@@ -184,9 +186,9 @@
       void uploadFiles(e.dataTransfer?.files)
     }}
   >
-    <FileUp class="text-primary size-10" />
-    <span class="font-semibold">Drop files here or tap to choose</span>
-    <span class="text-ink-muted text-xs">Up to 50 MB each</span>
+    <span class="well mb-1"><FileUp /></span>
+    <span class="text-[17px] font-bold">Drop files here or tap to choose</span>
+    <span class="meta">Up to 50 MB each</span>
   </button>
   <input
     bind:this={fileInput}
@@ -199,7 +201,7 @@
   {#if fileJobs.length}
     <ul class="mt-4 space-y-2">
       {#each fileJobs as job, i (i)}
-        <li class="card px-4 py-3 text-sm">
+        <li class="card p-3 text-sm">
           <div class="flex items-center gap-2">
             {#if job.state === "working"}
               <LoaderCircle class="text-primary size-5 animate-spin" />
@@ -208,23 +210,23 @@
             {:else}
               <CircleX class="text-error size-5" />
             {/if}
-            <span class="truncate font-semibold">{job.name}</span>
+            <span class="truncate text-[15px] font-bold">{job.name}</span>
             {#if job.state === "done"}
               <span class="text-ink-muted ml-auto shrink-0">
                 {job.created.length} added{#if job.duplicates}, {job.duplicates} already saved{/if}
               </span>
             {/if}
           </div>
-          {#if job.message}<p class="text-error mt-1 text-xs">{job.message}</p>{/if}
+          {#if job.message}<p class="text-error mt-1 text-[13px]">{job.message}</p>{/if}
           {#if job.created.length}
-            <div class="mt-2 flex flex-wrap gap-1.5">
+            <div class="mt-2.5 flex flex-wrap gap-2">
               {#each job.created.slice(0, 12) as r (r.id)}
-                <a href={`/recipes/${r.id}`} class="chip bg-canvas h-7 text-xs font-medium hover:underline">
+                <a href={`/recipes/${r.id}`} class="chip bg-tint text-primary h-11 hover:underline">
                   {r.title}
                 </a>
               {/each}
               {#if job.created.length > 12}
-                <span class="text-ink-muted px-1 py-1 text-xs">+{job.created.length - 12} more</span>
+                <span class="meta self-center px-1">+{job.created.length - 12} more</span>
               {/if}
             </div>
           {/if}

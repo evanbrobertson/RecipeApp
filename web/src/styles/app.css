@@ -3,26 +3,19 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * One corner radius for the whole app: the soft squircle of a recipe card.
- * Cards, inputs, buttons, dialogs, chips and images all use --radius. Only true
- * circles (step numbers, dots) and the illustrated books on the shelf differ.
+ * Green Tile: glossy green backsplash tile, warm creams, one butter-yellow accent.
+ *
+ * Radius has exactly four values: 16px for cards and containers (`rounded-ui`), 12px for
+ * controls and media (`rounded-ctl`), pills (`rounded-full`), and 3px 3px 0 0 for book
+ * spines. Butter is only for the main action and the active nav item.
  */
 @theme {
   --radius-ui: 1rem;
-  --font-sans: "Figtree", "Figtree Fallback", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-serif: "Fraunces", "Fraunces Fallback", ui-serif, Georgia, serif;
-
-  --color-tomato-50: #fff4f1;
-  --color-tomato-100: #ffe6df;
-  --color-tomato-200: #ffcbbd;
-  --color-tomato-300: #ffa58e;
-  --color-tomato-400: #fa7a5c;
-  --color-tomato-500: #ee5a3a;
-  --color-tomato-600: #d9432a;
-  --color-tomato-700: #b53421;
-  --color-tomato-800: #922d1f;
-  --color-tomato-900: #772a1f;
-  --color-tomato-950: #41120b;
+  --radius-ctl: 0.75rem;
+  --font-sans:
+    "Nunito Sans", "Nunito Sans Fallback", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: "DM Serif Display", "DM Serif Display Fallback", ui-serif, Georgia, serif;
+  --font-hand: "Caveat", "Caveat Fallback", cursive;
 }
 
 /* Semantic colours, switched wholesale by .dark */
@@ -32,75 +25,117 @@
   --color-raised: var(--bg-elevated);
   --color-accented: var(--bg-accented);
   --color-paper: var(--paper);
+  --color-tint: var(--tint);
   --color-ink: var(--text);
   --color-ink-muted: var(--text-muted);
   --color-ink-dim: var(--text-dimmed);
   --color-line: var(--border);
   --color-line-muted: var(--border-muted);
   --color-line-strong: var(--border-accented);
+  /* Text-weight green: links, chip text, check marks, progress */
   --color-primary: var(--primary);
+  /* Fill-weight green (buttons, plank, badges) and the text that sits on it */
+  --color-tile: var(--tile);
+  --color-on-tile: var(--on-tile);
+  --color-butter: var(--butter);
+  --color-on-butter: var(--on-butter);
+  --color-nav: var(--nav);
+  --color-nav-ink: var(--nav-inactive);
   --color-error: var(--error);
   --color-success: var(--success);
 }
 
-/* Warm "kitchen paper" surfaces instead of stark white/black */
 :root {
   --radius: 1rem;
-  --primary: #e0502f;
-  --primary-hover: #cc4326;
-  --error: #dc2626;
-  --success: #3f8a3a;
-  --bg: #fbf7f1;
-  --bg-muted: #f6f0e7;
-  --bg-elevated: #f1e9dd;
-  --bg-accented: #e8dccb;
-  --border: #e6dac8;
-  --border-muted: #efe6d8;
-  --border-accented: #d8c8b2;
+  --radius-ctl: 0.75rem;
+  --bg: #f5f1e6; /* cream */
   --paper: #fffdf8;
-  --text: #292524;
-  --text-muted: #6f655c;
-  --text-dimmed: #9a8f84;
-  --shelf-wood: #9a6b43;
-  --shelf-wood-dark: #6f4a2c;
+  --tint: #e4ece3;
+  --bg-muted: #efeadd;
+  --bg-elevated: #e4ece3;
+  --bg-accented: #d6e2d5;
+  --border: #e3dfd0; /* line */
+  --border-muted: #ece8dc;
+  --border-accented: #d3cebd;
+  --text: #1c2b22; /* forest */
+  --text-muted: #56635a;
+  --text-dimmed: #5f6b63;
+  --primary: #2f6b4f; /* tile */
+  --primary-hover: #265a42;
+  --tile: #2f6b4f;
+  --tile-grout: #265a42;
+  --tile-gloss: 0.1;
+  --on-tile: #fffdf8;
+  --butter: #f3da8b;
+  --butter-hover: #edcf6f;
+  --on-butter: #1c2b22;
+  --nav: #1c2b22;
+  --nav-inactive: #b7c4bb;
+  --error: #a8432c;
+  --success: #2f6b4f;
+  --shelf-wood: #2f6b4f;
+  --shelf-wood-dark: #265a42;
+  --menu-shadow: 0 16px 28px -16px rgb(28 43 34 / 0.45);
   color-scheme: light;
 }
 
+/* "Evening kitchen": warm green-blacks, never neutral grey */
 .dark {
-  --primary: #f06a4a;
-  --primary-hover: #fa7a5c;
-  --error: #f87171;
-  --success: #6fbf64;
-  --bg: #15110d;
-  --bg-muted: #1d1813;
-  --bg-elevated: #251f18;
-  --bg-accented: #30281f;
-  --border: #342b22;
-  --border-muted: #2a231b;
-  --border-accented: #43382c;
-  --paper: #221c16;
-  --text: #f4ede4;
-  --text-muted: #b3a797;
-  --text-dimmed: #7d7263;
-  --shelf-wood: #6b4a2e;
-  --shelf-wood-dark: #4a321e;
+  --bg: #141c17;
+  --paper: #1d2721;
+  --tint: #24322a;
+  --bg-muted: #18211b;
+  --bg-elevated: #24322a;
+  --bg-accented: #2c3d33;
+  --border: #2c3830;
+  --border-muted: #253029;
+  --border-accented: #36453b;
+  --text: #efe9da;
+  --text-muted: #a8b3aa;
+  --text-dimmed: #9ba69d;
+  --primary: #93c4a3;
+  --primary-hover: #a9d3b6;
+  --tile: #3a7859; /* handoff #3B7A5A, a hair darker so light text on it passes 4.5:1 */
+  --tile-grout: #17301f;
+  --tile-gloss: 0.06;
+  --on-tile: #f5f0e2;
+  --butter: #f0d582;
+  --butter-hover: #f5df9c;
+  --on-butter: #141c17;
+  --nav: #0d130f;
+  --nav-inactive: #8e9c92;
+  --error: #e59a83;
+  --success: #93c4a3;
+  --shelf-wood: #3b7a5a;
+  --shelf-wood-dark: #2d5f45;
+  --menu-shadow: 0 16px 28px -16px rgb(0 0 0 / 0.7);
   color-scheme: dark;
 }
 
-/* Metric-matched fallbacks so text doesn't jump when the web fonts land */
+/* Metric-matched fallbacks (computed from the font files) so text doesn't jump when fonts land */
 @font-face {
-  font-family: "Figtree Fallback";
-  src: local("Arial");
-  size-adjust: 101%;
-  ascent-override: 94%;
-  descent-override: 25%;
+  font-family: "Nunito Sans Fallback";
+  src: local("Arial"), local("Liberation Sans"), local("Helvetica");
+  size-adjust: 98.9%;
+  ascent-override: 102.2%;
+  descent-override: 35.7%;
+  line-gap-override: 0%;
 }
 @font-face {
-  font-family: "Fraunces Fallback";
-  src: local("Georgia");
-  size-adjust: 104%;
-  ascent-override: 94%;
-  descent-override: 25%;
+  font-family: "DM Serif Display Fallback";
+  src: local("Times New Roman"), local("Liberation Serif"), local("Times");
+  size-adjust: 102.5%;
+  ascent-override: 101.1%;
+  descent-override: 32.7%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Caveat Fallback";
+  src: local("Times New Roman"), local("Liberation Serif"), local("Times");
+  size-adjust: 82.1%;
+  ascent-override: 116.9%;
+  descent-override: 36.5%;
+  line-gap-override: 0%;
 }
 
 /* Cross-document view transitions: every navigation is a full page load, crossfaded */
@@ -110,6 +145,21 @@
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 0.18s;
+}
+/* The nav stays put while the page underneath changes */
+::view-transition-group(nav) {
+  animation: none;
+}
+/* A recipe photo morphs into the next page's hero */
+::view-transition-group(photo) {
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(photo),
+::view-transition-new(photo) {
+  height: 100%;
+  object-fit: cover;
+  overflow: clip;
 }
 
 @layer base {
@@ -121,7 +171,7 @@
   }
   body {
     font-family: var(--font-sans);
-    font-feature-settings: "ss01", "cv11";
+    font-size: 1rem;
     min-height: 100dvh;
   }
   button,
@@ -132,26 +182,69 @@
     cursor: not-allowed;
   }
   :focus-visible {
-    outline: 2px solid var(--primary);
+    outline: 2px solid var(--tile);
     outline-offset: 2px;
   }
+  .dark :focus-visible {
+    outline-color: var(--primary);
+  }
   ::selection {
-    background: color-mix(in srgb, var(--primary) 25%, transparent);
+    background: color-mix(in srgb, var(--butter) 70%, transparent);
+    color: var(--on-butter);
   }
 }
 
 @layer components {
+  /* ── Type ────────────────────────────────────────────────── */
+  .font-serif {
+    font-family: var(--font-serif);
+    font-weight: 400;
+  }
+  /* Wordmark and page titles */
+  .page-title {
+    font-family: var(--font-serif);
+    font-size: 1.875rem;
+    font-weight: 400;
+    line-height: 1.05;
+  }
+  .section-title {
+    font-family: var(--font-serif);
+    font-size: 1.5rem;
+    font-weight: 400;
+    line-height: 1.15;
+  }
+  /* Handwriting: greetings and the cook's own notes, nothing else */
+  .hand {
+    font-family: var(--font-hand);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .meta {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .link {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--primary);
+  }
+  .link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
   /* ── Buttons ─────────────────────────────────────────────── */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    height: 2.5rem;
-    padding: 0 1rem;
-    border-radius: var(--radius);
+    height: 2.75rem;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-ctl);
     font-size: 0.9375rem;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1;
     white-space: nowrap;
     transition:
@@ -166,7 +259,10 @@
     transform: scale(0.97);
   }
   .btn:disabled {
-    opacity: 0.5;
+    background: var(--tint);
+    color: var(--text-muted);
+    border-color: transparent;
+    box-shadow: none;
   }
   .btn > svg {
     width: 1.125rem;
@@ -174,9 +270,9 @@
     flex: none;
   }
   .btn-sm {
-    height: 2rem;
-    padding: 0 0.75rem;
-    font-size: 0.8125rem;
+    height: 2.5rem;
+    padding: 0 0.875rem;
+    font-size: 0.875rem;
     gap: 0.375rem;
   }
   .btn-sm > svg {
@@ -198,32 +294,40 @@
     height: 1.25rem;
   }
   .btn-icon {
-    width: 2.5rem;
+    width: 2.75rem;
     padding: 0;
   }
   .btn-sm.btn-icon {
-    width: 2rem;
+    width: 2.5rem;
   }
   .btn-lg.btn-icon {
     width: 3rem;
   }
+  /* The one main action on a screen: butter, forest text */
   .btn-primary {
-    background: var(--primary);
-    color: #fff;
-    box-shadow: 0 1px 2px rgb(120 40 20 / 0.2);
+    background: var(--butter);
+    color: var(--on-butter);
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--primary-hover);
+    background: var(--butter-hover);
+  }
+  /* Strong secondary action: solid tile green */
+  .btn-tile {
+    background: var(--tile);
+    color: var(--on-tile);
+  }
+  .btn-tile:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--tile) 88%, black);
   }
   .btn-soft {
-    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    background: var(--tint);
     color: var(--primary);
   }
   .btn-soft:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--primary) 18%, transparent);
+    background: var(--bg-accented);
   }
   .btn-neutral {
-    background: var(--bg-elevated);
+    background: var(--tint);
     color: var(--text);
   }
   .btn-neutral:hover:not(:disabled) {
@@ -235,18 +339,18 @@
     background: var(--paper);
   }
   .btn-outline:hover:not(:disabled) {
-    background: var(--bg-elevated);
+    background: var(--tint);
   }
   .btn-ghost {
     color: var(--text-muted);
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--bg-elevated);
+    background: var(--tint);
     color: var(--text);
   }
   .btn-danger {
     background: var(--error);
-    color: #fff;
+    color: var(--paper);
   }
   .btn-danger:hover:not(:disabled) {
     filter: brightness(0.92);
@@ -255,7 +359,7 @@
     height: auto;
     padding: 0;
     color: var(--primary);
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
   .btn-link:hover {
     text-decoration: underline;
@@ -266,12 +370,12 @@
   .label {
     display: block;
     margin-bottom: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-size: 0.9375rem;
+    font-weight: 700;
   }
   .hint {
     margin-top: 0.25rem;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: var(--text-muted);
   }
   .input {
@@ -280,7 +384,7 @@
     min-height: 2.75rem;
     padding: 0.625rem 0.875rem;
     border: 1px solid var(--border-accented);
-    border-radius: var(--radius);
+    border-radius: var(--radius-ctl);
     background: var(--paper);
     color: var(--text);
     font-size: 1rem;
@@ -290,12 +394,12 @@
       box-shadow 0.15s;
   }
   .input::placeholder {
-    color: var(--text-dimmed);
+    color: var(--text-muted);
   }
   .input:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent);
+    border-color: var(--tile);
+    box-shadow: 0 0 0 3px var(--tint);
   }
   textarea.input {
     resize: vertical;
@@ -303,43 +407,135 @@
     min-height: 5rem;
   }
   .input-lg {
-    min-height: 3.25rem;
-    font-size: 1.0625rem;
+    min-height: 3.5rem;
+    font-size: 1rem;
   }
 
   /* ── Surfaces ────────────────────────────────────────────── */
+  /* Flat by default: paper with a 1px line, no shadow */
   .card {
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+    background: var(--paper);
+  }
+  /* A card of rows with inset dividers (Pick up where you left off, Can't decide?) */
+  .list-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--paper);
+    overflow: hidden;
+  }
+  .list-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    min-height: 4.25rem;
+    padding: 0.75rem;
+    transition: background-color 0.15s;
+  }
+  a.list-row:active,
+  button.list-row:active {
+    background: var(--tint);
+  }
+  @media (hover: hover) {
+    a.list-row:hover,
+    button.list-row:hover {
+      background: color-mix(in srgb, var(--tint) 55%, transparent);
+    }
+  }
+  .list-row + .list-row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0.75rem;
+    right: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+  /* 44px icon well: tint square, tile icon */
+  .well {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--radius-ctl);
+    background: var(--tint);
+    color: var(--primary);
+  }
+  .well > svg {
+    width: 1.375rem;
+    height: 1.375rem;
+  }
+  /* Popovers and menus are the only raised things */
+  .menu-surface {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--paper);
+    box-shadow: var(--menu-shadow);
   }
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    height: 2rem;
-    padding: 0 0.875rem;
-    border-radius: var(--radius);
+    height: 2.5rem;
+    padding: 0 1rem;
+    border-radius: 999px;
     font-size: 0.875rem;
-    font-weight: 600;
+    font-weight: 700;
     white-space: nowrap;
     transition:
       background-color 0.15s,
       color 0.15s;
   }
   .kicker {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--primary);
   }
+  .progress {
+    height: 0.25rem;
+    border-radius: 999px;
+    background: var(--tint);
+    overflow: hidden;
+  }
+  .progress > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--tile);
+  }
   .skeleton {
-    border-radius: var(--radius);
-    background: var(--bg-elevated);
+    border-radius: var(--radius-ctl);
+    background: var(--tint);
     animation: pulse 1.6s ease-in-out infinite;
   }
-  .font-serif {
-    font-family: var(--font-serif);
+  /* Striped stand-in for a missing photo */
+  .photo-empty {
+    background: repeating-linear-gradient(
+      135deg,
+      var(--tint) 0 10px,
+      color-mix(in srgb, var(--tint) 55%, var(--paper)) 10px 20px
+    );
+    color: var(--primary);
+  }
+
+  /* ── Brand surface: the glossy backsplash tile ──────────── */
+  /* Home header and hero moments only (cook mode chrome). Never behind body content. */
+  .tile-surface {
+    background-color: var(--tile-base, var(--tile));
+    background-image:
+      linear-gradient(var(--tile-grout) 2px, transparent 2px),
+      linear-gradient(90deg, var(--tile-grout) 2px, transparent 2px),
+      radial-gradient(circle at 30% 30%, rgb(255 255 255 / var(--tile-gloss)), transparent 55%);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+    color: var(--on-tile);
+  }
+  .dark .tile-surface {
+    --tile-base: #1f3d2e;
   }
 }
 
@@ -401,7 +597,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--paper);
-  box-shadow: 0 12px 32px -12px rgb(40 20 10 / 0.35);
+  box-shadow: var(--menu-shadow);
   animation: toast-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
   cursor: pointer;
 }
@@ -412,7 +608,7 @@
 }
 .toast-title {
   font-size: 0.9375rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 .toast-description {
   margin-top: 0.125rem;
@@ -431,23 +627,43 @@
 .toast-action {
   grid-row: 1 / span 2;
   grid-column: 2;
-  padding: 0.375rem 0.75rem;
-  border-radius: var(--radius);
-  font-size: 0.875rem;
+  min-height: 2.75rem;
+  padding: 0 0.875rem;
+  border-radius: var(--radius-ctl);
+  font-size: 0.9375rem;
   font-weight: 700;
   color: var(--primary);
 }
 .toast-action:hover {
-  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  background: var(--tint);
+}
+/* Toned toasts get a pill-shaped bar inside the left edge */
+.toast-success,
+.toast-error,
+.toast-primary {
+  position: relative;
+  padding-left: 1.5rem;
+}
+.toast-success::before,
+.toast-error::before,
+.toast-primary::before {
+  content: "";
+  position: absolute;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  left: 0.625rem;
+  width: 0.25rem;
+  border-radius: 999px;
+  background: var(--tone);
 }
 .toast-success {
-  border-left: 4px solid var(--success);
+  --tone: var(--success);
 }
 .toast-error {
-  border-left: 4px solid var(--error);
+  --tone: var(--error);
 }
 .toast-primary {
-  border-left: 4px solid var(--primary);
+  --tone: var(--tile);
 }
 @keyframes toast-in {
   from {

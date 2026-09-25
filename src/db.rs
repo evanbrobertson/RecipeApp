@@ -28,6 +28,15 @@ pub fn database_path() -> PathBuf {
     PathBuf::from(".data/recipes.db")
 }
 
+/// Resized recipe photos live in `img-cache/` beside the database file.
+pub fn image_cache_dir(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .join("img-cache")
+}
+
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
@@ -194,6 +203,41 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// `PRAGMA user_version` once every data migration below has run.
+pub const SCHEMA_VERSION: i64 = 1;
+
+/// One-time data migrations, gated on `PRAGMA user_version` so each runs exactly once.
+/// A fresh database runs them against empty tables and is stamped current.
+fn migrate_data(conn: &mut Connection) -> rusqlite::Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    if version < 1 {
+        // The ten-colour cookbook palette became six. One CASE so the old `forest`
+        // (a green, now `tile`) is mapped before plum/navy/charcoal become `forest`.
+        // Not idempotent on its own, hence the version gate in the same transaction.
+        tx.execute_batch(
+            "UPDATE cookbooks SET color = CASE color
+               WHEN 'tomato' THEN 'clay'
+               WHEN 'terracotta' THEN 'clay'
+               WHEN 'mustard' THEN 'butter'
+               WHEN 'ocean' THEN 'tile'
+               WHEN 'forest' THEN 'tile'
+               WHEN 'plum' THEN 'forest'
+               WHEN 'navy' THEN 'forest'
+               WHEN 'charcoal' THEN 'forest'
+               WHEN 'rose' THEN 'cream'
+               WHEN 'sage' THEN 'sage'
+               ELSE color END
+             WHERE color IS NOT NULL",
+        )?;
+    }
+    tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    tx.commit()
+}
+
 pub fn open(path: &Path) -> anyhow_like::Result<Db> {
     if std::env::var_os("RAILWAY_ENVIRONMENT").is_some()
         && env_nonempty("RAILWAY_VOLUME_MOUNT_PATH").is_none()
@@ -226,6 +270,7 @@ fn init(mut conn: Connection) -> anyhow_like::Result<Db> {
     upgrade_legacy_schema(&mut conn)?;
     conn.execute_batch(&bootstrap_sql())?;
     add_missing_columns(&conn)?;
+    migrate_data(&mut conn)?;
     // Views only feed suggestions for a few months; cooks are kept for good
     conn.execute(
         "DELETE FROM recipe_events WHERE kind = 'viewed' AND created_at < ?1",
@@ -285,5 +330,95 @@ mod tests {
             .query_row("SELECT count(*) FROM recipe_events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0);
+    }
+
+    fn colours(path: &Path) -> Vec<(String, Option<String>)> {
+        let db = open(path).unwrap();
+        let c = db.lock();
+        let mut stmt = c
+            .prepare("SELECT name, color FROM cookbooks ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn migrates_the_old_cookbook_palette_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("palette.db");
+        let old = [
+            "tomato",
+            "terracotta",
+            "mustard",
+            "ocean",
+            "forest",
+            "plum",
+            "navy",
+            "charcoal",
+            "rose",
+            "sage",
+        ];
+        {
+            // The schema as the previous release left it: user_version 0, old colours
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(&bootstrap_sql()).unwrap();
+            for name in old {
+                c.execute(
+                    "INSERT INTO cookbooks (name, color, created_at) VALUES (?1, ?1, 1)",
+                    [name],
+                )
+                .unwrap();
+            }
+            c.execute(
+                "INSERT INTO cookbooks (name, color, created_at) VALUES ('none', NULL, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let expected: Vec<(String, Option<String>)> = [
+            ("tomato", "clay"),
+            ("terracotta", "clay"),
+            ("mustard", "butter"),
+            ("ocean", "tile"),
+            ("forest", "tile"),
+            ("plum", "forest"),
+            ("navy", "forest"),
+            ("charcoal", "forest"),
+            ("rose", "cream"),
+            ("sage", "sage"),
+        ]
+        .iter()
+        .map(|(n, c)| (n.to_string(), Some(c.to_string())))
+        .chain([("none".to_string(), None)])
+        .collect();
+        assert_eq!(colours(&path), expected);
+        // A second start must not touch them again (forest would become tile)
+        assert_eq!(colours(&path), expected);
+        let version: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_fresh_database_starts_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh.db");
+        {
+            let db = open(&path).unwrap();
+            db.lock()
+                .execute(
+                    "INSERT INTO cookbooks (name, color, created_at) VALUES ('New', 'forest', 1)",
+                    [],
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            colours(&path),
+            vec![("New".to_string(), Some("forest".to_string()))]
+        );
     }
 }

@@ -15,7 +15,7 @@
     jar: 46,
   }
   const size = $derived(SIZES[vessel])
-  const fill = $derived(color ?? "#d9b99b")
+  const fill = $derived(color ?? "#d8bf9a")
 </script>
 
 <svg
@@ -27,13 +27,13 @@
   >
     <!-- Cutting board -->
     {#if vessel === "board"}
-      <ellipse cx="50" cy="56" rx="46" ry="5" fill="rgb(0 0 0 / 0.12)" />
-      <rect x="4" y="10" width="86" height="44" rx="10" fill="#c99662" />
-      <rect x="4" y="10" width="86" height="40" rx="10" fill="#dcae78" />
-      <circle cx="84" cy="20" r="3.5" fill="#b07f4d" />
+      <ellipse cx="50" cy="56" rx="46" ry="5" fill="var(--vessel-shadow)" />
+      <rect x="4" y="10" width="86" height="44" rx="10" fill="var(--board-edge)" />
+      <rect x="4" y="10" width="86" height="40" rx="10" fill="var(--board)" />
+      <circle cx="84" cy="20" r="3.5" fill="var(--board-hole)" />
       <path
         d="M14 22 q20 -3 40 0 M18 34 q24 3 46 -1 M12 44 q20 -2 34 1"
-        stroke="#c99662"
+        stroke="var(--board-edge)"
         stroke-width="1.5"
         fill="none"
       />
@@ -56,15 +56,15 @@
     
     <!-- Jar / shaker for "to taste" things -->
     {:else if vessel === "jar"}
-      <ellipse cx="50" cy="124" rx="34" ry="5" fill="rgb(0 0 0 / 0.12)" />
+      <ellipse cx="50" cy="124" rx="34" ry="5" fill="var(--vessel-shadow)" />
       <rect
         x="22"
         y="30"
         width="56"
         height="92"
         rx="14"
-        fill="var(--jar-glass, #e9eef0)"
-        stroke="#b9c6cc"
+        fill="var(--jar-glass)"
+        stroke="var(--jar-edge)"
         stroke-width="3"
       />
       <rect
@@ -76,18 +76,18 @@
         rx="10"
         fill={fill}
       />
-      <rect x="26" y="12" width="48" height="22" rx="6" fill="#8a9aa3" />
-      <circle cx="40" cy="22" r="2.5" fill="#dfe6ea" />
-      <circle cx="50" cy="22" r="2.5" fill="#dfe6ea" />
-      <circle cx="60" cy="22" r="2.5" fill="#dfe6ea" />
+      <rect x="26" y="12" width="48" height="22" rx="6" fill="var(--jar-cap)" />
+      <circle cx="40" cy="22" r="2.5" fill="var(--jar-holes)" />
+      <circle cx="50" cy="22" r="2.5" fill="var(--jar-holes)" />
+      <circle cx="60" cy="22" r="2.5" fill="var(--jar-holes)" />
     
     <!-- Bowls of every size -->
     {:else}
-      <ellipse cx="50" cy="68" rx="30" ry="4" fill="rgb(0 0 0 / 0.14)" />
+      <ellipse cx="50" cy="68" rx="30" ry="4" fill="var(--vessel-shadow)" />
       <path
         d="M4 26 Q 6 66 50 66 Q 94 66 96 26 Z"
-        fill="var(--bowl, #ffffff)"
-        stroke="var(--bowl-edge, #d8cfc2)"
+        fill="var(--bowl)"
+        stroke="var(--bowl-edge)"
         stroke-width="2.5"
       />
       <ellipse
@@ -95,8 +95,8 @@
         cy="26"
         rx="46"
         ry="12"
-        fill="var(--bowl-inside, #efe9df)"
-        stroke="var(--bowl-edge, #d8cfc2)"
+        fill="var(--bowl-inside)"
+        stroke="var(--bowl-edge)"
         stroke-width="2.5"
       />
       <g class="bowl-fill">
@@ -105,7 +105,7 @@
       </g>
       <path
         d="M14 36 Q 20 54 40 58"
-        stroke="rgb(255 255 255 / 0.7)"
+        stroke="var(--bowl-gloss)"
         stroke-width="3"
         fill="none"
         stroke-linecap="round"
@@ -114,6 +114,21 @@
   </svg>
 
 <style>
+/* Sage-glazed bowls on cream, a butter-wood board, a glass shaker with a tile-green cap */
+.prep-vessel {
+  --bowl: #fbf8ef;
+  --bowl-inside: #e4ece3;
+  --bowl-edge: #c9d6ca;
+  --bowl-gloss: rgb(255 255 255 / 0.8);
+  --board: #e6c792;
+  --board-edge: #cfa96f;
+  --board-hole: #b98f58;
+  --jar-glass: #eef3ec;
+  --jar-edge: #b8c8bb;
+  --jar-cap: #2f6b4f;
+  --jar-holes: #e4ece3;
+  --vessel-shadow: rgb(28 43 34 / 0.12);
+}
 .prep-vessel .bowl-fill {
   opacity: 0;
   transform: translateY(6px) scale(0.6);
@@ -135,9 +150,17 @@
     height 0.4s;
 }
 :global(.dark) .prep-vessel {
-  --bowl: #3a332c;
-  --bowl-inside: #2b251f;
-  --bowl-edge: #574c40;
-  --jar-glass: #2c3337;
+  --bowl: #2c3d33;
+  --bowl-inside: #1a241e;
+  --bowl-edge: #43584a;
+  --bowl-gloss: rgb(255 255 255 / 0.14);
+  --board: #b3915f;
+  --board-edge: #94744a;
+  --board-hole: #7c603c;
+  --jar-glass: #24322a;
+  --jar-edge: #4a5e50;
+  --jar-cap: #3b7a5a;
+  --jar-holes: #1a241e;
+  --vessel-shadow: rgb(0 0 0 / 0.35);
 }
 </style>
