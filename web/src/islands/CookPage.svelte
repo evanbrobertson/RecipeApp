@@ -267,7 +267,7 @@
               <p class="meta mb-3 tracking-wider uppercase">You'll need</p>
               <ul class="flex flex-wrap gap-2">
                 {#each stepIngredients as ing, i (i)}
-                  <li class="rounded-full bg-tint px-4 py-2 text-[17px] leading-snug font-semibold">
+                  <li class="rounded-ctl bg-tint px-4 py-2 text-[17px] leading-snug font-semibold">
                     {scaleIngredient(ing.raw, scale)}
                   </li>
                 {/each}
