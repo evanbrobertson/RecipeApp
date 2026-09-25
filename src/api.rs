@@ -55,7 +55,11 @@ pub fn routes() -> Router<AppState> {
             routing::get(recipe_cookbooks),
         )
         .route("/api/recipes/{id}/viewed", routing::post(recipe_viewed))
-        .route("/api/recipes/{id}/checks", routing::get(recipe_checks))
+        .route(
+            "/api/recipes/{id}/checks",
+            routing::get(recipe_checks).post(check_recipe),
+        )
+        .route("/api/recipes/{id}/export", routing::get(export_recipe))
         .route("/api/recipes/{id}/checks/undo", routing::post(undo_checks))
         .route(
             "/api/recipes/{id}/flags/{flag}/dismiss",
@@ -180,6 +184,93 @@ async fn export(State(state): State<AppState>) -> AppResult<Response> {
         HeaderValue::from_static("application/json; charset=utf-8"),
     );
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"crumb-{date}.json\"")) {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    Ok(res)
+}
+
+/// A file name from a recipe title: lowercase words joined by hyphens, at most 60
+/// characters. Letters outside ASCII are kept (for `filename*`); `ascii` drops them.
+fn file_slug(title: &str, ascii: bool) -> String {
+    let mut out = String::new();
+    for c in title.chars().flat_map(char::to_lowercase) {
+        let keep = if ascii {
+            c.is_ascii_alphanumeric()
+        } else {
+            c.is_alphanumeric()
+        };
+        if keep {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.chars().count() >= 60 {
+            break;
+        }
+    }
+    let out = out.trim_end_matches('-');
+    if out.is_empty() {
+        "recipe".into()
+    } else {
+        out.into()
+    }
+}
+
+/// `attachment` with an ASCII `filename` and, when the title has other letters, a UTF-8
+/// `filename*` (RFC 6266).
+fn attachment(title: &str, ext: &str) -> Option<HeaderValue> {
+    let ascii = file_slug(title, true);
+    let full = file_slug(title, false);
+    let mut value = format!("attachment; filename=\"{ascii}.{ext}\"");
+    if full != ascii {
+        let encoded: String = full
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b == b'-' {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        value.push_str(&format!("; filename*=UTF-8''{encoded}.{ext}"));
+    }
+    HeaderValue::from_str(&value).ok()
+}
+
+/// One recipe as a file: `?format=json` (the backup format, re-importable) or `md`.
+async fn export_recipe(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> AppResult<Response> {
+    let id = id_param(&id, "id")?;
+    let format = q.get("format").map(String::as_str).unwrap_or("json");
+    let (body, content_type, ext, title) = {
+        let conn = state.db.lock();
+        let recipe = recipes::require_recipe(&conn, id)?;
+        match format {
+            "json" => (
+                serde_json::to_string_pretty(&recipes::export_recipe(&conn, id)?)
+                    .map_err(AppError::internal)?,
+                "application/json; charset=utf-8",
+                "json",
+                recipe.title,
+            ),
+            "md" | "markdown" => (
+                crate::markdown::recipe_to_markdown(&recipe) + "\n",
+                "text/markdown; charset=utf-8",
+                "md",
+                recipe.title,
+            ),
+            _ => return Err(AppError::bad_request("format: expected json or md")),
+        }
+    };
+    let mut res = body.into_response();
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Some(v) = attachment(&title, ext) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(res)
@@ -584,6 +675,14 @@ async fn recipe_checks(
     let conn = state.db.lock();
     recipes::require_recipe(&conn, id)?;
     Ok(Json(checks::for_recipe(&conn, id)?))
+}
+
+/// "Check with Wee Chef" on the recipe page: re-checks it now; returns its check (pending).
+async fn check_recipe(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(checks::check_one(&state, id_param(&id, "id")?)?))
 }
 
 async fn undo_checks(

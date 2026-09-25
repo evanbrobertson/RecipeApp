@@ -1,12 +1,15 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
   import ChefHat from "@lucide/svelte/icons/chef-hat"
+  import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import Columns2 from "@lucide/svelte/icons/columns-2"
   import Clock from "@lucide/svelte/icons/clock"
   import Copy from "@lucide/svelte/icons/copy"
   import Dices from "@lucide/svelte/icons/dices"
   import ExternalLink from "@lucide/svelte/icons/external-link"
+  import FileBraces from "@lucide/svelte/icons/file-braces"
   import FileQuestion from "@lucide/svelte/icons/file-question"
+  import FileText from "@lucide/svelte/icons/file-text"
   import Flame from "@lucide/svelte/icons/flame"
   import Pencil from "@lucide/svelte/icons/pencil"
   import Plus from "@lucide/svelte/icons/plus"
@@ -28,6 +31,7 @@
   import { whenActive } from "../lib/active"
   import { api, errorMessage, pathId } from "../lib/api"
   import { bookPalette } from "../lib/books"
+  import { plural } from "../lib/checks"
   import { recipeToMarkdown } from "../lib/format"
   import { cookedLine, logView, markCooked } from "../lib/history"
   import { scaleIngredient } from "../lib/ingredients"
@@ -37,6 +41,7 @@
     hostOf,
     kicker,
     nutritionLabels,
+    type ConnectorInfo,
     type Cookbook,
     type CookStats,
     type Recipe,
@@ -53,6 +58,8 @@
     cookStats?: CookStats
     /** Wee Chef's check of an imported recipe; null when it was never checked. */
     checks?: RecipeChecks | null
+    /** Wee Chef's checks are set up: offers "Check with Wee Chef". */
+    weeChefChecks?: boolean
   }
 
   const id = pathId()
@@ -61,16 +68,31 @@
     cookbooks: await api<Cookbook[]>("/api/cookbooks"),
     inCookbooks: await api<number[]>(`/api/recipes/${id}/cookbooks`),
     checks: await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null),
+    weeChefChecks: await api<ConnectorInfo>("/api/connector")
+      .then((c) => !!c.weeChefChecks)
+      .catch(() => false),
   }))
   const recipe = $derived(page.data?.recipe)
 
-  // Just imported: Wee Chef's check runs in the background for a second or so. Pick up
-  // its result (and the tidied recipe) without a reload.
+  // Just imported (or asked for from the menu): Wee Chef's check runs in the background for
+  // a second or so. Pick up its result (and the tidied recipe) without a reload.
   let polls = 0
+  // "Check with Wee Chef" was chosen (when, and the fixes already there): say how it went
+  // when it's done. It may wait behind a "Check all", so keep looking for a while.
+  let asked = false
+  let askedAt = 0
+  let fixedBefore = new Set<number>()
+  const ASK_WAIT = 5 * 60_000
   $effect(() => {
     if (page.data?.checks?.status !== "pending") return
+    const delay = !asked ? 1500 : polls < 10 ? 3000 : 10_000
     const timer = setTimeout(async () => {
-      if (++polls > 20 || !page.data) return
+      if (!page.data) return
+      if (asked ? Date.now() - askedAt > ASK_WAIT : ++polls > 20) {
+        asked = false
+        return
+      }
+      if (asked) polls++
       const checks = await api<RecipeChecks | null>(`/api/recipes/${id}/checks`).catch(() => null)
       if (!checks || !page.data) return
       if (checks.status !== "pending" && checks.flags.some((f) => f.state === "fixed")) {
@@ -78,7 +100,23 @@
         if (fresh) page.data.recipe = fresh
       }
       page.data.checks = checks.status === "pending" ? { ...checks } : checks
-    }, 1500)
+      if (asked && checks.status !== "pending") {
+        asked = false
+        const review = checks.flags.filter((f) => f.state === "review").length
+        // This check's fixes only; the tidy counts each small thing it cleaned up
+        const fixed = checks.flags
+          .filter((f) => f.state === "fixed" && !fixedBefore.has(f.id))
+          .reduce((n, f) => n + (f.detail?.fix === "tidy" ? (f.detail.count ?? 1) : 1), 0)
+        const tidied = `Wee Chef tidied ${plural(fixed, "thing")}`
+        const look = `${plural(review, "line")} might need a look`
+        if (checks.status === "failed")
+          toast({ title: "Wee Chef couldn't check this recipe", tone: "error" })
+        else if (fixed && review) toast({ title: tidied, description: look })
+        else if (fixed) toast({ title: tidied })
+        else if (review) toast({ title: look })
+        else toast({ title: "Wee Chef found nothing to change" })
+      }
+    }, delay)
     return () => clearTimeout(timer)
   })
 
@@ -223,6 +261,21 @@
     void navigator.share?.({ title: recipe.title, text: recipeToMarkdown(recipe) }).catch(() => {})
   }
 
+  async function checkNow() {
+    const before = page.data?.checks?.flags ?? []
+    try {
+      const checks = await api<RecipeChecks>(`/api/recipes/${id}/checks`, { method: "POST" })
+      fixedBefore = new Set(before.filter((f) => f.state === "fixed").map((f) => f.id))
+      polls = 0
+      asked = true
+      askedAt = Date.now()
+      if (page.data) page.data.checks = checks
+      toast({ title: "Wee Chef is checking…" })
+    } catch (e) {
+      toast({ title: "Couldn't start the check", description: errorMessage(e), tone: "error" })
+    }
+  }
+
   let showDelete = $state(false)
   async function deleteRecipe() {
     try {
@@ -254,7 +307,7 @@
     }
   }
 
-  const menu: MenuItem[][] = [
+  const menu: MenuItem[][] = $derived([
     [
       { label: "Mark as cooked", icon: ChefHat, onselect: cookedNow },
       { label: "Edit", icon: Pencil, onselect: () => (location.href = `/recipes/${id}/edit`) },
@@ -263,8 +316,26 @@
       { label: "Print", icon: Printer, onselect: () => window.print() },
       { label: "Surprise me", icon: Dices, onselect: () => (location.href = randomHref(id)) },
     ],
+    [
+      ...(page.data?.weeChefChecks
+        ? [{ label: "Check with Wee Chef", icon: ClipboardCheck, onselect: checkNow }]
+        : []),
+      // Plain download links: the server names the file after the recipe
+      {
+        label: "Export as JSON",
+        icon: FileBraces,
+        href: `/api/recipes/${id}/export?format=json`,
+        download: true,
+      },
+      {
+        label: "Export as Markdown",
+        icon: FileText,
+        href: `/api/recipes/${id}/export?format=md`,
+        download: true,
+      },
+    ],
     [{ label: "Delete", icon: Trash2, danger: true, onselect: () => (showDelete = true) }],
-  ]
+  ])
 </script>
 
 {#if page.loading}

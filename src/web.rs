@@ -233,6 +233,8 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
             "inCookbooks": recipes::recipe_cookbook_ids(&conn, id)?,
             "cookStats": recipes::to_value(&recipes::cook_stats(&conn, id)?),
             "checks": crate::checks::for_recipe(&conn, id)?,
+            // "Check with Wee Chef" in the menu
+            "weeChefChecks": crate::checks::enabled(&state),
         }))
     })();
     let mut res = page(&state, "shell/recipe/index.html", data);

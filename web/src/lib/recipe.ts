@@ -103,7 +103,8 @@ export interface CheckFlag {
 
 /** Wee Chef's check of an imported recipe. */
 export interface RecipeChecks {
-  status: "pending" | "done" | "failed"
+  /** `skipped`: restored from a backup, not checked yet; `tidied`: only tidied on import. */
+  status: "pending" | "done" | "failed" | "skipped" | "tidied"
   /** The fixes can still be undone (the recipe wasn't edited since). */
   canUndo: boolean
   flags: CheckFlag[]
@@ -117,7 +118,14 @@ export interface ChecksStatus {
   pending: number
   failed: number
   tidied: number
+  /** Recipes with suggestions waiting. */
   toCheck: number
+  /** How many "Check all" would queue now, */
+  due: number
+  /** ...of which restored from a backup, */
+  restored: number
+  /** ...and edited since their last check. */
+  edited: number
   queued?: number
 }
 

@@ -231,9 +231,6 @@ pub fn heroes(lines: &[String], bucket: Bucket) -> (Vec<&'static str>, Option<&'
     (found, main_protein)
 }
 
-static ISO_DURATION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:\d+S)?)?$").unwrap()
-});
 static TEXT_DURATION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m)\b").unwrap()
 });
@@ -245,13 +242,8 @@ pub fn parse_minutes(s: &str) -> Option<u32> {
     if s.is_empty() {
         return None;
     }
-    let total = if let Some(c) = ISO_DURATION.captures(s) {
-        let n = |i: usize| {
-            c.get(i)
-                .and_then(|m| m.as_str().parse::<f64>().ok())
-                .unwrap_or(0.0)
-        };
-        n(1) * 1440.0 + n(2) * 60.0 + n(3)
+    let total = if let Some(m) = crate::scraper::iso_duration_minutes(s) {
+        m
     } else if let Ok(bare) = s.parse::<f64>() {
         bare
     } else {
@@ -895,6 +887,7 @@ mod tests {
     fn parses_durations() {
         for (s, m) in [
             ("PT1H30M", Some(90)),
+            ("P0Y0M0DT0H34M0.000S", Some(34)),
             ("1h 30m", Some(90)),
             ("45 mins", Some(45)),
             ("1 hour 15 minutes", Some(75)),

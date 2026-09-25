@@ -1,8 +1,10 @@
 //! Wee Chef's import checks.
 //!
 //! Two layers, both only for recipes that came from outside (a URL, pasted text, a file
-//! or a photo; never ones the cook or Claude wrote). Backup restores are saved as they
-//! were and marked `skipped`, so no check ever touches them.
+//! or a photo; never ones the cook or Claude wrote), unless the cook asks for one recipe
+//! ([`check_one`]). Backup restores are saved as they were and marked `skipped`: nothing
+//! runs on the way in, and a later check of one only suggests, apart from the
+//! deterministic clean-up below.
 //!
 //! 1. [`tidy`]: deterministic clean-up before the recipe is saved. No AI, always on.
 //!    Anything it drops (a step repeating the one before, or a photo credit or ad line
@@ -13,9 +15,12 @@
 //!    edited, confident, structural answers are applied in code ([`plan`]: headings become
 //!    section names, split steps are joined, tips move to the notes, junk goes), with the
 //!    original kept for Undo. Anything less certain becomes a "review" flag the editor
-//!    shows. "Check all recipes" ([`check_all`]) only ever suggests: on recipes already in
-//!    the box it turns every fix into a review flag and applies nothing but the checkbox
-//!    and web-code clean-up, under the same Undo. Undo is offered only while the recipe
+//!    shows. "Check all recipes" ([`check_all`]) and "Check with Wee Chef" on one recipe
+//!    only suggest: on recipes already in the box (restored, edited, or checked before)
+//!    every Jev fix becomes a review flag, and only the deterministic clean-up of
+//!    [`TidyScope::Saved`] is applied (checkbox glyphs, web codes, float quantities as
+//!    fractions, raw ISO times), under the same Undo. Once the cook has undone a Wee
+//!    Chef fix on a recipe, no check tidies it again. Undo is offered only while the recipe
 //!    still holds exactly what the fix wrote (compared by a content hash); once the cook
 //!    changes it, the fix is superseded and no longer claimed. Off without
 //!    `TYPESAFE_API_KEY`.
@@ -58,7 +63,8 @@ pub const CHECKED_SOURCES: [&str; 4] = ["url", "text", "import", "photo"];
 pub enum Mode {
     /// Just imported: confident fixes are applied (if nobody edited it meanwhile).
     Import,
-    /// Queued by "Check all" for a recipe already in the box: suggestions only.
+    /// Queued by "Check all" or "Check with Wee Chef" for a recipe already in the box
+    /// (restored, edited or checked before): suggestions only.
     Review,
 }
 
@@ -194,19 +200,16 @@ pub fn decode_entities(s: &str) -> String {
     out
 }
 
-/// A time as written ("1h 10m", "40 mins", "1 hour 30 minutes", "PT1H10M") in minutes.
-/// None for anything else ("Overnight", "Chill 1h").
+/// A time as written ("1h 10m", "40 mins", "1 hour 30 minutes", "PT1H10M",
+/// "P0Y0M0DT0H10M0.000S") in minutes. None for anything else ("Overnight", "Chill 1h")
+/// and for an ISO duration under a minute.
 pub fn parse_minutes(s: &str) -> Option<i64> {
-    static ISO: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)^PT(?:(\d+)H)?(?:(\d+)M)?(?:\d+S)?$").unwrap());
     static PART: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)\b").unwrap()
     });
     let s = s.trim();
-    if let Some(c) = ISO.captures(s) {
-        let n = |i| c.get(i).and_then(|m| m.as_str().parse::<i64>().ok());
-        let (h, m) = (n(1), n(2));
-        return (h.is_some() || m.is_some()).then(|| h.unwrap_or(0) * 60 + m.unwrap_or(0));
+    if let Some(minutes) = crate::scraper::iso_duration_minutes(s) {
+        return (minutes >= 1.0).then(|| minutes.round() as i64);
     }
     let mut total = 0.0;
     let mut found = false;
@@ -262,7 +265,8 @@ pub enum TidyScope {
     /// Other outside text (pasted, a file, a photo): checkbox glyphs, HTML entities, a
     /// step repeating the one before, and a missing total time.
     Import,
-    /// A recipe already in the box: only checkbox glyphs and HTML entities.
+    /// A recipe already in the box: checkbox glyphs, HTML entities, decimal quantities
+    /// that are plainly fractions, and raw ISO times; nothing is dropped or filled in.
     Saved,
 }
 
@@ -296,8 +300,9 @@ fn looks_like_credit(step: &str) -> bool {
     CREDIT.is_match(step)
 }
 
-/// Cleans up an imported recipe in place, before it's saved: strips checkbox glyphs and
-/// decodes leftover HTML entities; with [`TidyScope::Import`] or [`TidyScope::Scrape`] it
+/// Cleans up a recipe in place: strips checkbox glyphs, decodes leftover HTML entities,
+/// turns float quantities into fractions ([`crate::fractions`]) and raw ISO times of a
+/// minute or more into readable ones (every scope); with [`TidyScope::Import`] or [`TidyScope::Scrape`] it
 /// also drops a step repeating the one before and fills in a missing total time from the
 /// prep and cook times, and with [`TidyScope::Scrape`] a short photo credit or ad line
 /// that turns up three or more times is kept only the first time.
@@ -344,6 +349,28 @@ pub fn tidy(fields: &mut RecipeFields, scope: TidyScope) -> Tidied {
             text(item, true);
         }
     }
+    // Raw ISO durations some sites publish ("P0Y0M0DT0H10M0.000S") read as "10m". Only
+    // what parses as one, so anything the cook typed is left alone, and only a minute or
+    // more: "PT30S" or "P0D" would read as no time at all, and a time is never cleared.
+    for v in [
+        &mut fields.prep_time,
+        &mut fields.cook_time,
+        &mut fields.total_time,
+        &mut fields.freeze_time,
+    ] {
+        if let Some(t) = v.as_deref()
+            && t.trim_start().starts_with(['P', 'p'])
+            && crate::scraper::iso_duration_minutes(t).is_some_and(|m| m >= 1.0)
+        {
+            let next = crate::scraper::format_duration(Some(t));
+            if next.as_deref() != Some(t) {
+                *v = next;
+                changes += 1;
+            }
+        }
+    }
+    // Decimal quantities from a unit conversion ("0.33333334 cup") read as fractions
+    changes += crate::fractions::fractionize_sections(&mut fields.ingredients);
     let mut out = Tidied {
         changes,
         dropped: Vec::new(),
@@ -420,31 +447,61 @@ fn original_of(
     ingredients: &[Section],
     instructions: &[Section],
     notes: &Option<String>,
-    total_time: &Option<String>,
+    [prep, cook, total, freeze]: [&Option<String>; 4],
 ) -> Value {
     json!({
         "ingredients": ingredients,
         "instructions": instructions,
         "notes": notes,
-        "totalTime": total_time,
+        "prepTime": prep,
+        "cookTime": cook,
+        "totalTime": total,
+        "freezeTime": freeze,
     })
 }
 
-/// FNV-1a over the parts of a recipe a fix writes. Stored with a fix so Undo can tell
-/// whether the recipe still holds exactly what the fix wrote. Stable across builds.
-pub fn content_hash(r: &Recipe) -> String {
-    let text = to_text(&original_of(
-        &r.ingredients,
-        &r.instructions,
-        &r.notes,
-        &r.total_time,
-    ));
+/// The four times, in [`original_of`]'s order.
+fn times_of(r: &Recipe) -> [&Option<String>; 4] {
+    [&r.prep_time, &r.cook_time, &r.total_time, &r.freeze_time]
+}
+
+fn fnv1a(text: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.bytes() {
         h ^= u64::from(b);
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")
+}
+
+/// FNV-1a over the parts of a recipe a fix writes. Stored with a fix so Undo can tell
+/// whether the recipe still holds exactly what the fix wrote. Stable across builds.
+/// `2:` marks the version that covers every time; see [`hash_holds`].
+pub fn content_hash(r: &Recipe) -> String {
+    let text = to_text(&original_of(
+        &r.ingredients,
+        &r.instructions,
+        &r.notes,
+        times_of(r),
+    ));
+    format!("2:{}", fnv1a(&text))
+}
+
+/// Whether a stored [`content_hash`] matches the recipe. Hashes from before the `2:`
+/// version covered the lists, the notes and the total time only.
+fn hash_holds(stored: &str, r: &Recipe) -> bool {
+    match stored.strip_prefix("2:") {
+        Some(_) => stored == content_hash(r),
+        None => {
+            let legacy = json!({
+                "ingredients": r.ingredients,
+                "instructions": r.instructions,
+                "notes": r.notes,
+                "totalTime": r.total_time,
+            });
+            stored == fnv1a(&to_text(&legacy))
+        }
+    }
 }
 
 /// What an import's [`tidy`] dropped, and the lists as they came in, for Undo.
@@ -460,7 +517,12 @@ pub fn tidy_import(fields: &mut RecipeFields, source: &str) -> Option<TidyUndo> 
         &fields.ingredients,
         &fields.instructions,
         &fields.notes,
-        &fields.total_time,
+        [
+            &fields.prep_time,
+            &fields.cook_time,
+            &fields.total_time,
+            &fields.freeze_time,
+        ],
     );
     let t = tidy(fields, TidyScope::for_source(source));
     (!t.dropped.is_empty()).then_some(TidyUndo {
@@ -499,7 +561,8 @@ pub fn remember_tidy(conn: &Connection, recipe: &Recipe, undo: TidyUndo) -> AppR
     Ok(())
 }
 
-/// A backup restore: saved as it was, and never checked or tidied by "Check all".
+/// A backup restore: saved as it was, not checked on the way in. "Check all" (or the
+/// cook) checks it later, and then only suggests.
 pub fn mark_restored(conn: &Connection, id: i64) -> AppResult<()> {
     conn.execute(
         "INSERT INTO recipe_checks (recipe_id, status, queued_at) VALUES (?1, 'skipped', ?2)
@@ -1021,7 +1084,8 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
         }
         if let Err(err) = conn.execute(
             "INSERT INTO recipe_checks (recipe_id, status, queued_at, mode) VALUES (?1, 'pending', ?2, ?3)
-             ON CONFLICT(recipe_id) DO UPDATE SET status = 'pending', queued_at = ?2, mode = ?3, error = NULL",
+             ON CONFLICT(recipe_id) DO UPDATE SET status = 'pending', queued_at = ?2, mode = ?3,
+               error = NULL, seen_at = NULL",
             params![id, now, mode.as_str()],
         ) {
             tracing::warn!("[checks] couldn't queue recipe {id}: {err}");
@@ -1095,8 +1159,10 @@ async fn run(state: &AppState, id: i64) {
             tracing::warn!("[checks] recipe {id} failed: {err}");
             let conn = state.db.lock();
             conn.execute(
-                "UPDATE recipe_checks SET status = 'failed', error = ?2, checked_at = ?3 WHERE recipe_id = ?1",
-                params![id, err, now_secs()],
+                "UPDATE recipe_checks SET status = 'failed', error = ?2, checked_at = ?3,
+                   seen_at = CASE WHEN seen_at = 0 THEN 0 ELSE ?4 END
+                 WHERE recipe_id = ?1",
+                params![id, err, now_secs(), snapshot.updated_at],
             )
             .map(|_| ())
             .map_err(AppError::from)
@@ -1130,8 +1196,10 @@ fn insert_flag(conn: &Connection, id: i64, f: &Flag, state: &str, now: i64) -> A
 
 /// Stores a finished check and records every flag. The confident fixes are applied
 /// only to a fresh import ([`Mode::Import`]) that nobody has edited, before or during
-/// the check; on anything else they become review flags, and only the checkbox and
-/// web-code clean-up is applied (undoable). Returns (fixed, to review).
+/// the check; on anything else they become review flags, and only the deterministic
+/// clean-up of [`TidyScope::Saved`] is applied (undoable): glyphs, entities, float
+/// quantities as fractions and raw ISO times. No clean-up at all once the cook has undone
+/// a fix on the recipe. Returns (fixed, to review).
 fn apply(
     conn: &Connection,
     snapshot: &Recipe,
@@ -1143,14 +1211,31 @@ fn apply(
     let Some(current) = crate::recipes::get_recipe(&tx, id)? else {
         return Ok((0, 0)); // deleted meanwhile
     };
-    let unchanged = current.updated_at == snapshot.updated_at
-        && current.ingredients == snapshot.ingredients
+    // Edited while the check ran (see [`note_edit`]), even within the same second
+    let edited_meanwhile = tx
+        .query_row(
+            "SELECT seen_at FROM recipe_checks WHERE recipe_id = ?1",
+            [id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten()
+        == Some(0);
+    // Only what a fix writes counts: a new photo or title meanwhile doesn't stop it
+    let unchanged = current.ingredients == snapshot.ingredients
         && current.instructions == snapshot.instructions
         && current.notes == snapshot.notes
-        && current.total_time == snapshot.total_time;
+        && times_of(&current) == times_of(snapshot);
     // Fresh: queued by its import and never edited since (restores and older recipes
     // come through "Check all", edits bump updated_at past created_at)
     let fresh = mode == Mode::Import && snapshot.updated_at <= snapshot.created_at;
+    // The cook undid a fix (this deploy's tidy or any earlier one: Undo has always marked
+    // every fix it put back `undone`), so the recipe is theirs as it is: not tidied again
+    let undone: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM recipe_flags WHERE recipe_id = ?1 AND state = 'undone')",
+        [id],
+        |r| r.get(0),
+    )?;
     let now = now_secs();
 
     // "Keep as is" is remembered for the same line and kind
@@ -1170,11 +1255,11 @@ fn apply(
     let judgments: Vec<Judgment> = judge(&reply.answers, snapshot)
         .into_iter()
         .filter(|j| {
-            !dismissed.contains(&(
-                j.item.field.as_str().to_string(),
-                j.item.text.clone(),
-                j.label.clone(),
-            ))
+            // Flags are stored with the line as tidied, so match either form
+            let field = j.item.field.as_str().to_string();
+            ![j.item.text.clone(), clean_line(&j.item.text)]
+                .into_iter()
+                .any(|text| dismissed.contains(&(field.clone(), text, j.label.clone())))
         })
         .collect();
     let mut plan = plan(snapshot, &judgments);
@@ -1195,11 +1280,14 @@ fn apply(
         [id],
     )?;
     // The deterministic clean-up once more, as one more fix under the same Undo: the
-    // import's full tidy on a fresh import (a join can repeat a step), and only glyphs
-    // and entities on anything else. Times are decoded first so only what's written
-    // back (the lists, notes and total time) is counted.
+    // import's full tidy on a fresh import (a join can repeat a step), and on anything
+    // else only glyphs, entities, float quantities and raw ISO times. Skipped once the
+    // cook has undone a fix. The other times are decoded first so only what's written
+    // back (the lists, notes, total time and any ISO time turned readable) is counted.
     let mut total_time = snapshot.total_time.clone();
-    if unchanged {
+    // Prep, cook and extra time, when the tidy made an ISO one readable
+    let mut other_times: [Option<Option<String>>; 3] = Default::default();
+    if unchanged && !undone {
         let scope = if fresh {
             TidyScope::for_source(&snapshot.source)
         } else {
@@ -1222,6 +1310,15 @@ fn apply(
         let written = f.total_time != snapshot.total_time;
         if written {
             total_time = f.total_time;
+        }
+        for (slot, (next, was)) in other_times.iter_mut().zip([
+            (f.prep_time, &snapshot.prep_time),
+            (f.cook_time, &snapshot.cook_time),
+            (f.freeze_time, &snapshot.freeze_time),
+        ]) {
+            if next != decoded(was) {
+                *slot = Some(next);
+            }
         }
         let count = tidied.changes;
         if count > 0 {
@@ -1247,8 +1344,8 @@ fn apply(
         )
         .optional()?;
     let (earlier_original, earlier_hash) = earlier.unwrap_or_default();
-    let earlier_holds = earlier_original.is_some()
-        && earlier_hash.as_deref() == Some(content_hash(&current).as_str());
+    let earlier_holds =
+        earlier_original.is_some() && earlier_hash.is_some_and(|h| hash_holds(&h, &current));
     if !earlier_holds {
         tx.execute(
             "UPDATE recipe_flags SET state = 'superseded', resolved_at = ?2
@@ -1268,14 +1365,24 @@ fn apply(
     let final_recipe = if plan.fixed.is_empty() {
         current
     } else {
+        let before = original_of(
+            &snapshot.ingredients,
+            &snapshot.instructions,
+            &snapshot.notes,
+            times_of(snapshot),
+        );
         original = Some(match earlier_original.filter(|_| earlier_holds) {
-            Some(o) => o,
-            None => to_text(&original_of(
-                &snapshot.ingredients,
-                &snapshot.instructions,
-                &snapshot.notes,
-                &snapshot.total_time,
-            )),
+            // An older original may lack some times: they're as the snapshot has them
+            Some(o) => match serde_json::from_str::<Value>(&o) {
+                Ok(Value::Object(mut m)) => {
+                    for (k, v) in before.as_object().into_iter().flatten() {
+                        m.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                    to_text(&m)
+                }
+                _ => o,
+            },
+            None => to_text(&before),
         });
         let notes_changed = plan.notes != snapshot.notes;
         let patch = RecipePatch {
@@ -1283,6 +1390,9 @@ fn apply(
             instructions: Some(std::mem::take(&mut plan.instructions)),
             notes: notes_changed.then(|| plan.notes.take()),
             total_time: (total_time != snapshot.total_time).then_some(total_time),
+            prep_time: other_times[0].take(),
+            cook_time: other_times[1].take(),
+            freeze_time: other_times[2].take(),
             ..Default::default()
         };
         let updated = crate::recipes::update_recipe(&tx, id, patch)?;
@@ -1298,11 +1408,18 @@ fn apply(
     }
     // A flag on a line the fixes (or the tidy) took out is already done with
     resolve_missing(&tx, &final_recipe)?;
+    // The recipe as this check leaves it; 0 when the cook edited it meanwhile, so that
+    // edit is checked next time
+    let seen_at = if unchanged && !edited_meanwhile {
+        final_recipe.updated_at
+    } else {
+        0
+    };
     tx.execute(
         "UPDATE recipe_checks SET status = 'done', model = ?2, answers = ?3,
            original = coalesce(?4, original), fixed_at = coalesce(?5, fixed_at),
            fixed_hash = coalesce(?6, fixed_hash),
-           input_tokens = ?7, error = NULL, checked_at = ?8
+           input_tokens = ?7, error = NULL, checked_at = ?8, seen_at = ?9
          WHERE recipe_id = ?1",
         params![
             id,
@@ -1312,7 +1429,8 @@ fn apply(
             fixed_at,
             fixed_hash,
             reply.input_tokens,
-            now
+            now,
+            seen_at
         ],
     )?;
     let review: usize = tx.query_row(
@@ -1353,12 +1471,37 @@ pub fn resolve_missing(conn: &Connection, recipe: &Recipe) -> AppResult<()> {
     Ok(())
 }
 
-/// A recipe edited while its import check waits is no longer a fresh import: the check
-/// only suggests. (Timestamps alone miss an edit in the same second as the import.)
-pub fn note_edit(conn: &Connection, id: i64) -> AppResult<()> {
+/// Called on every recipe update, with the recipe before and after it. Only an update
+/// that changes what a check reads and fixes (ingredients, steps, notes, times) counts as
+/// an edit: a recipe edited while its import check waits is no longer a fresh import (the
+/// check only suggests), and whatever a check saw is out of date (`seen_at = 0`), so
+/// "Check all" checks it again; a check or Undo that writes the recipe sets `seen_at`
+/// again afterwards. (Timestamps alone miss an edit in the same second as the import or
+/// the check.) Any other update (a photo, the title, a refresh that brings the same
+/// lists) keeps a current check current, so it doesn't cost another check.
+pub fn note_edit(conn: &Connection, before: &Recipe, after: &Recipe) -> AppResult<()> {
+    let id = after.id;
+    let edited = before.ingredients != after.ingredients
+        || before.instructions != after.instructions
+        || before.notes != after.notes
+        || times_of(before) != times_of(after);
+    if !edited {
+        // Current before (as [`EDITED_SINCE`] reads it): still current now
+        conn.execute(
+            "UPDATE recipe_checks SET seen_at = ?2
+             WHERE recipe_id = ?1 AND seen_at IS NOT 0
+               AND ?3 <= coalesce(seen_at, max(coalesce(checked_at, 0), coalesce(fixed_at, 0)))",
+            params![id, after.updated_at, before.updated_at],
+        )?;
+        return Ok(());
+    }
     conn.execute(
         "UPDATE recipe_checks SET mode = 'review'
          WHERE recipe_id = ?1 AND status = 'pending' AND mode = 'import'",
+        [id],
+    )?;
+    conn.execute(
+        "UPDATE recipe_checks SET seen_at = 0 WHERE recipe_id = ?1",
         [id],
     )?;
     Ok(())
@@ -1375,7 +1518,7 @@ fn fix_holds(conn: &Connection, recipe: &Recipe) -> AppResult<bool> {
         )
         .optional()?;
     Ok(match row {
-        Some((Some(_), Some(hash))) => hash == content_hash(recipe),
+        Some((Some(_), Some(hash))) => hash_holds(&hash, recipe),
         _ => false,
     })
 }
@@ -1443,28 +1586,33 @@ pub fn undo(conn: &Connection, id: i64) -> AppResult<Value> {
     }
     let original: Value = serde_json::from_str(&original).map_err(AppError::internal)?;
     let sections = |key: &str| crate::model::normalize_sections_value(&original[key]);
+    // Older originals have no prep, cook or extra time: those are left as they are
+    let time = |key: &str| original.get(key).map(|t| t.as_str().map(String::from));
     let tx = conn.unchecked_transaction()?;
     let now = now_secs();
     tx.execute(
         "UPDATE recipe_flags SET state = 'undone', resolved_at = ?2 WHERE recipe_id = ?1 AND state = 'fixed'",
         params![id, now],
     )?;
-    crate::recipes::update_recipe(
+    let restored = crate::recipes::update_recipe(
         &tx,
         id,
         RecipePatch {
             ingredients: Some(sections("ingredients")),
             instructions: Some(sections("instructions")),
             notes: Some(original["notes"].as_str().map(String::from)),
-            total_time: original
-                .get("totalTime")
-                .map(|t| t.as_str().map(String::from)),
+            total_time: time("totalTime"),
+            prep_time: time("prepTime"),
+            cook_time: time("cookTime"),
+            freeze_time: time("freezeTime"),
             ..Default::default()
         },
     )?;
+    // Undo isn't an edit of the cook's: "Check all" doesn't pick the recipe up again for it
     tx.execute(
-        "UPDATE recipe_checks SET original = NULL, fixed_at = NULL, fixed_hash = NULL WHERE recipe_id = ?1",
-        [id],
+        "UPDATE recipe_checks SET original = NULL, fixed_at = NULL, fixed_hash = NULL, seen_at = ?2
+         WHERE recipe_id = ?1",
+        params![id, restored.updated_at],
     )?;
     tx.commit()?;
     for_recipe(conn, id)
@@ -1485,7 +1633,6 @@ pub fn dismiss(conn: &Connection, id: i64, flag: i64) -> AppResult<Value> {
     for_recipe(conn, id)
 }
 
-/// Progress for the More page: `{enabled, eligible, checked, pending, failed, tidied, toCheck}`.
 /// How many recipes have suggestions waiting: decides whether the nav shows Suggestions.
 pub fn review_count(conn: &Connection) -> AppResult<i64> {
     Ok(conn.query_row(
@@ -1533,49 +1680,94 @@ pub fn to_review(conn: &Connection) -> AppResult<Vec<Value>> {
     Ok(out.into_iter().map(|(_, v)| v).collect())
 }
 
+/// A recipe the cook (or Claude) changed after its last check finished. `seen_at` is the
+/// recipe's `updated_at` as the check (or an Undo) left it, and 0 once it's edited after
+/// ([`note_edit`]); rows from before the column fall back to when the check finished or
+/// its fix was written.
+const EDITED_SINCE: &str =
+    "r.updated_at > coalesce(c.seen_at, max(coalesce(c.checked_at, 0), coalesce(c.fixed_at, 0)))";
+
+/// Why "Check all" would queue a recipe now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Due {
+    /// Never checked (or only tidied on import), failed with tries left, or stuck waiting.
+    Unchecked,
+    /// Restored from a backup and never checked since.
+    Restored,
+    /// Edited after its last check.
+    Edited,
+}
+
+/// The recipes "Check all" queues, and why (see [`check_all`]).
+fn due(conn: &Connection) -> AppResult<Vec<(i64, Due)>> {
+    let marks = CHECKED_SOURCES.map(|s| format!("'{s}'")).join(", ");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT r.id, CASE
+           WHEN c.status = 'skipped' THEN 1
+           WHEN c.status IN ('done', 'failed') AND {EDITED_SINCE} THEN 2
+           ELSE 0 END
+         FROM recipes r LEFT JOIN recipe_checks c ON c.recipe_id = r.id
+         WHERE r.source IN ({marks}) AND (c.recipe_id IS NULL
+           OR c.status IN ('tidied', 'skipped')
+           OR (c.status = 'failed' AND c.attempts < ?1)
+           OR (c.status = 'pending' AND c.queued_at < ?2)
+           OR (c.status IN ('done', 'failed') AND {EDITED_SINCE}))
+         ORDER BY r.id"
+    ))?;
+    let rows = stmt
+        .query_map(params![MAX_ATTEMPTS, now_secs() - 600], |r| {
+            Ok((
+                r.get(0)?,
+                match r.get::<_, i64>(1)? {
+                    1 => Due::Restored,
+                    2 => Due::Edited,
+                    _ => Due::Unchecked,
+                },
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+fn to_check_all(conn: &Connection) -> AppResult<Vec<i64>> {
+    Ok(due(conn)?.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Progress for the More page: `{enabled, eligible, checked, pending, failed, tidied,
+/// toCheck, due, restored, edited}`. `eligible` is every recipe from outside; `checked`
+/// the ones whose last check is done and still current; `due` how many "Check all" would
+/// queue now, `restored` and `edited` of which are backup restores and recipes edited
+/// since their check. `toCheck` is how many recipes have suggestions waiting.
 pub fn status(state: &AppState, conn: &Connection) -> AppResult<Value> {
     let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0));
     let marks = CHECKED_SOURCES.map(|s| format!("'{s}'")).join(", ");
+    let due = due(conn)?;
+    let of = |why: Due| due.iter().filter(|d| d.1 == why).count();
     Ok(json!({
         "enabled": enabled(state),
-        "eligible": count(&format!(
-            "SELECT count(*) FROM recipes r LEFT JOIN recipe_checks c ON c.recipe_id = r.id
-             WHERE r.source IN ({marks}) AND (c.status IS NULL OR c.status != 'skipped')"
+        "eligible": count(&format!("SELECT count(*) FROM recipes r WHERE r.source IN ({marks})"))?,
+        "checked": count(&format!(
+            "SELECT count(*) FROM recipes r JOIN recipe_checks c ON c.recipe_id = r.id
+             WHERE r.source IN ({marks}) AND c.status = 'done' AND NOT ({EDITED_SINCE})"
         ))?,
-        "checked": count("SELECT count(*) FROM recipe_checks WHERE status = 'done'")?,
         "pending": count("SELECT count(*) FROM recipe_checks WHERE status = 'pending'")?,
         "failed": count("SELECT count(*) FROM recipe_checks WHERE status = 'failed'")?,
         "tidied": count("SELECT count(*) FROM recipe_flags WHERE state = 'fixed'")?,
         "toCheck": count("SELECT count(DISTINCT recipe_id) FROM recipe_flags WHERE state = 'review'")?,
+        "due": due.len(),
+        "restored": of(Due::Restored),
+        "edited": of(Due::Edited),
     }))
 }
 
-/// The recipes "Check all" queues (see [`check_all`]).
-fn to_check_all(conn: &Connection) -> AppResult<Vec<i64>> {
-    let marks = CHECKED_SOURCES.map(|s| format!("'{s}'")).join(", ");
-    let mut stmt = conn.prepare(&format!(
-        "SELECT r.id FROM recipes r LEFT JOIN recipe_checks c ON c.recipe_id = r.id
-         WHERE r.source IN ({marks}) AND (c.recipe_id IS NULL OR c.status = 'tidied'
-           OR (c.status = 'failed' AND c.attempts < ?1)
-           OR (c.status = 'pending' AND c.queued_at < ?2))
-         ORDER BY r.id"
-    ))?;
-    let ids = stmt
-        .query_map(params![MAX_ATTEMPTS, now_secs() - 600], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(ids)
-}
-
-/// "Check all recipes": queues imported recipes that were never checked (including ones
-/// only tidied on import while the checks were off), failed ones with tries left, and
-/// ones stuck waiting from before a restart. Never backup restores (`skipped`). All in
-/// [`Mode::Review`]: they're already in the box, so Wee Chef only suggests.
+/// "Check all recipes": queues recipes from outside that were never checked (including
+/// ones only tidied on import while the checks were off), backup restores, ones edited
+/// since their last check, failed ones with tries left, and ones stuck waiting from
+/// before a restart. All in [`Mode::Review`]: they're already in the box, so Wee Chef
+/// only suggests (and "Keep as is" answers stay kept).
 pub fn check_all(state: &AppState) -> AppResult<Value> {
     if !enabled(state) {
-        return Err(AppError::new(
-            409,
-            "Wee Chef checks aren't set up on this server",
-        ));
+        return Err(not_set_up());
     }
     let conn = state.db.lock();
     let ids = to_check_all(&conn)?;
@@ -1583,6 +1775,46 @@ pub fn check_all(state: &AppState) -> AppResult<Value> {
     let mut out = status(state, &conn)?;
     out["queued"] = json!(ids.len());
     Ok(out)
+}
+
+fn not_set_up() -> AppError {
+    AppError::new(409, "Wee Chef checks aren't set up on this server")
+}
+
+/// "Check with Wee Chef" on one recipe: checks it again now, whatever came before, and
+/// returns its check (pending) for the recipe page. Only suggests ([`Mode::Review`]),
+/// unless it's a fresh, unedited import from outside whose own check never ran (a
+/// `tidied` row, or a `pending` one its import queued), which may be fixed as its import
+/// check would have. A recipe with no check row at all (saved before Wee Chef, or an old
+/// restore) is already in the box: suggestions only, as "Check all" would. Already
+/// waiting or running: left be.
+pub fn check_one(state: &AppState, id: i64) -> AppResult<Value> {
+    if !enabled(state) {
+        return Err(not_set_up());
+    }
+    let conn = state.db.lock();
+    let recipe = crate::recipes::require_recipe(&conn, id)?;
+    let row: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT status, mode FROM recipe_checks WHERE recipe_id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let never_ran = row.as_ref().is_some_and(|(status, mode)| {
+        status == "tidied" || (status == "pending" && mode.as_deref() == Some("import"))
+    });
+    let fresh = never_ran
+        && CHECKED_SOURCES.contains(&recipe.source.as_str())
+        && recipe.updated_at <= recipe.created_at;
+    let mode = if fresh { Mode::Import } else { Mode::Review };
+    // Asked for by the cook: a failure is retried by "Check all" again
+    conn.execute(
+        "UPDATE recipe_checks SET attempts = 0 WHERE recipe_id = ?1",
+        [id],
+    )?;
+    queue(state, &conn, &[id], mode);
+    for_recipe(&conn, id)
 }
 
 #[cfg(test)]
@@ -1768,6 +2000,208 @@ mod tests {
         kept.total_time = Some("1h".into());
         tidy(&mut kept, TidyScope::Import);
         assert_eq!(kept.total_time.as_deref(), Some("1h"));
+    }
+
+    #[test]
+    fn saved_tidy_turns_decimal_quantities_into_fractions() {
+        let mut f = RecipeFields {
+            ingredients: vec![section(None, &["0.33333334 cup sugar", "2 eggs"])],
+            ..Default::default()
+        };
+        let t = tidy(&mut f, TidyScope::Saved);
+        assert_eq!(
+            f.ingredients,
+            vec![section(None, &["⅓ cup sugar", "2 eggs"])]
+        );
+        assert_eq!(t.changes, 1);
+    }
+
+    #[test]
+    fn tidy_makes_raw_iso_times_readable_and_leaves_typed_ones() {
+        let mut f = RecipeFields {
+            prep_time: Some("P0Y0M0DT0H10M0.000S".into()),
+            cook_time: Some("PT1H30M".into()),
+            total_time: Some("Plenty".into()),
+            freeze_time: Some("Overnight".into()),
+            ..Default::default()
+        };
+        let t = tidy(&mut f, TidyScope::Saved);
+        assert_eq!(f.prep_time.as_deref(), Some("10m"));
+        assert_eq!(f.cook_time.as_deref(), Some("1h 30m"));
+        assert_eq!(f.total_time.as_deref(), Some("Plenty"));
+        assert_eq!(f.freeze_time.as_deref(), Some("Overnight"));
+        assert_eq!(t.changes, 2);
+        assert_eq!(parse_minutes("P0Y0M0DT0H10M0.000S"), Some(10));
+        assert_eq!(parse_minutes("PT20S"), None);
+
+        // Under a minute would read as no time: kept as written, never cleared
+        let mut short = RecipeFields {
+            prep_time: Some("PT30S".into()),
+            cook_time: Some("P0D".into()),
+            ..Default::default()
+        };
+        for scope in [TidyScope::Saved, TidyScope::Import, TidyScope::Scrape] {
+            assert_eq!(tidy(&mut short, scope).changes, 0);
+            assert_eq!(short.prep_time.as_deref(), Some("PT30S"));
+            assert_eq!(short.cook_time.as_deref(), Some("P0D"));
+        }
+    }
+
+    #[test]
+    fn a_check_repairs_stored_iso_times_under_undo() {
+        let db = crate::db::open_in_memory().unwrap();
+        let conn = db.lock();
+        let fields = RecipeFields {
+            title: "Dip".into(),
+            prep_time: Some("P0Y0M0DT0H10M0.000S".into()),
+            cook_time: Some("P0Y0M0DT0H20M0.000S".into()),
+            ingredients: vec![section(None, &["1 cup yogurt"])],
+            instructions: vec![section(None, &["Stir."])],
+            ..Default::default()
+        };
+        let (r, _) = crate::recipes::create_recipe(&conn, fields, "url").unwrap();
+        queued(&conn, r.id, Mode::Review);
+        assert_eq!(
+            apply(&conn, &r, reply(&r, &[]), Mode::Review).unwrap(),
+            (1, 0)
+        );
+        let now = crate::recipes::require_recipe(&conn, r.id).unwrap();
+        assert_eq!(now.prep_time.as_deref(), Some("10m"));
+        assert_eq!(now.cook_time.as_deref(), Some("20m"));
+        // Review mode on a saved recipe doesn't make up a total time
+        assert_eq!(now.total_time, None);
+        let c = for_recipe(&conn, r.id).unwrap();
+        assert_eq!(c["flags"][0]["detail"]["count"], 2);
+        assert_eq!(c["canUndo"], true);
+        undo(&conn, r.id).unwrap();
+        let back = crate::recipes::require_recipe(&conn, r.id).unwrap();
+        assert_eq!(back.prep_time, r.prep_time);
+        assert_eq!(back.cook_time, r.cook_time);
+
+        // Undone: the next check leaves the times as the cook put them back
+        queued(&conn, r.id, Mode::Review);
+        assert_eq!(
+            apply(&conn, &back, reply(&back, &[]), Mode::Review).unwrap(),
+            (0, 0)
+        );
+        let after = crate::recipes::require_recipe(&conn, r.id).unwrap();
+        assert_eq!(after.prep_time, r.prep_time);
+        assert_eq!(after.cook_time, r.cook_time);
+    }
+
+    #[test]
+    fn a_recipe_undone_before_this_deploy_is_not_tidied_again() {
+        let db = crate::db::open_in_memory().unwrap();
+        let conn = db.lock();
+        let fields = RecipeFields {
+            title: "Cake".into(),
+            prep_time: Some("PT15M".into()),
+            ingredients: vec![section(None, &["0.33333334 cup sugar", "▢ 2 eggs"])],
+            instructions: vec![section(None, &["Bake."])],
+            ..Default::default()
+        };
+        let (r, _) = crate::recipes::create_recipe(&conn, fields, "url").unwrap();
+        // As an earlier build's Undo left it: the check done, its fixes marked undone
+        conn.execute(
+            "INSERT INTO recipe_checks (recipe_id, status, queued_at, checked_at, seen_at)
+             VALUES (?1, 'done', 0, ?2, ?2)",
+            params![r.id, r.updated_at],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recipe_flags (recipe_id, field, item_text, kind, state, detail, created_at)
+             VALUES (?1, 'instructions', 'Bake.', 'repeat', 'undone', '{}', 0)",
+            [r.id],
+        )
+        .unwrap();
+        queued(&conn, r.id, Mode::Review);
+        assert_eq!(
+            apply(&conn, &r, reply(&r, &[]), Mode::Review).unwrap(),
+            (0, 0)
+        );
+        let after = crate::recipes::require_recipe(&conn, r.id).unwrap();
+        assert_eq!(after.ingredients, r.ingredients);
+        assert_eq!(after.prep_time.as_deref(), Some("PT15M"));
+
+        // Without the undone row the same check tidies it
+        conn.execute("DELETE FROM recipe_flags WHERE recipe_id = ?1", [r.id])
+            .unwrap();
+        queued(&conn, r.id, Mode::Review);
+        assert_eq!(
+            apply(&conn, &r, reply(&r, &[]), Mode::Review).unwrap(),
+            (1, 0)
+        );
+        let tidied = crate::recipes::require_recipe(&conn, r.id).unwrap();
+        assert_eq!(
+            tidied.ingredients,
+            vec![section(None, &["⅓ cup sugar", "2 eggs"])]
+        );
+        assert_eq!(tidied.prep_time.as_deref(), Some("15m"));
+    }
+
+    #[test]
+    fn only_edits_to_what_a_check_reads_make_it_due_again() {
+        let db = crate::db::open_in_memory().unwrap();
+        let conn = db.lock();
+        let fields = RecipeFields {
+            title: "Soup".into(),
+            ingredients: vec![section(None, &["1 onion"])],
+            instructions: vec![section(None, &["Simmer."])],
+            ..Default::default()
+        };
+        let (r, _) = crate::recipes::create_recipe(&conn, fields, "url").unwrap();
+        queued(&conn, r.id, Mode::Review);
+        apply(&conn, &r, reply(&r, &[]), Mode::Review).unwrap();
+        assert!(due(&conn).unwrap().is_empty());
+
+        // A photo, a title, or a refresh bringing the same lists: still checked
+        for patch in [
+            RecipePatch {
+                image: Some(Some("https://example.com/soup.jpg".into())),
+                ..Default::default()
+            },
+            RecipePatch {
+                title: Some("Onion soup".into()),
+                ..Default::default()
+            },
+            RecipePatch {
+                ingredients: Some(r.ingredients.clone()),
+                instructions: Some(r.instructions.clone()),
+                notes: Some(None),
+                ..Default::default()
+            },
+        ] {
+            crate::recipes::update_recipe(&conn, r.id, patch).unwrap();
+            assert!(due(&conn).unwrap().is_empty());
+        }
+
+        // A time or a step: due again
+        crate::recipes::update_recipe(
+            &conn,
+            r.id,
+            RecipePatch {
+                cook_time: Some(Some("30m".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(due(&conn).unwrap(), vec![(r.id, Due::Edited)]);
+    }
+
+    #[test]
+    fn hashes_from_before_the_times_still_hold() {
+        let r = recipe(vec![section(None, &["1 egg"])], vec![], Some("n"));
+        let legacy = json!({
+            "ingredients": r.ingredients,
+            "instructions": r.instructions,
+            "notes": r.notes,
+            "totalTime": r.total_time,
+        });
+        assert!(hash_holds(&fnv1a(&to_text(&legacy)), &r));
+        assert!(hash_holds(&content_hash(&r), &r));
+        let mut other = r.clone();
+        other.prep_time = Some("5m".into());
+        assert!(!hash_holds(&content_hash(&r), &other));
     }
 
     #[test]
@@ -2036,7 +2470,7 @@ mod tests {
     fn queued(conn: &Connection, id: i64, mode: Mode) {
         conn.execute(
             "INSERT INTO recipe_checks (recipe_id, status, queued_at, mode) VALUES (?1, 'pending', 0, ?2)
-             ON CONFLICT(recipe_id) DO UPDATE SET status = 'pending', mode = ?2",
+             ON CONFLICT(recipe_id) DO UPDATE SET status = 'pending', mode = ?2, seen_at = NULL",
             params![id, mode.as_str()],
         )
         .unwrap();
@@ -2095,7 +2529,7 @@ mod tests {
             queued(&conn, snapshot.id, mode);
             if mode == Mode::Import {
                 // As an edit while the import check waits would leave it
-                note_edit(&conn, snapshot.id).unwrap();
+                note_edit(&conn, &snapshot, &current).unwrap();
             }
             let mode: String = conn
                 .query_row(
@@ -2207,29 +2641,46 @@ mod tests {
     }
 
     #[test]
-    fn check_all_skips_restores() {
+    fn check_all_picks_restores_and_recipes_edited_since() {
         let db = crate::db::open_in_memory().unwrap();
         let conn = db.lock();
-        let (restored, _) = crate::recipes::create_recipe(
-            &conn,
-            RecipeFields {
-                title: "Restored".into(),
+        let make = |title: &str| {
+            let fields = RecipeFields {
+                title: title.into(),
+                ingredients: vec![section(None, &["1 egg"])],
                 ..Default::default()
-            },
-            "import",
-        )
-        .unwrap();
+            };
+            crate::recipes::create_recipe(&conn, fields, "import")
+                .unwrap()
+                .0
+        };
+        let restored = make("Restored");
         mark_restored(&conn, restored.id).unwrap();
-        let (older, _) = crate::recipes::create_recipe(
+        let older = make("Older");
+        let checked = make("Checked");
+        queued(&conn, checked.id, Mode::Import);
+        apply(&conn, &checked, reply(&checked, &[]), Mode::Import).unwrap();
+        let due_now = due(&conn).unwrap();
+        assert_eq!(
+            due_now,
+            [(restored.id, Due::Restored), (older.id, Due::Unchecked)]
+        );
+
+        // An edit after the check makes it due again, even in the same second
+        crate::recipes::update_recipe(
             &conn,
-            RecipeFields {
-                title: "Older".into(),
+            checked.id,
+            RecipePatch {
+                notes: Some(Some("Mine".into())),
                 ..Default::default()
             },
-            "import",
         )
         .unwrap();
-        assert_eq!(to_check_all(&conn).unwrap(), [older.id]);
+        assert!(due(&conn).unwrap().contains(&(checked.id, Due::Edited)));
+        let current = crate::recipes::require_recipe(&conn, checked.id).unwrap();
+        queued(&conn, checked.id, Mode::Review);
+        apply(&conn, &current, reply(&current, &[]), Mode::Review).unwrap();
+        assert!(!to_check_all(&conn).unwrap().contains(&checked.id));
     }
 
     #[test]
@@ -2315,6 +2766,6 @@ mod tests {
         let mut other = r.clone();
         other.notes = None;
         assert_ne!(content_hash(&r), content_hash(&other));
-        assert_eq!(content_hash(&r).len(), 16);
+        assert_eq!(content_hash(&r).len(), 18);
     }
 }

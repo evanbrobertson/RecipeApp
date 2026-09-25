@@ -35,13 +35,22 @@
     const c = checks
     if (!c) return ""
     if (c.pending > 0) return `Checking… ${c.checked} of ${c.eligible} done`
-    const parts = [
-      c.checked < c.eligible
-        ? `${c.eligible - c.checked} not checked yet`
-        : `All ${plural(c.checked, "recipe")} checked`,
-    ]
-    // On recipes already in the box it only suggests (plus an undoable symbol clean-up)
-    if (c.checked < c.eligible) parts.push("suggests fixes, tidies only stray symbols")
+    const parts: string[] = []
+    if (c.due > 0) {
+      // Never checked, restored from a backup, or edited since Wee Chef last looked
+      const why = [
+        c.restored && `${c.restored} restored`,
+        c.edited && `${c.edited} edited since`,
+      ].filter(Boolean)
+      parts.push(`${plural(c.due, "recipe")} to check${why.length ? ` (${why.join(", ")})` : ""}`)
+      // On recipes already in the box it only suggests (plus an undoable symbol clean-up)
+      parts.push("suggests fixes, tidies only stray symbols")
+    } else if (c.checked < c.eligible) {
+      // The rest failed too often; a recipe's own menu can still try again
+      parts.push(`${c.checked} of ${c.eligible} checked`)
+    } else {
+      parts.push(`All ${plural(c.checked, "recipe")} checked`)
+    }
     if (c.tidied) parts.push(`${plural(c.tidied, "thing")} tidied`)
     if (c.toCheck) parts.push(`${plural(c.toCheck, "recipe")} to look at`)
     return parts.join(" · ")

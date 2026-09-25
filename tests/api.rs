@@ -2167,7 +2167,8 @@ async fn wee_chef_checks_tidy_imports_and_undo() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 
-    // Recipes the cook writes aren't checked, and "Check all" has nothing left to do
+    // Recipes the cook writes aren't checked; "Check all" only re-checks the toast, which
+    // was edited after its check
     let (_, mine) = t
         .json(
             "POST",
@@ -2181,10 +2182,14 @@ async fn wee_chef_checks_tidy_imports_and_undo() {
     assert_eq!(c, Value::Null);
     let (status, all) = t.json("POST", "/api/checks", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(all["queued"], 0);
+    assert_eq!(all["queued"], 1);
     assert_eq!(all["eligible"], 2);
+    assert_eq!(all["checked"], 1);
+    wait_for_check(&t, toast).await;
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 0);
     assert_eq!(all["checked"], 2);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
 fn older_recipe() -> crumb::model::RecipeFields {
@@ -2262,31 +2267,37 @@ async fn wee_chef_checks_existing_recipes_and_survive_failures() {
     let (_, c) = t.json("GET", "/api/recipes/1/checks", None).await;
     assert_eq!(c["status"], "skipped");
     assert_eq!(c["flags"], json!([]));
-    // ...and "Check all" never picks it up either
-    let (_, all) = t.json("POST", "/api/checks", None).await;
-    assert_eq!(all["queued"], 0);
-    assert_eq!(all["eligible"], 0);
+    // ..."Check all" picks it up later, as a restore
+    let (_, status) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(
+        (&status["eligible"], &status["due"], &status["restored"]),
+        (&json!(1), &json!(1), &json!(1))
+    );
 
     // A recipe from before the checks (the legacy upgrade marked them all 'url')
     let (older, _) =
         crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
 
-    // "Check all" picks it up; a failing API marks it failed and leaves the recipe alone
+    // "Check all" picks both up; a failing API marks them failed and leaves them alone
     let (_, all) = t.json("POST", "/api/checks", None).await;
-    assert_eq!(all["queued"], 1);
+    assert_eq!(all["queued"], 2);
     let c = wait_for_check(&t, older.id).await;
     assert_eq!(c["status"], "failed");
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1); // a 422 isn't retried
+    assert_eq!(wait_for_check(&t, 1).await["status"], "failed");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2); // a 422 isn't retried
     let (_, r2) = t
         .json("GET", &format!("/api/recipes/{}", older.id), None)
         .await;
     assert_eq!(r2["ingredients"][0]["items"][1], "▢ 1 egg");
+    let (_, r) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(r["ingredients"][0]["items"][0], "▢ Filling");
     let (_, status) = t.json("GET", "/api/checks", None).await;
-    assert_eq!(status["failed"], 1);
+    assert_eq!(status["failed"], 2);
     // Failed checks are retried by the next "Check all"
     let (_, all) = t.json("POST", "/api/checks", None).await;
-    assert_eq!(all["queued"], 1);
+    assert_eq!(all["queued"], 2);
     wait_for_check(&t, older.id).await;
+    wait_for_check(&t, 1).await;
 
     // Without a key the feature is off: nothing queued, no UI
     let off = TestApp::new(None);
@@ -2375,4 +2386,344 @@ async fn suggestions_page_and_nav_hint_follow_open_flags() {
     assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"0\""));
     let (_, list) = t.json("GET", "/api/checks/review", None).await;
     assert_eq!(list["recipes"], json!([]));
+}
+
+/// Uploads one JSON file to the Import page's endpoint; returns its summary.
+async fn upload_json(t: &TestApp, name: &str, file: &str) -> Value {
+    let boundary = "XBOUNDARY";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\nContent-Type: application/json\r\n\r\n{file}\r\n--{boundary}--\r\n"
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/import/files")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    serde_json::from_str(&text).unwrap()
+}
+
+fn flag_kinds(c: &Value) -> Vec<(String, String)> {
+    c["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["kind"].as_str().unwrap().to_string(),
+                f["state"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn check_all_rechecks_restores_and_recipes_edited_since() {
+    let (jev, calls) = fake_jev().await;
+    let t = jev_app(&jev);
+    let backup = json!({"format": "crumb", "version": 1, "recipes": [
+        {"title": "Restored", "ingredients": [{"name": null, "items": ["Filling", "▢ 1 egg", "Nutrition Facts"]}],
+         "instructions": [{"name": null, "items": ["Cook it."]}]}
+    ]});
+    upload_json(&t, "backup.json", &backup.to_string()).await;
+    let (_, status) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(status["due"], 1);
+    assert_eq!(status["restored"], 1);
+    assert_eq!(status["checked"], 0);
+
+    // A restore is checked by "Check all", suggestions only (plus the glyph clean-up)
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 1);
+    let c = wait_for_check(&t, 1).await;
+    assert_eq!(c["status"], "done", "{c}");
+    let (_, r) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["Filling", "1 egg", "Nutrition Facts"]}])
+    );
+    let expect = |v: &[(&str, &str)]| -> Vec<(String, String)> {
+        v.iter()
+            .map(|(k, s)| (k.to_string(), s.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        flag_kinds(&c),
+        expect(&[("tidy", "fixed"), ("heading", "review"), ("junk", "review")])
+    );
+    let (_, status) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(
+        (status["due"].as_i64(), status["checked"].as_i64()),
+        (Some(0), Some(1))
+    );
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 0);
+
+    // "Keep as is" on the junk line, then an edit (in the same second as the check)
+    let junk = c["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["kind"] == "junk")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    t.json(
+        "POST",
+        &format!("/api/recipes/1/flags/{junk}/dismiss"),
+        None,
+    )
+    .await;
+    let (status, _) = t
+        .json("PATCH", "/api/recipes/1", Some(json!({"notes": "Mine"})))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, status) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(status["due"], 1);
+    assert_eq!(status["edited"], 1);
+    assert_eq!(status["checked"], 0);
+
+    // Checked again, still suggest-only; the kept line isn't raised again
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 1);
+    let c = wait_for_check(&t, 1).await;
+    assert_eq!(c["status"], "done");
+    assert_eq!(flag_kinds(&c), expect(&[("heading", "review")]));
+    let (_, r) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(r["ingredients"][0]["items"][0], "Filling");
+    assert_eq!(r["notes"], "Mine");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 0);
+}
+
+#[tokio::test]
+async fn one_recipe_can_be_checked_again_on_request() {
+    let off = TestApp::new(None);
+    let id = add_recipe(&off, "Chili", "Main", "1 lb beef", "1h").await;
+    let (status, _) = off
+        .json("POST", &format!("/api/recipes/{id}/checks"), None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (_, _, html) = off.send(get(&format!("/recipes/{id}"))).await;
+    assert!(html.contains(r#""weeChefChecks":false"#));
+
+    let (jev, calls) = fake_jev().await;
+    let t = jev_app(&jev);
+    let (status, _) = t.json("POST", "/api/recipes/999/checks", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Saved before Wee Chef (no check row at all, like an old restore): already in the
+    // box, so only suggestions, plus the deterministic clean-up of the checkbox glyph
+    let (old, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "import").unwrap();
+    let (status, c) = t
+        .json("POST", &format!("/api/recipes/{}/checks", old.id), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    let c = wait_for_check(&t, old.id).await;
+    assert_eq!(c["status"], "done");
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", old.id), None)
+        .await;
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["Filling", "1 egg", "Nutrition Facts"]}])
+    );
+    assert!(
+        c["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["state"] == "review" || f["kind"] == "tidy"),
+        "{c}"
+    );
+
+    // A fresh import whose check never ran (only tidied on the way in): fixed as its
+    // import check would have been
+    let (fresh, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), older_recipe(), "url").unwrap();
+    t.state
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO recipe_checks (recipe_id, status, queued_at) VALUES (?1, 'tidied', 0)",
+            [fresh.id],
+        )
+        .unwrap();
+    let (status, c) = t
+        .json("POST", &format!("/api/recipes/{}/checks", fresh.id), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{c}");
+    assert_eq!(c["status"], "pending");
+    let c = wait_for_check(&t, fresh.id).await;
+    assert_eq!(c["status"], "done");
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", fresh.id), None)
+        .await;
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": "Filling", "items": ["1 egg"]}])
+    );
+
+    // Asked again: re-queued even though it's done, and only suggests now
+    let (_, c) = t
+        .json("POST", &format!("/api/recipes/{}/checks", fresh.id), None)
+        .await;
+    assert_eq!(c["status"], "pending");
+    let c = wait_for_check(&t, fresh.id).await;
+    assert_eq!(c["status"], "done");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    let (_, again) = t
+        .json("GET", &format!("/api/recipes/{}", fresh.id), None)
+        .await;
+    assert_eq!(again["ingredients"], r["ingredients"]);
+
+    // A recipe the cook wrote (never checked by "Check all"): suggestions only
+    let (status, mine) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(
+                json!({"title": "Mine", "ingredients": [{"items": ["Filling", "Nutrition Facts"]}],
+                "instructions": [{"items": ["Cook it."]}]}),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let mine = mine["id"].as_i64().unwrap();
+    let (_, all) = t.json("GET", "/api/checks", None).await;
+    assert_eq!(all["due"], 0);
+    t.json("POST", &format!("/api/recipes/{mine}/checks"), None)
+        .await;
+    let c = wait_for_check(&t, mine).await;
+    assert_eq!(c["status"], "done");
+    let (_, r) = t.json("GET", &format!("/api/recipes/{mine}"), None).await;
+    assert_eq!(
+        r["ingredients"],
+        json!([{"name": null, "items": ["Filling", "Nutrition Facts"]}])
+    );
+    assert!(
+        c["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["state"] == "review")
+    );
+    let (_, _, html) = t.send(get(&format!("/recipes/{mine}"))).await;
+    assert!(html.contains(r#""weeChefChecks":true"#));
+}
+
+#[tokio::test]
+async fn one_recipe_exports_as_json_and_markdown() {
+    let t = TestApp::new(None);
+    let id = add_recipe(&t, "Lemon Tart!", "Dessert", "3 lemons", "1h").await;
+    let (_, book) = t
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Sweet"})))
+        .await;
+    t.json(
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", book["id"]),
+        Some(json!({"recipeIds": [id]})),
+    )
+    .await;
+    t.json("POST", "/api/cookbooks", Some(json!({"name": "Other"})))
+        .await;
+    t.json("POST", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    add_recipe(&t, "Not this one", "Main", "1 egg", "5m").await;
+
+    let (status, headers, body) = t
+        .send(get(&format!("/api/recipes/{id}/export?format=json")))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::CONTENT_TYPE],
+        "application/json; charset=utf-8"
+    );
+    assert_eq!(
+        headers[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"lemon-tart.json\""
+    );
+    let file: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(file["format"], "crumb");
+    assert_eq!(file["recipes"].as_array().unwrap().len(), 1);
+    assert_eq!(file["recipes"][0]["title"], "Lemon Tart!");
+    assert_eq!(file["recipes"][0]["cookbooks"], json!(["Sweet"]));
+    assert_eq!(
+        file["cookbooks"],
+        json!([{"name": "Sweet", "description": null}])
+    );
+    assert_eq!(file["recipes"][0]["cookedAt"].as_array().unwrap().len(), 1);
+    // JSON is the default
+    let (_, _, default) = t.send(get(&format!("/api/recipes/{id}/export"))).await;
+    assert_eq!(default, body);
+
+    let (status, headers, md) = t
+        .send(get(&format!("/api/recipes/{id}/export?format=md")))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::CONTENT_TYPE],
+        "text/markdown; charset=utf-8"
+    );
+    assert_eq!(
+        headers[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"lemon-tart.md\""
+    );
+    assert!(md.starts_with("# Lemon Tart!\n"), "{md}");
+    assert!(md.contains("- 3 lemons"));
+
+    let (status, _) = t
+        .json("GET", &format!("/api/recipes/{id}/export?format=pdf"), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = t.json("GET", "/api/recipes/999/export", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Letters outside ASCII get a UTF-8 filename* too
+    let (status, r) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(
+                json!({"title": "Crème brûlée", "ingredients": [{"items": ["cream"]}],
+                "instructions": [{"items": ["Bake."]}]}),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, headers, _) = t
+        .send(get(&format!("/api/recipes/{}/export?format=md", r["id"])))
+        .await;
+    assert_eq!(
+        headers[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"cr-me-br-l-e.md\"; filename*=UTF-8''cr%C3%A8me-br%C3%BBl%C3%A9e.md"
+    );
+
+    // The JSON goes back in through the Import page, into a fresh box
+    let fresh = TestApp::new(None);
+    let summary = upload_json(&fresh, "lemon-tart.json", &body).await;
+    assert_eq!(
+        summary[0]["created"].as_array().unwrap().len(),
+        1,
+        "{summary}"
+    );
+    let (_, list) = fresh.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    let rid = list[0]["id"].as_i64().unwrap();
+    let (_, r) = fresh
+        .json("GET", &format!("/api/recipes/{rid}"), None)
+        .await;
+    assert_eq!(r["title"], "Lemon Tart!");
+    assert_eq!(r["ingredients"][0]["items"], json!(["3 lemons", "salt"]));
+    let (_, books) = fresh.json("GET", "/api/cookbooks", None).await;
+    assert_eq!(books[0]["name"], "Sweet");
+    assert_eq!(books.as_array().unwrap().len(), 1);
+    let (_, _, html) = fresh.send(get(&format!("/recipes/{rid}"))).await;
+    assert!(html.contains(r#""cookStats":{"count":1"#));
 }
