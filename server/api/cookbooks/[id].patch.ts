@@ -1,31 +1,16 @@
 import { z } from "zod"
-import { eq } from "drizzle-orm"
-import { useDB } from "../../database"
-import { cookbooks } from "../../database/schema"
+import { BOOK_COLORS } from "#shared/utils/recipe"
+import { updateCookbook } from "../../lib/recipes"
 
 const schema = z.object({
-  name: z.string().min(1).optional(),
-  description: z.string().nullable().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  description: z.string().trim().max(500).nullish(),
+  color: z.enum(BOOK_COLORS).optional(),
 })
 
 export default defineEventHandler(async (event) => {
-  const id = Number(getRouterParam(event, "id"))
-  if (Number.isNaN(id)) {
-    throw createError({ statusCode: 400, statusMessage: "Invalid cookbook ID" })
-  }
-
-  const body = await readValidatedBody(event, (b) => schema.parse(b))
-
-  if (Object.keys(body).length === 0) {
-    throw createError({ statusCode: 400, statusMessage: "No fields to update" })
-  }
-
-  const db = useDB()
-  const updated = db.update(cookbooks).set(body).where(eq(cookbooks.id, id)).returning().get()
-
-  if (!updated) {
-    throw createError({ statusCode: 404, statusMessage: "Cookbook not found" })
-  }
-
-  return updated
+  const id = idParam(event)
+  const patch = await readValidatedBody(event, schema.parse)
+  if (patch.description !== undefined) patch.description ||= null
+  return updateCookbook(id, patch)
 })

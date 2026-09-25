@@ -1,0 +1,15 @@
+{
+  "name": "Just the Recipe",
+  "short_name": "Recipes",
+  "description": "Your recipes, without the life story.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf7f1",
+  "theme_color": "#ee5a3a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
+  "share_target": {
+    "action": "/add",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  }
+}

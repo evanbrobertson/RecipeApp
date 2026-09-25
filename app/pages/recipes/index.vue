@@ -1,368 +1,306 @@
 <script setup lang="ts">
+useHead({ title: "Recipes · Just the Recipe" })
+
 const toast = useToast()
-const { data: recipes, status, refresh } = useFetch("/api/recipes")
+const route = useRoute()
+const router = useRouter()
 
-// Filter state
-const searchQuery = ref("")
-const selectedCategory = ref("all")
-const selectedCuisine = ref("all")
-const sortBy = ref("newest")
-const ingredientSearch = ref("")
+// Search is server-side (title, ingredients, category, cuisine) and mirrored in the URL
+const search = ref(typeof route.query.q === "string" ? route.query.q : "")
+const q = refDebounced(search, 250)
+watch(q, (value) => router.replace({ query: value ? { q: value } : {} }))
 
-// Selection state
-const selectionMode = ref(false)
-const selectedIds = ref(new Set<number>())
-const showCookbookModal = ref(false)
-const showDeleteConfirm = ref(false)
-const bulkLoading = ref(false)
-
-// Fetch cookbooks for the modal
-const { data: cookbooks, refresh: refreshCookbooks } = useFetch("/api/cookbooks", {
-  immediate: false,
+const {
+  data: recipes,
+  status,
+  refresh,
+} = useFetch("/api/recipes", {
+  query: { q },
+  key: "recipes",
 })
 
-function toggleSelectionMode() {
-  selectionMode.value = !selectionMode.value
-  if (!selectionMode.value) {
-    selectedIds.value = new Set()
-  }
-}
-
-function toggleRecipe(id: number) {
-  const next = new Set(selectedIds.value)
-  if (next.has(id)) {
-    next.delete(id)
-  } else {
-    next.add(id)
-  }
-  selectedIds.value = next
-}
-
-function selectAll() {
-  selectedIds.value = new Set(filteredRecipes.value.map((r) => r.id))
-}
-
-function deselectAll() {
-  selectedIds.value = new Set()
-}
-
-async function openCookbookModal() {
-  await refreshCookbooks()
-  showCookbookModal.value = true
-}
-
-async function addToCookbook(cookbookId: number) {
-  bulkLoading.value = true
-  try {
-    const ids = [...selectedIds.value]
-    await $fetch(`/api/cookbooks/${cookbookId}/recipes-bulk`, {
-      method: "POST",
-      body: { recipeIds: ids },
-    })
-    toast.add({ title: `Added ${ids.length} recipe(s) to cookbook`, color: "success" })
-    showCookbookModal.value = false
-    selectionMode.value = false
-    selectedIds.value = new Set()
-  } catch {
-    toast.add({ title: "Failed to add recipes to cookbook", color: "error" })
-  } finally {
-    bulkLoading.value = false
-  }
-}
-
-async function confirmDelete() {
-  bulkLoading.value = true
-  try {
-    const ids = [...selectedIds.value]
-    await $fetch("/api/recipes/bulk-delete", {
-      method: "POST",
-      body: { ids },
-    })
-    toast.add({ title: `Deleted ${ids.length} recipe(s)`, color: "success" })
-    showDeleteConfirm.value = false
-    selectionMode.value = false
-    selectedIds.value = new Set()
-    await refresh()
-  } catch {
-    toast.add({ title: "Failed to delete recipes", color: "error" })
-  } finally {
-    bulkLoading.value = false
-  }
-}
-
-// Compute unique categories/cuisines from data
+const category = ref<string>("all")
 const categories = computed(() => {
-  if (!recipes.value) return []
-  const set = new Set(recipes.value.map((r) => r.recipeCategory).filter(Boolean))
-  return [...set].toSorted() as string[]
+  const set = new Set(
+    (recipes.value ?? []).map((r) => r.recipeCategory).filter(Boolean) as string[],
+  )
+  return [...set].toSorted((a, b) => a.localeCompare(b))
 })
-
-const cuisines = computed(() => {
-  if (!recipes.value) return []
-  const set = new Set(recipes.value.map((r) => r.recipeCuisine).filter(Boolean))
-  return [...set].toSorted() as string[]
-})
-
-const categoryOptions = computed(() => [
-  { label: "All Categories", value: "all" },
+const categoryItems = computed(() => [
+  { label: "Everything", value: "all" },
   ...categories.value.map((c) => ({ label: c, value: c })),
 ])
-
-const cuisineOptions = computed(() => [
-  { label: "All Cuisines", value: "all" },
-  ...cuisines.value.map((c) => ({ label: c, value: c })),
-])
-
-const sortOptions = [
-  { label: "Newest", value: "newest" },
-  { label: "Oldest", value: "oldest" },
-  { label: "Cook Time", value: "cookTime" },
-]
-
-const hasActiveFilters = computed(
-  () =>
-    searchQuery.value ||
-    selectedCategory.value !== "all" ||
-    selectedCuisine.value !== "all" ||
-    ingredientSearch.value,
+const visible = computed(() =>
+  category.value === "all"
+    ? (recipes.value ?? [])
+    : (recipes.value ?? []).filter((r) => r.recipeCategory === category.value),
 )
 
-function clearFilters() {
-  searchQuery.value = ""
-  selectedCategory.value = "all"
-  selectedCuisine.value = "all"
-  ingredientSearch.value = ""
-  sortBy.value = "newest"
+// Selection
+const selecting = ref(false)
+const selected = ref(new Set<number>())
+const busy = ref(false)
+const showDelete = ref(false)
+const showCookbooks = ref(false)
+
+function toggleSelecting() {
+  selecting.value = !selecting.value
+  selected.value = new Set()
 }
 
-function parseTime(time: string | null): number {
-  if (!time) return Infinity
-  // Try to extract minutes from common formats like "PT30M", "30 min", "1 hr 30 min", etc.
-  const isoMatch = time.match(/PT(?:(\d+)H)?(?:(\d+)M)?/)
-  if (isoMatch) {
-    return parseInt(isoMatch[1] || "0") * 60 + parseInt(isoMatch[2] || "0")
-  }
-  const numMatch = time.match(/(\d+)/)
-  return numMatch ? parseInt(numMatch[1] || "0") : Infinity
+function toggle(id: number) {
+  const next = new Set(selected.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selected.value = next
 }
-
-const filteredRecipes = computed(() => {
-  if (!recipes.value) return []
-
-  let result = [...recipes.value]
-
-  // Name search
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter((r) => r.title.toLowerCase().includes(q))
-  }
-
-  // Category filter
-  if (selectedCategory.value !== "all") {
-    result = result.filter((r) => r.recipeCategory === selectedCategory.value)
-  }
-
-  // Cuisine filter
-  if (selectedCuisine.value !== "all") {
-    result = result.filter((r) => r.recipeCuisine === selectedCuisine.value)
-  }
-
-  // Ingredient search (works with sectioned data)
-  if (ingredientSearch.value) {
-    const q = ingredientSearch.value.toLowerCase()
-    result = result.filter((r) => {
-      const sections = r.ingredients as { name: string | null; items: string[] }[]
-      return sections.some((s) => s.items.some((ing) => ing.toLowerCase().includes(q)))
-    })
-  }
-
-  // Sort
-  if (sortBy.value === "oldest") {
-    result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-  } else if (sortBy.value === "cookTime") {
-    result.sort((a, b) => parseTime(a.cookTime) - parseTime(b.cookTime))
-  } else {
-    result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  }
-
-  return result
-})
 
 const allSelected = computed(
-  () => filteredRecipes.value.length > 0 && selectedIds.value.size === filteredRecipes.value.length,
+  () => visible.value.length > 0 && visible.value.every((r) => selected.value.has(r.id)),
 )
+
+function toggleAll() {
+  selected.value = allSelected.value ? new Set() : new Set(visible.value.map((r) => r.id))
+}
+
+const { data: cookbooks, execute: loadCookbooks } = useFetch("/api/cookbooks", {
+  immediate: false,
+  key: "cookbooks",
+})
+
+async function openCookbooks() {
+  await loadCookbooks()
+  showCookbooks.value = true
+}
+
+async function addToCookbook(id: number, name: string) {
+  busy.value = true
+  try {
+    const ids = [...selected.value]
+    await $fetch(`/api/cookbooks/${id}/recipes`, { method: "POST", body: { recipeIds: ids } })
+    toast.add({ title: `Added ${ids.length} to ${name}`, color: "success" })
+    showCookbooks.value = false
+    toggleSelecting()
+  } catch (e) {
+    toast.add({ title: "Couldn't add to cookbook", description: errorMessage(e), color: "error" })
+  } finally {
+    busy.value = false
+  }
+}
+
+async function deleteSelected() {
+  busy.value = true
+  try {
+    const ids = [...selected.value]
+    await $fetch("/api/recipes/bulk-delete", { method: "POST", body: { ids } })
+    toast.add({
+      title: `Deleted ${ids.length} recipe${ids.length === 1 ? "" : "s"}`,
+      color: "success",
+    })
+    showDelete.value = false
+    toggleSelecting()
+    await refresh()
+  } catch (e) {
+    toast.add({ title: "Couldn't delete", description: errorMessage(e), color: "error" })
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="pb-20">
-    <div class="mb-6 flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Saved Recipes</h1>
+  <div>
+    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Recipes</h1>
       <div class="flex gap-2">
         <UButton
           v-if="recipes?.length"
-          :label="selectionMode ? 'Cancel' : 'Select'"
-          :icon="selectionMode ? 'i-lucide-x' : 'i-lucide-check-square'"
-          :variant="selectionMode ? 'soft' : 'outline'"
-          @click="toggleSelectionMode"
+          :label="selecting ? 'Done' : 'Select'"
+          :icon="selecting ? 'i-lucide-x' : 'i-lucide-square-check'"
+          variant="outline"
+          color="neutral"
+          @click="toggleSelecting"
         />
-        <UButton to="/" label="Add Recipe" icon="i-lucide-plus" />
+        <UButton to="/add" label="Add" icon="i-lucide-plus" class="rounded-full" />
       </div>
     </div>
 
-    <div v-if="status === 'pending'" class="flex justify-center py-12">
-      <UIcon name="i-lucide-loader-circle" class="text-muted size-8 animate-spin" />
+    <div class="mb-6 space-y-3">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search by name or ingredient…"
+        class="w-full"
+        size="xl"
+        :ui="{ base: 'rounded-full bg-(--paper)' }"
+        :loading="status === 'pending' && !!search"
+      >
+        <template v-if="search" #trailing>
+          <UButton
+            icon="i-lucide-x"
+            variant="link"
+            color="neutral"
+            size="xs"
+            aria-label="Clear"
+            @click="
+              () => {
+                search = ''
+              }
+            "
+          />
+        </template>
+      </UInput>
+      <div v-if="categories.length > 1" class="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+        <button
+          v-for="c in categoryItems"
+          :key="c.value"
+          type="button"
+          class="flex-none rounded-full px-4 py-1.5 text-sm font-semibold transition"
+          :class="
+            category === c.value
+              ? 'bg-primary text-white'
+              : 'bg-elevated text-muted hover:text-default'
+          "
+          @click="
+            () => {
+              category = c.value
+            }
+          "
+        >
+          {{ c.label }}
+        </button>
+      </div>
     </div>
 
-    <template v-else-if="!recipes?.length">
-      <div class="py-12 text-center">
-        <UIcon name="i-lucide-book-open" class="text-muted mx-auto size-12" />
-        <p class="text-muted mt-4">No recipes saved yet.</p>
-        <UButton to="/" label="Add your first recipe" variant="soft" class="mt-4" />
-      </div>
-    </template>
+    <RecipeGrid v-if="status === 'pending' && !recipes" loading />
 
-    <template v-else>
-      <!-- Filters -->
-      <div class="mb-6 flex flex-wrap items-end gap-3">
-        <UInput
-          v-model="searchQuery"
-          placeholder="Search recipes..."
-          icon="i-lucide-search"
-          class="w-48"
-        />
-        <UInput
-          v-model="ingredientSearch"
-          placeholder="Search ingredients..."
-          icon="i-lucide-list"
-          class="w-48"
-        />
-        <USelect
-          v-if="categories.length"
-          v-model="selectedCategory"
-          :items="categoryOptions"
-          class="w-40"
-        />
-        <USelect
-          v-if="cuisines.length"
-          v-model="selectedCuisine"
-          :items="cuisineOptions"
-          class="w-40"
-        />
-        <USelect v-model="sortBy" :items="sortOptions" class="w-32" />
-        <UButton
-          v-if="hasActiveFilters"
-          label="Clear"
-          variant="ghost"
-          icon="i-lucide-x"
-          size="sm"
-          @click="clearFilters"
-        />
-      </div>
+    <EmptyState
+      v-else-if="!recipes?.length && !q"
+      icon="i-lucide-book-open"
+      title="No recipes yet"
+      description="Paste a link or some recipe text to save your first one."
+    >
+      <UButton to="/add" label="Add a recipe" icon="i-lucide-plus" />
+    </EmptyState>
 
-      <!-- Results -->
-      <div v-if="filteredRecipes.length" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <RecipeCard
-          v-for="recipe in filteredRecipes"
-          :key="recipe.id"
-          :recipe="recipe"
-          :selectable="selectionMode"
-          :selected="selectedIds.has(recipe.id)"
-          @toggle="toggleRecipe"
-        />
-      </div>
+    <EmptyState
+      v-else-if="!visible.length"
+      icon="i-lucide-search-x"
+      title="Nothing matches"
+      :description="q ? `No recipes found for “${q}”.` : 'Try another category.'"
+    >
+      <UButton
+        label="Clear search"
+        variant="soft"
+        @click="
+          () => {
+            search = ''
+            category = 'all'
+          }
+        "
+      />
+    </EmptyState>
 
-      <div v-else class="py-12 text-center">
-        <UIcon name="i-lucide-search-x" class="text-muted mx-auto size-12" />
-        <p class="text-muted mt-4">No recipes match your filters.</p>
-        <UButton label="Clear filters" variant="soft" class="mt-4" @click="clearFilters" />
-      </div>
-    </template>
+    <RecipeGrid v-else>
+      <RecipeCard
+        v-for="recipe in visible"
+        :key="recipe.id"
+        :recipe="recipe"
+        :selectable="selecting"
+        :selected="selected.has(recipe.id)"
+        @toggle="toggle"
+      />
+    </RecipeGrid>
 
-    <!-- Sticky bottom action bar -->
+    <!-- Selection action bar -->
     <Transition
       enter-active-class="transition duration-200 ease-out"
       enter-from-class="translate-y-full opacity-0"
-      enter-to-class="translate-y-0 opacity-100"
       leave-active-class="transition duration-150 ease-in"
-      leave-from-class="translate-y-0 opacity-100"
       leave-to-class="translate-y-full opacity-0"
     >
       <div
-        v-if="selectionMode && selectedIds.size > 0"
-        class="bg-elevated fixed inset-x-0 bottom-0 z-50 border-t px-4 py-3 shadow-lg"
+        v-if="selecting"
+        class="bg-elevated border-default fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 border-t px-4 py-3 shadow-lg sm:bottom-0"
       >
-        <div class="mx-auto flex max-w-5xl items-center justify-between gap-3">
-          <span class="text-sm font-medium">{{ selectedIds.size }} selected</span>
-          <div class="flex items-center gap-2">
+        <div class="mx-auto flex max-w-5xl items-center justify-between gap-2">
+          <UButton
+            :label="allSelected ? 'Clear' : 'Select all'"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            @click="toggleAll"
+          />
+          <span class="text-sm font-medium">{{ selected.size }} selected</span>
+          <div class="flex gap-2">
             <UButton
-              :label="allSelected ? 'Deselect All' : 'Select All'"
-              variant="ghost"
-              size="sm"
-              @click="allSelected ? deselectAll() : selectAll()"
-            />
-            <UButton
-              label="Add to Cookbook"
               icon="i-lucide-book-plus"
+              label="Cookbook"
               variant="soft"
               size="sm"
-              @click="openCookbookModal"
+              :disabled="!selected.size"
+              @click="openCookbooks"
             />
             <UButton
-              label="Delete"
               icon="i-lucide-trash-2"
-              variant="soft"
               color="error"
+              variant="soft"
               size="sm"
-              @click="showDeleteConfirm = true"
+              aria-label="Delete selected"
+              :disabled="!selected.size"
+              @click="
+                () => {
+                  showDelete = true
+                }
+              "
             />
           </div>
         </div>
       </div>
     </Transition>
 
-    <!-- Add to Cookbook modal -->
-    <UModal v-model:open="showCookbookModal">
-      <template #content>
-        <UCard>
-          <template #header>
-            <h3 class="font-semibold">Add to Cookbook</h3>
-          </template>
-          <div v-if="!cookbooks?.length" class="py-4 text-center">
-            <p class="text-muted">No cookbooks yet.</p>
-            <UButton to="/cookbooks" label="Create a cookbook" variant="soft" class="mt-2" />
-          </div>
-          <div v-else class="flex flex-col gap-2">
-            <UButton
-              v-for="cookbook in cookbooks"
-              :key="cookbook.id"
-              :label="cookbook.name"
-              variant="ghost"
-              block
-              :loading="bulkLoading"
-              @click="addToCookbook(cookbook.id)"
-            />
-          </div>
-        </UCard>
+    <UModal v-model:open="showCookbooks" title="Add to cookbook">
+      <template #body>
+        <div v-if="!cookbooks?.length" class="text-center">
+          <p class="text-muted">You don't have any cookbooks yet.</p>
+          <UButton to="/cookbooks" label="Create a cookbook" variant="soft" class="mt-3" />
+        </div>
+        <div v-else class="flex flex-col gap-1">
+          <UButton
+            v-for="book in cookbooks"
+            :key="book.id"
+            :label="book.name"
+            icon="i-lucide-book-marked"
+            variant="ghost"
+            color="neutral"
+            block
+            class="justify-start"
+            :disabled="busy"
+            @click="addToCookbook(book.id, book.name)"
+          />
+        </div>
       </template>
     </UModal>
 
-    <!-- Delete confirmation modal -->
-    <UModal v-model:open="showDeleteConfirm">
-      <template #content>
-        <UCard>
-          <template #header>
-            <h3 class="font-semibold">Delete Recipes</h3>
-          </template>
-          <p>
-            Are you sure you want to delete {{ selectedIds.size }} recipe(s)? This cannot be undone.
-          </p>
-          <template #footer>
-            <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="ghost" @click="showDeleteConfirm = false" />
-              <UButton label="Delete" color="error" :loading="bulkLoading" @click="confirmDelete" />
-            </div>
-          </template>
-        </UCard>
+    <UModal
+      v-model:open="showDelete"
+      title="Delete recipes?"
+      :description="`${selected.size} recipe${selected.size === 1 ? '' : 's'} will be permanently deleted.`"
+    >
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton
+            label="Cancel"
+            variant="ghost"
+            color="neutral"
+            @click="
+              () => {
+                showDelete = false
+              }
+            "
+          />
+          <UButton label="Delete" color="error" :loading="busy" @click="deleteSelected" />
+        </div>
       </template>
     </UModal>
   </div>

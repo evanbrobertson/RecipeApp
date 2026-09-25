@@ -1,21 +1,15 @@
 import { z } from "zod"
-import { useDB } from "../../database"
-import { cookbooks } from "../../database/schema"
+import { BOOK_COLORS } from "#shared/utils/recipe"
+import { createCookbook } from "../../lib/recipes"
 
 const schema = z.object({
-  name: z.string().min(1, "Name is required"),
-  description: z.string().optional(),
+  name: z.string().trim().min(1, "Name is required").max(100),
+  description: z.string().trim().max(500).nullish(),
+  color: z.enum(BOOK_COLORS).nullish(),
 })
 
 export default defineEventHandler(async (event) => {
-  const body = await readValidatedBody(event, (b) => schema.parse(b))
-  const db = useDB()
-  return db
-    .insert(cookbooks)
-    .values({
-      name: body.name,
-      description: body.description || null,
-    })
-    .returning()
-    .get()
+  const { name, description, color } = await readValidatedBody(event, schema.parse)
+  setResponseStatus(event, 201)
+  return createCookbook(name, description, color)
 })
