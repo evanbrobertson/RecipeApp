@@ -1,12 +1,23 @@
 <script setup lang="ts">
-useHead({ title: "Cookbooks · Just the Recipe" })
+import { BOOK_COLORS } from "#shared/utils/recipe"
+
+useHead({ title: "Shelf · Just the Recipe" })
 
 const toast = useToast()
 const { data: cookbooks, status, refresh } = useFetch("/api/cookbooks", { key: "cookbooks" })
 
+const opened = ref<ShelfBook | null>(null)
+
 const showCreate = ref(false)
-const form = reactive({ name: "", description: "" })
+const form = reactive({ name: "", description: "", color: "tomato" as string })
 const creating = ref(false)
+
+function startCreate() {
+  form.name = ""
+  form.description = ""
+  form.color = BOOK_COLORS[Math.floor(Math.random() * BOOK_COLORS.length)]!
+  showCreate.value = true
+}
 
 async function create() {
   if (!form.name.trim()) return
@@ -14,10 +25,8 @@ async function create() {
   try {
     const book = await $fetch("/api/cookbooks", { method: "POST", body: form })
     showCreate.value = false
-    form.name = ""
-    form.description = ""
     await refresh()
-    toast.add({ title: `Created “${book.name}”`, color: "success" })
+    toast.add({ title: `“${book.name}” is on the shelf`, icon: "i-lucide-library-big" })
   } catch (e) {
     toast.add({ title: "Couldn't create cookbook", description: errorMessage(e), color: "error" })
   } finally {
@@ -28,52 +37,52 @@ async function create() {
 
 <template>
   <div>
-    <div class="mb-5 flex items-center justify-between gap-3">
-      <h1 class="font-serif text-2xl font-semibold sm:text-3xl">Cookbooks</h1>
+    <div class="mb-8 flex items-end justify-between gap-3">
+      <div>
+        <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Your shelf</h1>
+        <p class="text-muted mt-1">Pull a cookbook off the shelf to open it.</p>
+      </div>
       <UButton
         label="New cookbook"
         icon="i-lucide-plus"
-        @click="
-          () => {
-            showCreate = true
-          }
-        "
+        class="rounded-full"
+        @click="startCreate"
       />
     </div>
 
-    <div v-if="status === 'pending' && !cookbooks" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <USkeleton v-for="i in 3" :key="i" class="h-20 rounded-xl" />
-    </div>
+    <USkeleton v-if="status === 'pending' && !cookbooks" class="h-64 w-full rounded-2xl" />
 
     <EmptyState
       v-else-if="!cookbooks?.length"
-      icon="i-lucide-library"
-      title="No cookbooks yet"
-      description="Group recipes into collections like “Weeknight dinners” or “Christmas baking”."
+      icon="i-lucide-library-big"
+      title="An empty shelf"
+      description="Cookbooks group recipes, like “Weeknight dinners” or “Christmas baking”."
     >
-      <UButton
-        label="Create a cookbook"
-        variant="soft"
-        @click="
-          () => {
-            showCreate = true
-          }
-        "
-      />
+      <UButton label="Make your first cookbook" @click="startCreate" />
     </EmptyState>
 
-    <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <CookbookCard v-for="book in cookbooks" :key="book.id" :cookbook="book" />
-    </div>
+    <Bookshelf
+      v-else
+      :books="cookbooks"
+      :pulled-id="opened?.id"
+      addable
+      @open="opened = $event"
+      @add="startCreate"
+    />
 
-    <UModal v-model:open="showCreate" title="New cookbook">
+    <OpenBook :book="opened" @close="opened = null" />
+
+    <UModal v-model:open="showCreate" title="A new cookbook">
       <template #body>
-        <form id="create-cookbook" class="space-y-3" @submit.prevent="create">
+        <form id="create-cookbook" class="space-y-4" @submit.prevent="create">
           <UFormField label="Name" required>
-            <UInput v-model="form.name" class="w-full" autofocus />
+            <UInput v-model="form.name" class="w-full" placeholder="Weeknight dinners" autofocus />
           </UFormField>
           <UFormField label="Description">
             <UTextarea v-model="form.description" autoresize class="w-full" />
+          </UFormField>
+          <UFormField label="Cover">
+            <BookColorPicker v-model="form.color" />
           </UFormField>
         </form>
       </template>
@@ -92,7 +101,7 @@ async function create() {
           <UButton
             type="submit"
             form="create-cookbook"
-            label="Create"
+            label="Put it on the shelf"
             :loading="creating"
             :disabled="!form.name.trim()"
           />

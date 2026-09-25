@@ -14,9 +14,20 @@ RUN bun run build
 # ---- Run ----
 FROM node:22-bookworm-slim
 WORKDIR /app
+
+# Headless Chromium for sites that block plain HTTP scraping (adds ~250 MB).
+# Build with --build-arg WITH_CHROMIUM=false for a slimmer image without the fallback.
+ARG WITH_CHROMIUM=true
+RUN if [ "$WITH_CHROMIUM" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3000
+    PORT=3000 \
+    CHROMIUM_PATH=/usr/bin/chromium
 COPY --from=build /app/.output ./.output
 EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]

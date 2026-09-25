@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray, or, sql, type SQLWrapper } from "drizzle
 import { useDB } from "../database"
 import { cookbookRecipes, cookbooks, recipes, type Recipe } from "../database/schema"
 import {
+  BOOK_COLORS,
   normalizeSections,
   type RecipeFields,
   type RecipeSource,
@@ -10,6 +11,7 @@ import {
 import { scrapeRecipe } from "./scraper"
 import { parseRecipeText } from "./text-parser"
 import { extractRecipeWithClaude } from "./claude-extract"
+import { recipesFromFile, type BackupFile, type ImportedRecipe } from "./importers"
 
 /** Service layer shared by the REST API and the MCP connector. */
 
@@ -138,7 +140,27 @@ export function deleteRecipes(ids: number[]) {
     .length
 }
 
-export async function importFromUrl(url: string) {
+/**
+ * Share links from Just the Recipe (and similar readers) wrap the original page URL,
+ * e.g. https://www.justtherecipe.com/?url=https://site.com/recipe. Import the original.
+ */
+export function unwrapShareLink(input: string): string {
+  try {
+    const url = new URL(input)
+    for (const key of ["url", "u", "link", "recipe"]) {
+      const inner = url.searchParams.get(key)
+      if (inner && /^https?:\/\//i.test(inner)) return inner
+    }
+    const path = decodeURIComponent(url.pathname.slice(1))
+    if (/justtherecipe/i.test(url.hostname) && /^https?:\/\//i.test(path)) return path
+  } catch {
+    // not a URL; let the caller's validation handle it
+  }
+  return input
+}
+
+export async function importFromUrl(rawUrl: string) {
+  const url = unwrapShareLink(rawUrl)
   const existing = findByUrl(url)
   if (existing) return { recipe: requireRecipe(existing.id), isNew: false }
   return createRecipe(await scrapeRecipe(url), "url")
@@ -174,6 +196,83 @@ export async function importFromText(text: string, opts: { useClaude?: boolean }
   return createRecipe(fields, "text")
 }
 
+// ─── Files & backups ─────────────────────────────────────────────────────────
+
+export interface ImportSummary {
+  file: string
+  created: { id: number; title: string }[]
+  duplicates: number
+  error?: string
+}
+
+function findOrCreateCookbook(name: string) {
+  const trimmed = name.trim()
+  const existing = useDB()
+    .select({ id: cookbooks.id })
+    .from(cookbooks)
+    .where(sql`lower(${cookbooks.name}) = lower(${trimmed})`)
+    .get()
+  return existing?.id ?? createCookbook(trimmed).id
+}
+
+export async function importFile(name: string, bytes: Uint8Array): Promise<ImportSummary> {
+  const summary: ImportSummary = { file: name, created: [], duplicates: 0 }
+  let found: ImportedRecipe[]
+  try {
+    found = await recipesFromFile(name, bytes)
+  } catch (err) {
+    return { ...summary, error: `Couldn't read this file (${(err as Error).message})` }
+  }
+  if (found.length === 0) return { ...summary, error: "No recipes found in this file" }
+
+  for (const { fields, cookbooks: books } of found) {
+    try {
+      const { recipe, isNew } = createRecipe(fields, "import")
+      if (!isNew) summary.duplicates++
+      else summary.created.push({ id: recipe.id, title: recipe.title })
+      for (const book of books ?? []) {
+        if (book.trim()) addToCookbook(findOrCreateCookbook(book), [recipe.id])
+      }
+    } catch (err) {
+      console.warn(`[import] skipped a recipe in ${name}:`, (err as Error).message)
+    }
+  }
+  return summary
+}
+
+/** Everything in one JSON file that importFile() can read back. */
+export function exportBackup(): BackupFile {
+  const db = useDB()
+  const all = db.select().from(recipes).orderBy(recipes.id).all()
+  const books = db.select().from(cookbooks).orderBy(cookbooks.name).all()
+  const links = db.select().from(cookbookRecipes).all()
+  const bookName = new Map(books.map((b) => [b.id, b.name]))
+  return {
+    format: "just-the-recipe",
+    version: 1,
+    cookbooks: books.map((b) => ({ name: b.name, description: b.description })),
+    recipes: all.map((r) => ({
+      title: r.title,
+      description: r.description,
+      url: r.url,
+      image: r.image,
+      author: r.author,
+      prepTime: r.prepTime,
+      cookTime: r.cookTime,
+      totalTime: r.totalTime,
+      freezeTime: r.freezeTime,
+      recipeYield: r.recipeYield,
+      recipeCategory: r.recipeCategory,
+      recipeCuisine: r.recipeCuisine,
+      ingredients: normalizeSections(r.ingredients),
+      instructions: normalizeSections(r.instructions),
+      nutrition: r.nutrition,
+      notes: r.notes,
+      cookbooks: links.filter((l) => l.recipeId === r.id).map((l) => bookName.get(l.cookbookId)!),
+    })),
+  }
+}
+
 // ─── Cookbooks ──────────────────────────────────────────────────────────────
 
 export function listCookbooks() {
@@ -182,6 +281,7 @@ export function listCookbooks() {
       id: cookbooks.id,
       name: cookbooks.name,
       description: cookbooks.description,
+      color: cookbooks.color,
       createdAt: cookbooks.createdAt,
       recipeCount: count(cookbookRecipes.id),
     })
@@ -206,15 +306,19 @@ export function getCookbook(id: number) {
   return { ...cookbook, recipes: items }
 }
 
-export function createCookbook(name: string, description?: string | null) {
+export function createCookbook(name: string, description?: string | null, color?: string | null) {
+  const pick = BOOK_COLORS[Math.floor(Math.random() * BOOK_COLORS.length)]
   return useDB()
     .insert(cookbooks)
-    .values({ name: name.trim(), description: description?.trim() || null })
+    .values({ name: name.trim(), description: description?.trim() || null, color: color ?? pick })
     .returning()
     .get()
 }
 
-export function updateCookbook(id: number, patch: { name?: string; description?: string | null }) {
+export function updateCookbook(
+  id: number,
+  patch: { name?: string; description?: string | null; color?: string | null },
+) {
   const updated = useDB().update(cookbooks).set(patch).where(eq(cookbooks.id, id)).returning().get()
   if (!updated) throw createError({ statusCode: 404, statusMessage: "Cookbook not found" })
   return updated

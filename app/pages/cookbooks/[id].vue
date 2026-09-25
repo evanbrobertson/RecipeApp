@@ -9,13 +9,14 @@ const { data: cookbook, status, error, refresh } = useFetch(() => `/api/cookbook
 useHead(() => ({ title: cookbook.value ? `${cookbook.value.name} · Just the Recipe` : "Cookbook" }))
 
 const editing = ref(false)
-const form = reactive({ name: "", description: "" })
+const form = reactive({ name: "", description: "", color: "tomato" })
 const showDelete = ref(false)
 
 function startEdit() {
   if (!cookbook.value) return
   form.name = cookbook.value.name
   form.description = cookbook.value.description ?? ""
+  form.color = cookbook.value.color ?? "tomato"
   editing.value = true
 }
 
@@ -79,7 +80,7 @@ const menuItems: DropdownMenuItem[][] = [
       <div class="mb-6">
         <UButton
           to="/cookbooks"
-          label="Cookbooks"
+          label="Shelf"
           icon="i-lucide-arrow-left"
           variant="link"
           color="neutral"
@@ -93,6 +94,7 @@ const menuItems: DropdownMenuItem[][] = [
             autoresize
             class="w-full"
           />
+          <BookColorPicker v-model="form.color" />
           <div class="flex gap-2">
             <UButton type="submit" label="Save" />
             <UButton
@@ -108,9 +110,24 @@ const menuItems: DropdownMenuItem[][] = [
           </div>
         </form>
         <div v-else class="flex items-start justify-between gap-3">
-          <div>
-            <h1 class="font-serif text-2xl font-semibold sm:text-3xl">{{ cookbook.name }}</h1>
-            <p v-if="cookbook.description" class="text-muted mt-1">{{ cookbook.description }}</p>
+          <div class="flex items-start gap-4">
+            <!-- a little cover, in the book's cloth -->
+            <div
+              class="grid h-24 w-18 shrink-0 place-items-center rounded-l-sm rounded-r-lg shadow-md"
+              :style="{
+                background: bookPalette(cookbook.color).cloth,
+                color: bookPalette(cookbook.color).foil,
+              }"
+            >
+              <UIcon name="i-lucide-chef-hat" class="size-7" />
+            </div>
+            <div>
+              <h1 class="font-serif text-3xl font-semibold sm:text-4xl">{{ cookbook.name }}</h1>
+              <p class="text-muted mt-1">
+                {{ cookbook.recipes.length }} recipe{{ cookbook.recipes.length === 1 ? "" : "s" }}
+                <template v-if="cookbook.description"> · {{ cookbook.description }}</template>
+              </p>
+            </div>
           </div>
           <UDropdownMenu :items="menuItems" :content="{ align: 'end' }">
             <UButton icon="i-lucide-ellipsis" variant="outline" color="neutral" aria-label="More" />

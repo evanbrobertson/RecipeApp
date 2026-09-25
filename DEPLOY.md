@@ -51,5 +51,10 @@ Claude under **Settings → Connectors → Add custom connector**. Approve with 
 - **Backups:** Railway volumes support backups. SQLite runs in WAL mode, so back up `recipes.db`,
   `recipes.db-wal` and `recipes.db-shm` together, or run `sqlite3 recipes.db ".backup backup.db"`.
 - **Changing the password** signs out every browser. Claude's connector keeps working until you remove it.
-- **Some sites block scrapers** (403). Copy the recipe text and paste it instead, or ask Claude to save it.
+- **Sites that block scrapers:** the image includes Chromium, and the app retries blocked or
+  JavaScript-rendered pages in a real headless browser. This gets past simple bot filters, but big
+  bot-protection services (Cloudflare, DataDome) can still spot headless browsers and datacenter IPs. When
+  that happens, paste the recipe text instead or ask Claude to save it. Chromium adds about 250 MB to the
+  image and briefly uses 200–300 MB of RAM per blocked import. To skip it, set the Docker build arg
+  `WITH_CHROMIUM=false` (Railway: add it as a service variable) or set `BROWSER_SCRAPING=off`.
 - The app is meant for one person or household and runs as a single instance. Don't scale it to multiple replicas, because SQLite lives on one volume.

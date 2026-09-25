@@ -6,15 +6,19 @@ your recipes from any chat.
 
 ## Features
 
-- **One box for everything:** paste a URL (JSON-LD / microdata scraper) or raw recipe text from an email,
-  notes app, PDF or a page that blocks scrapers. Text is parsed by a built-in heuristic parser, or by
-  Claude when `NUXT_ANTHROPIC_API_KEY` is set.
-- **Claude connector (remote MCP):** `https://<your-app>/mcp` with built-in OAuth. From Claude you can
-  save a pasted recipe, import from a URL, search by ingredient, read, edit, delete and organise into cookbooks.
-- **Made for cooking:** tick off ingredients, highlight the current step, cook mode keeps the screen awake,
-  print and share views, dark mode, mobile tab bar, installable PWA with share target.
-- **Fast editor:** one textarea per section (one ingredient or step per line) instead of dozens of inputs.
-- **Cookbooks, search** across title, ingredients, category and cuisine, and bulk actions.
+- **One box for everything:** paste a URL or raw recipe text (email, notes, PDF text). Several links at once
+  are bulk-imported. Text is parsed by a built-in parser, or by Claude when `NUXT_ANTHROPIC_API_KEY` is set.
+- **Sites that block scrapers:** if a plain fetch is blocked (403, bot filters) or the recipe is rendered by
+  JavaScript, the server retries in headless Chromium (installed in the Docker image).
+- **Cook mode:** full-screen, big type, one step at a time, swipe or tap, screen kept awake, one-tap timers
+  for any time mentioned in a step, and "you'll need" ingredient hints per step.
+- **Mise en place:** every ingredient gets a vessel sized to its quantity (pinch bowl → large bowl, board for
+  chopping, jar for "to taste"). Tap each one when it's prepped and watch the bowls fill up.
+- **The shelf:** cookbooks are 3D books on a wooden shelf. Pull one out and it opens to a table of contents.
+- **Scaling** (½× to 3×), ingredient checklists, print/share/copy, dark mode, installable PWA with share target.
+- **Import** from Just the Recipe (links or its PDFs), Paprika, Mealie/schema.org JSON, saved web pages,
+  text files and zips. **Backup** everything to one JSON file and restore it.
+- **Claude connector (remote MCP):** `https://<your-app>/mcp` with built-in OAuth.
 - **Single container + SQLite:** deploys to Railway with a volume. Password-protected.
 
 ## Quick start
@@ -42,6 +46,8 @@ See [DEPLOY.md](./DEPLOY.md) for Railway.
 | `DATABASE_PATH`          | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `NUXT_ANTHROPIC_API_KEY` | No         | Lets Claude parse text pasted on the Add page (falls back to built-in parser) |
 | `NUXT_ANTHROPIC_MODEL`   | No         | Model used for parsing, default `claude-opus-5`                               |
+| `CHROMIUM_PATH`          | No         | Chromium for the scraping fallback (set in the Docker image; auto-detected)   |
+| `BROWSER_SCRAPING`       | No         | Set to `off` to disable the headless browser fallback                         |
 
 ## Connect to Claude
 
@@ -57,5 +63,5 @@ Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_fro
 
 ## Stack
 
-Nuxt 4 · Nuxt UI 4 · Tailwind 4 · SQLite (better-sqlite3 + Drizzle) · Cheerio · MCP TypeScript SDK ·
-Anthropic SDK (optional) · oxlint + oxfmt
+Nuxt 4 · Nuxt UI 4 · Tailwind 4 · SQLite (better-sqlite3 + Drizzle) · Cheerio · playwright-core ·
+unpdf · fflate · MCP TypeScript SDK · Anthropic SDK (optional) · oxlint + oxfmt

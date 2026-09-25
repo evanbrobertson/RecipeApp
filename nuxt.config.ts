@@ -26,7 +26,7 @@ export default defineNuxtConfig({
       meta: [
         { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
         { name: "description", content: "Your recipes, without the life story." },
-        { name: "theme-color", content: "#16a34a" },
+        { name: "theme-color", content: "#ee5a3a" },
         { name: "robots", content: "noindex, nofollow" },
       ],
       link: [

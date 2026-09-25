@@ -54,6 +54,7 @@ const bootstrapSql = `
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     name text NOT NULL,
     description text,
+    color text,
     created_at integer NOT NULL
   );
 
@@ -134,6 +135,15 @@ function upgradeLegacySchema(sqlite: Database.Database) {
   sqlite.pragma("foreign_keys = ON")
 }
 
+/** Additive column changes (new nullable columns) for existing databases. */
+function addMissingColumns(sqlite: Database.Database) {
+  const has = (table: string, column: string) =>
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
+      (c) => c.name === column,
+    )
+  if (!has("cookbooks", "color")) sqlite.exec("ALTER TABLE cookbooks ADD COLUMN color text")
+}
+
 export function useDB(): DB {
   if (_db) return _db
 
@@ -157,6 +167,7 @@ export function useDB(): DB {
 
   upgradeLegacySchema(sqlite)
   sqlite.exec(bootstrapSql)
+  addMissingColumns(sqlite)
 
   _db = drizzle(sqlite, { schema })
   return _db

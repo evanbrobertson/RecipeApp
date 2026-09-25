@@ -1,18 +1,86 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/figtree";
 
-@theme {
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+@theme static {
+  --font-sans: "Figtree Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Fraunces Variable", ui-serif, Georgia, serif;
+
+  --color-tomato-50: #fff4f1;
+  --color-tomato-100: #ffe6df;
+  --color-tomato-200: #ffcbbd;
+  --color-tomato-300: #ffa58e;
+  --color-tomato-400: #fa7a5c;
+  --color-tomato-500: #ee5a3a;
+  --color-tomato-600: #d9432a;
+  --color-tomato-700: #b53421;
+  --color-tomato-800: #922d1f;
+  --color-tomato-900: #772a1f;
+  --color-tomato-950: #41120b;
+
+  --color-basil-500: #5f8a4e;
+  --color-mustard-400: #e8b949;
+}
+
+/* Warm "kitchen paper" surfaces instead of stark white/black */
+:root {
+  --ui-radius: 0.75rem;
+  --ui-bg: #fbf7f1;
+  --ui-bg-muted: #f6f0e7;
+  --ui-bg-elevated: #f1e9dd;
+  --ui-bg-accented: #e8dccb;
+  --ui-border: #e6dac8;
+  --ui-border-muted: #efe6d8;
+  --ui-border-accented: #d8c8b2;
+  --paper: #fffdf8;
+  --shelf-wood: #9a6b43;
+  --shelf-wood-dark: #6f4a2c;
+}
+
+.dark {
+  --ui-bg: #15110d;
+  --ui-bg-muted: #1d1813;
+  --ui-bg-elevated: #251f18;
+  --ui-bg-accented: #30281f;
+  --ui-border: #342b22;
+  --ui-border-muted: #2a231b;
+  --ui-border-accented: #43382c;
+  --paper: #221c16;
+  --shelf-wood: #6b4a2e;
+  --shelf-wood-dark: #4a321e;
 }
 
 html {
   -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  padding-bottom: env(safe-area-inset-bottom);
+  font-feature-settings: "ss01", "cv11";
+}
+
+.font-serif {
+  font-variation-settings:
+    "SOFT" 100,
+    "WONK" 0;
+}
+
+/* Scrollers without visible bars (category chips, shelves on mobile) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 @media print {
@@ -20,5 +88,8 @@ body {
   nav,
   .no-print {
     display: none !important;
+  }
+  body {
+    background: white;
   }
 }

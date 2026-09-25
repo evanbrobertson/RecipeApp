@@ -27,7 +27,7 @@ const categories = computed(() => {
   return [...set].toSorted((a, b) => a.localeCompare(b))
 })
 const categoryItems = computed(() => [
-  { label: "All categories", value: "all" },
+  { label: "Everything", value: "all" },
   ...categories.value.map((c) => ({ label: c, value: c })),
 ])
 const visible = computed(() =>
@@ -111,7 +111,7 @@ async function deleteSelected() {
 <template>
   <div>
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="font-serif text-2xl font-semibold sm:text-3xl">Recipes</h1>
+      <h1 class="font-serif text-3xl font-semibold sm:text-4xl">Recipes</h1>
       <div class="flex gap-2">
         <UButton
           v-if="recipes?.length"
@@ -121,17 +121,18 @@ async function deleteSelected() {
           color="neutral"
           @click="toggleSelecting"
         />
-        <UButton to="/" label="Add" icon="i-lucide-plus" />
+        <UButton to="/add" label="Add" icon="i-lucide-plus" class="rounded-full" />
       </div>
     </div>
 
-    <div class="mb-5 flex flex-col gap-2 sm:flex-row">
+    <div class="mb-6 space-y-3">
       <UInput
         v-model="search"
         icon="i-lucide-search"
         placeholder="Search by name or ingredient…"
-        class="flex-1"
-        size="lg"
+        class="w-full"
+        size="xl"
+        :ui="{ base: 'rounded-full bg-(--paper)' }"
         :loading="status === 'pending' && !!search"
       >
         <template v-if="search" #trailing>
@@ -149,13 +150,26 @@ async function deleteSelected() {
           />
         </template>
       </UInput>
-      <USelect
-        v-if="categories.length > 1"
-        v-model="category"
-        :items="categoryItems"
-        size="lg"
-        class="sm:w-48"
-      />
+      <div v-if="categories.length > 1" class="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+        <button
+          v-for="c in categoryItems"
+          :key="c.value"
+          type="button"
+          class="flex-none rounded-full px-4 py-1.5 text-sm font-semibold transition"
+          :class="
+            category === c.value
+              ? 'bg-primary text-white'
+              : 'bg-elevated text-muted hover:text-default'
+          "
+          @click="
+            () => {
+              category = c.value
+            }
+          "
+        >
+          {{ c.label }}
+        </button>
+      </div>
     </div>
 
     <RecipeGrid v-if="status === 'pending' && !recipes" loading />
@@ -166,7 +180,7 @@ async function deleteSelected() {
       title="No recipes yet"
       description="Paste a link or some recipe text to save your first one."
     >
-      <UButton to="/" label="Add a recipe" icon="i-lucide-plus" />
+      <UButton to="/add" label="Add a recipe" icon="i-lucide-plus" />
     </EmptyState>
 
     <EmptyState
@@ -207,7 +221,7 @@ async function deleteSelected() {
     >
       <div
         v-if="selecting"
-        class="bg-elevated border-default fixed inset-x-0 bottom-16 z-50 border-t px-4 py-3 shadow-lg sm:bottom-0"
+        class="bg-elevated border-default fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 border-t px-4 py-3 shadow-lg sm:bottom-0"
       >
         <div class="mx-auto flex max-w-5xl items-center justify-between gap-2">
           <UButton

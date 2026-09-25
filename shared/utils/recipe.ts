@@ -5,7 +5,7 @@ export interface RecipeSection {
   items: string[]
 }
 
-export type RecipeSource = "url" | "text" | "claude" | "manual"
+export type RecipeSource = "url" | "text" | "claude" | "manual" | "import"
 
 export const sectionSchema = z.object({
   name: z.string().nullable().default(null),
@@ -84,3 +84,19 @@ export const nutritionLabels: Record<string, string> = {
   sodiumContent: "Sodium",
   servingSize: "Serving size",
 }
+
+/** Cloth colours for cookbooks on the shelf. */
+export const BOOK_COLORS = [
+  "tomato",
+  "sage",
+  "mustard",
+  "plum",
+  "ocean",
+  "terracotta",
+  "forest",
+  "navy",
+  "rose",
+  "charcoal",
+] as const
+
+export type BookColor = (typeof BOOK_COLORS)[number]

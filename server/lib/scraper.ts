@@ -1,8 +1,9 @@
 import * as cheerio from "cheerio"
 import type { RecipeFields, RecipeSection } from "#shared/utils/recipe"
 import { normalizeSections } from "#shared/utils/recipe"
+import { browserAvailable, fetchWithBrowser } from "./browser"
 
-export type ScrapedRecipe = RecipeFields & { url: string }
+export type ScrapedRecipe = RecipeFields
 
 interface JsonLdNutrition {
   "@type"?: string
@@ -41,54 +42,80 @@ interface JsonLdSection {
   text?: string
 }
 
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+const PASTE_HINT = "Try copying the recipe text and pasting it instead."
+
+/**
+ * Scrapes a recipe page. Plain HTTP first (fast, cheap); if the site blocks it or the
+ * recipe is rendered by JavaScript, retries in headless Chromium when it's installed.
+ */
 export async function scrapeRecipe(url: string): Promise<ScrapedRecipe> {
   const parsed = new URL(url)
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw createError({ statusCode: 400, statusMessage: "Only http(s) links are supported." })
   }
 
-  let html: string
+  let fetchProblem = ""
   try {
-    html = await $fetch<string>(url, {
+    const html = await $fetch<string>(url, {
       timeout: 15_000,
       responseType: "text",
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
       },
     })
+    const recipe = parseRecipeHtml(html, url)
+    if (recipe) return recipe
+    fetchProblem = "Couldn't find a recipe on that page."
   } catch (err: any) {
     const status = err?.response?.status
-    throw createError({
-      statusCode: 502,
-      statusMessage: status
-        ? `The site responded with ${status}. Try copying the recipe text and pasting it instead.`
-        : "Couldn't reach that site. Try copying the recipe text and pasting it instead.",
-    })
+    fetchProblem = status ? `The site responded with ${status}.` : "Couldn't reach that site."
   }
 
-  const $ = cheerio.load(html)
+  if (browserAvailable()) {
+    try {
+      const recipe = parseRecipeHtml(await fetchWithBrowser(url), url)
+      if (recipe) return recipe
+      fetchProblem = "Couldn't find a recipe on that page, even in a real browser."
+    } catch (err) {
+      console.warn(`[scraper] browser fallback failed for ${url}:`, (err as Error).message)
+      fetchProblem = `${fetchProblem} A real browser was blocked too.`
+    }
+  }
 
-  // Strategy 1: JSON-LD, Strategy 2: HTML microdata/selectors fallback
+  throw createError({ statusCode: 422, statusMessage: `${fetchProblem} ${PASTE_HINT}` })
+}
+
+/** Extracts a recipe from page HTML (JSON-LD first, then microdata/selectors). */
+export function parseRecipeHtml(html: string, url: string): ScrapedRecipe | null {
+  const $ = cheerio.load(html)
   const jsonLd = extractJsonLd($)
   const recipe = jsonLd ? normalizeJsonLd(jsonLd, url, $) : extractFromHtml($, url)
+  return finish(recipe, url)
+}
 
+/** Converts a schema.org Recipe object (e.g. from an export file) into recipe fields. */
+export function recipeFromJsonLd(data: unknown, url = ""): ScrapedRecipe | null {
+  const jsonLd = findRecipeInJsonLd(data)
+  if (!jsonLd) return null
+  const source =
+    url || (typeof jsonLd.url === "string" && /^https?:\/\//.test(jsonLd.url) ? jsonLd.url : "")
+  const recipe = finish(normalizeJsonLd(jsonLd, source, cheerio.load("")), source)
+  if (recipe && !source) recipe.url = null
+  return recipe
+}
+
+function finish(recipe: ScrapedRecipe, url: string): ScrapedRecipe | null {
   recipe.ingredients = normalizeSections(recipe.ingredients.map(decodeSection))
   recipe.instructions = normalizeSections(recipe.instructions.map(decodeSection))
   recipe.title = decodeText(recipe.title) || "Untitled recipe"
   recipe.description = recipe.description ? decodeText(recipe.description) : null
-  recipe.image = absoluteUrl(recipe.image, url)
-
-  if (recipe.ingredients.length === 0 && recipe.instructions.length === 0) {
-    throw createError({
-      statusCode: 422,
-      statusMessage:
-        "Couldn't find a recipe on that page. Try copying the recipe text and pasting it instead.",
-    })
-  }
-
+  recipe.image = url ? absoluteUrl(recipe.image, url) : recipe.image || null
+  if (recipe.ingredients.length === 0 && recipe.instructions.length === 0) return null
   return recipe
 }
 

@@ -41,6 +41,8 @@ export const cookbooks = sqliteTable("cookbooks", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   description: text("description"),
+  // Cloth colour of the book on the shelf (a key from BOOK_COLORS)
+  color: text("color"),
   createdAt: timestamp("created_at"),
 })
 
