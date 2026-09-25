@@ -1,13 +1,20 @@
 ---
 import {
+  ArchiveRestore,
   ArrowRight,
+  Camera,
   ChefHat,
+  ClipboardCheck,
+  ClipboardPaste,
   Cloud,
   CodeXml,
   FileInput,
+  FileUp,
   Image,
   LibraryBig,
+  Link,
   ListChecks,
+  Pencil,
   Search,
   Sparkles,
 } from "lucide"
@@ -86,6 +93,64 @@ const features = [
     title: "Paid hosting — coming soon",
     text: "A hosted Crumb for people who'd rather not run a server.",
     soon: true,
+  },
+]
+
+// What Crumb does on its own, trigger by trigger. Checked against the server: link and
+// text imports (src/recipes.rs), the tidy and the background check (src/checks.rs),
+// photos (src/photos.rs, web/src/lib/photos.ts), files and backups (src/importers.rs),
+// Try next (src/suggest.rs, src/suggestions.rs) and the cook log (web/src/lib/history.ts).
+// `key` marks what needs an optional service key on a self-hosted server.
+const happens = [
+  {
+    icon: Link,
+    when: "You paste a link",
+    then: "Crumb pulls the recipe from the page, clears stray checkboxes and web codes, writes decimal amounts as fractions and shows times in plain form.",
+  },
+  {
+    icon: ClipboardCheck,
+    when: "A new recipe lands in your box",
+    and: "and you haven't edited it yet",
+    then: "A background check turns headings saved as steps into sections, joins split steps, moves tips to your notes and flags anything it isn't sure about. Undo puts it back.",
+    key: true,
+  },
+  {
+    icon: ClipboardPaste,
+    when: "You paste recipe text",
+    then: "Crumb splits it into ingredients, steps and times, with sections where the text has them.",
+  },
+  {
+    icon: Camera,
+    when: "You add photos of a recipe",
+    and: "one to six pages",
+    then: "Crumb reads them as one recipe. Without the optional key, your device reads them and opens the recipe for you to check the amounts.",
+  },
+  {
+    icon: FileUp,
+    when: "You drop in a file",
+    and: "PDF, web page, text, Paprika, Mealie or Just the Recipe",
+    then: "Each recipe in it is read, tidied and checked like any new recipe. Links you already saved are skipped.",
+  },
+  {
+    icon: ArchiveRestore,
+    when: "You restore a Crumb backup",
+    then: "Recipes come back as you saved them, with their cookbooks and cook history. A later check only suggests.",
+  },
+  {
+    icon: Pencil,
+    when: "You edit a recipe",
+    then: "It stays as you wrote it. A later “Check all” only suggests, and a line you mark “Keep as is” stays that way.",
+  },
+  {
+    icon: Sparkles,
+    when: "You ask what to cook next",
+    and: "on the home page",
+    then: "Four recipes from your box, each with a reason. Some days one card is an idea for a dish you don't have yet.",
+  },
+  {
+    icon: ChefHat,
+    when: "You finish cooking mode",
+    then: "Crumb logs the cook, and the recipe sits out of suggestions for two weeks.",
   },
 ]
 
@@ -202,6 +267,36 @@ const spines = [
               ))
             }
           </ul>
+        </div>
+      </section>
+
+      <section id="how" class="section" aria-labelledby="how-title">
+        <div class="wrap">
+          <h2 id="how-title" class="section-title">What happens when you add a recipe</h2>
+          <ul class="happens">
+            {
+              happens.map((h) => (
+                <li class="happen">
+                  <div class="well">
+                    <Icon icon={h.icon} />
+                  </div>
+                  <div class="happen-when">
+                    <h3>{h.when}</h3>
+                    {h.and && <p class="happen-and">{h.and}</p>}
+                  </div>
+                  <p class="happen-then">
+                    {h.then}
+                    {h.key && <span class="pill">Optional key</span>}
+                  </p>
+                </li>
+              ))
+            }
+          </ul>
+          <p class="happens-note">
+            Hosting Crumb yourself? “Optional key” steps need a service key you add. Without one,
+            Crumb reads text and photos on its own, skips the background check and leaves out
+            ideas for new dishes.
+          </p>
         </div>
       </section>
     </main>
@@ -473,6 +568,60 @@ const spines = [
     width: 28px;
     height: 28px;
     color: var(--primary);
+  }
+
+  /* What happens */
+  .happens {
+    padding: 0;
+    list-style: none;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--r-ui);
+  }
+  .happen {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 4px 16px;
+    padding: 16px 20px;
+  }
+  .happen + .happen {
+    border-top: 1px solid var(--line);
+  }
+  .happen .well {
+    grid-row: span 2;
+    margin-bottom: 0;
+  }
+  .happen h3 {
+    font: 700 17px/1.3 var(--sans);
+  }
+  .happen-and {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .happen-then {
+    color: var(--muted);
+    font-size: 15px;
+  }
+  .happen-then .pill {
+    margin-left: 8px;
+    vertical-align: 1px;
+  }
+  @media (min-width: 800px) {
+    .happen {
+      grid-template-columns: 44px minmax(0, 4fr) minmax(0, 7fr);
+      align-items: center;
+      gap: 24px;
+      padding: 18px 24px;
+    }
+    .happen .well {
+      grid-row: auto;
+    }
+  }
+  .happens-note {
+    margin-top: 16px;
+    max-width: 70ch;
+    color: var(--muted);
+    font-size: 15px;
   }
 
   /* Footer */
