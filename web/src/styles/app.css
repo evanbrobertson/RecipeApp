@@ -146,9 +146,30 @@
 ::view-transition-new(root) {
   animation-duration: 0.18s;
 }
-/* The nav stays put while the page underneath changes */
+/*
+ * The nav stays put while the page underneath changes. Going to or from a page without it
+ * (cook mode, sign-in), it slides away or back: the rail to the left, the tab bar down.
+ */
 ::view-transition-group(nav) {
   animation: none;
+}
+::view-transition-old(nav):only-child {
+  animation: nav-away 0.24s cubic-bezier(0.4, 0, 1, 1) both;
+}
+::view-transition-new(nav):only-child {
+  animation: nav-away 0.26s cubic-bezier(0, 0, 0.2, 1) reverse both;
+}
+@keyframes nav-away {
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (min-width: 48rem) {
+  @keyframes nav-away {
+    to {
+      transform: translateX(-100%);
+    }
+  }
 }
 /* A recipe photo morphs into the next page's hero */
 ::view-transition-group(photo) {

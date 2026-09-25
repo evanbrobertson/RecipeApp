@@ -250,7 +250,7 @@
 
           {#if stepTimers.length}
             <div class="mt-7 flex flex-wrap gap-2.5">
-              {#each stepTimers as t (t.label)}
+              {#each stepTimers as t, i (i)}
                 <button
                   type="button"
                   class="btn btn-tile btn-lg"
@@ -266,7 +266,7 @@
             <div class="card mt-7 p-4">
               <p class="meta mb-3 tracking-wider uppercase">You'll need</p>
               <ul class="flex flex-wrap gap-2">
-                {#each stepIngredients as ing (ing.raw)}
+                {#each stepIngredients as ing, i (i)}
                   <li class="rounded-full bg-tint px-4 py-2 text-[17px] leading-snug font-semibold">
                     {scaleIngredient(ing.raw, scale)}
                   </li>

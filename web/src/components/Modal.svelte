@@ -64,7 +64,13 @@
 </dialog>
 
 <style>
+  /*
+   * Open and close both animate: transitions on `display`/`overlay` (allow-discrete) keep
+   * the dialog in the top layer until it has faded or slid out. Where that isn't supported
+   * it simply closes at once.
+   */
   .modal {
+    --modal-speed: 0.2s;
     margin: auto;
     width: min(28rem, calc(100vw - 2rem));
     max-height: calc(100dvh - 2rem);
@@ -74,16 +80,43 @@
     background: var(--paper);
     color: var(--text);
     box-shadow: var(--menu-shadow);
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity var(--modal-speed) ease-out,
+      transform var(--modal-speed) ease-out,
+      overlay var(--modal-speed) allow-discrete,
+      display var(--modal-speed) allow-discrete;
   }
   .modal[open] {
-    animation: modal-in 0.2s ease-out;
+    opacity: 1;
+    transform: none;
+  }
+  @starting-style {
+    .modal[open] {
+      opacity: 0;
+      transform: translateY(4px);
+    }
   }
   /* Forest wash; the evening kitchen gets a deeper one */
   .modal::backdrop {
     background: rgb(28 43 34 / 0.45);
+    opacity: 0;
+    transition:
+      opacity var(--modal-speed) ease-out,
+      overlay var(--modal-speed) allow-discrete,
+      display var(--modal-speed) allow-discrete;
   }
   :global(.dark) .modal::backdrop {
     background: rgb(5 9 7 / 0.65);
+  }
+  .modal[open]::backdrop {
+    opacity: 1;
+  }
+  @starting-style {
+    .modal[open]::backdrop {
+      opacity: 0;
+    }
   }
   .modal-panel {
     padding: 1.25rem;
@@ -92,24 +125,23 @@
     margin-top: 1rem;
   }
   .modal-side {
+    --modal-speed: 0.28s;
     margin: 0 0 0 auto;
     width: min(26rem, 90vw);
     height: 100dvh;
     max-height: 100dvh;
     border-radius: var(--radius) 0 0 var(--radius);
     overflow-y: auto;
+    opacity: 1;
+    transform: translateX(100%);
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
   }
   .modal-side[open] {
-    animation: side-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+    transform: none;
   }
-  @keyframes modal-in {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-  }
-  @keyframes side-in {
-    from {
+  @starting-style {
+    .modal-side[open] {
+      opacity: 1;
       transform: translateX(100%);
     }
   }
