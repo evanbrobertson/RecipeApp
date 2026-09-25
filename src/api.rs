@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::auth;
 use crate::error::{AppError, AppResult};
-use crate::model::{BOOK_COLORS, RecipeFields, RecipePatch};
+use crate::model::{
+    RecipeFields, RecipePatch, cookbook_color, cookbook_description, cookbook_name,
+};
 use crate::recipes::{self, CookbookPatch, ImportSummary};
 
 const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
@@ -302,44 +304,6 @@ async fn list_cookbooks(State(state): State<AppState>) -> AppResult<Json<Value>>
     Ok(Json(recipes::to_value(&recipes::list_cookbooks(
         &state.db.lock(),
     )?)))
-}
-
-fn cookbook_name(v: &Value, required_message: &str) -> AppResult<String> {
-    let name = v
-        .as_str()
-        .ok_or_else(|| AppError::bad_request(format!("name: {required_message}")))?
-        .trim();
-    if name.is_empty() {
-        return Err(AppError::bad_request(format!("name: {required_message}")));
-    }
-    if name.chars().count() > 100 {
-        return Err(AppError::bad_request(
-            "name: Name is too long (100 characters max)",
-        ));
-    }
-    Ok(name.to_string())
-}
-
-fn cookbook_description(v: &Value) -> AppResult<Option<String>> {
-    match v {
-        Value::Null => Ok(None),
-        Value::String(s) if s.trim().chars().count() <= 500 => {
-            Ok(Some(s.trim().to_string()).filter(|s| !s.is_empty()))
-        }
-        Value::String(_) => Err(AppError::bad_request(
-            "description: Too long (500 characters max)",
-        )),
-        _ => Err(AppError::bad_request("description: expected string")),
-    }
-}
-
-fn cookbook_color(v: &Value) -> AppResult<String> {
-    v.as_str()
-        .filter(|c| BOOK_COLORS.contains(c))
-        .map(String::from)
-        .ok_or_else(|| {
-            AppError::bad_request(format!("color: expected one of {}", BOOK_COLORS.join(", ")))
-        })
 }
 
 async fn create_cookbook(State(state): State<AppState>, body: Bytes) -> AppResult<Response> {

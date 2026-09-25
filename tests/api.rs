@@ -553,7 +553,7 @@ async fn oauth_flow_then_mcp_tools() {
         ))
         .await;
     let list: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 14);
 
     let (_, _, text) = t
         .send(rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
@@ -595,4 +595,173 @@ async fn oauth_flow_then_mcp_tools() {
         .send(rpc(json!({"jsonrpc": "2.0", "id": 7, "method": "nope"})))
         .await;
     assert!(text.contains("-32601"));
+}
+
+#[tokio::test]
+async fn mcp_organising_tools() {
+    let t = TestApp::new(None);
+
+    // A recipe page for refresh_recipe_from_source to scrape
+    let page = r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Recipe",
+        "name":"Tomato Soup","image":"https://img.test/soup.jpg","totalTime":"PT40M","recipeYield":"4",
+        "recipeCategory":"Soup","recipeIngredient":["2 lb tomatoes","1 onion"],
+        "recipeInstructions":[{"@type":"HowToStep","text":"Roast."},{"@type":"HowToStep","text":"Blend."}]}</script>
+        </head><body></body></html>"#;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source = format!("http://{}/soup", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/soup",
+            axum::routing::get(move || async move { axum::response::Html(page) }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut seq = 0;
+    let mut call = async |name: &str, arguments: Value| -> (String, bool) {
+        seq += 1;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"jsonrpc": "2.0", "id": seq, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments}})
+                .to_string(),
+            ))
+            .unwrap();
+        let (_, _, body) = t.send(req).await;
+        let v: Value = serde_json::from_str(&body).unwrap();
+        let text = v["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        (text.to_string(), v["result"]["isError"] == true)
+    };
+
+    let (msg, _) = call(
+        "save_recipe",
+        json!({"title": "My Soup", "url": source, "recipeCategory": "Mine",
+            "ingredients": [{"items": ["tomatoes"]}], "instructions": [{"items": ["Cook."]}]}),
+    )
+    .await;
+    assert!(msg.contains("(id 1)"), "{msg}");
+    call(
+        "save_recipe",
+        json!({"title": "Toast", "image": "https://img.test/toast.jpg",
+            "ingredients": [{"items": ["bread"]}], "instructions": [{"items": ["Toast."]}]}),
+    )
+    .await;
+
+    // Missing-field filters
+    let (msg, _) = call("search_recipes", json!({"missing": ["image"]})).await;
+    assert!(
+        msg.starts_with("1 recipe(s) missing image") && msg.contains("My Soup"),
+        "{msg}"
+    );
+    let (msg, _) = call("search_recipes", json!({"missing": ["cookbook"]})).await;
+    assert!(msg.starts_with("2 recipe(s)"), "{msg}");
+    let (msg, err) = call("search_recipes", json!({"missing": ["colour"]})).await;
+    assert!(err && msg.contains("unknown field"), "{msg}");
+
+    // Refresh fills only the blanks
+    let (msg, _) = call("refresh_recipe_from_source", json!({"id": 1})).await;
+    assert!(
+        msg.starts_with("Updated image, totalTime, recipeYield on \"My Soup\""),
+        "{msg}"
+    );
+    let (msg, _) = call("get_recipe", json!({"id": 1})).await;
+    assert!(
+        msg.contains("# My Soup") && msg.contains("tomatoes") && !msg.contains("Blend"),
+        "{msg}"
+    );
+    let (msg, _) = call("search_recipes", json!({"missing": ["image"]})).await;
+    assert_eq!(msg, "No recipes missing image.");
+    let (msg, _) = call("refresh_recipe_from_source", json!({"id": 1})).await;
+    assert!(msg.starts_with("Nothing to fill in"), "{msg}");
+    let (msg, _) = call(
+        "refresh_recipe_from_source",
+        json!({"id": 1, "overwrite": ["instructions", "recipeCategory"]}),
+    )
+    .await;
+    assert!(
+        msg.starts_with("Updated recipeCategory, instructions"),
+        "{msg}"
+    );
+    let (msg, err) = call("refresh_recipe_from_source", json!({"id": 2})).await;
+    assert!(err && msg.contains("no source URL"), "{msg}");
+
+    // Cookbooks
+    call(
+        "add_to_cookbook",
+        json!({"cookbook": "Soups", "recipeIds": [1, 2]}),
+    )
+    .await;
+    call(
+        "add_to_cookbook",
+        json!({"cookbook": "Other", "recipeIds": [2]}),
+    )
+    .await;
+    let (msg, _) = call("get_cookbook", json!({"cookbook": "soups"})).await;
+    assert!(
+        msg.contains("2 recipe(s):") && msg.contains("Toast"),
+        "{msg}"
+    );
+    let (msg, _) = call(
+        "remove_from_cookbook",
+        json!({"cookbook": "Soups", "recipeIds": [2]}),
+    )
+    .await;
+    assert!(
+        msg.starts_with("Removed 1 recipe(s) from \"Soups\""),
+        "{msg}"
+    );
+    let (msg, _) = call("search_recipes", json!({"missing": ["cookbook"]})).await;
+    assert_eq!(msg, "No recipes missing cookbook.");
+
+    let (msg, _) = call(
+        "update_cookbook",
+        json!({"cookbook": "Soups", "name": "Soup & Stew", "color": "sage", "description": "Warm things"}),
+    )
+    .await;
+    assert!(
+        msg.starts_with("Updated cookbook \"Soup & Stew\" (id 1, sage)"),
+        "{msg}"
+    );
+    let (msg, err) = call("update_cookbook", json!({"cookbook": 1, "color": "neon"})).await;
+    assert!(err && msg.contains("expected one of"), "{msg}");
+    let (msg, err) = call("update_cookbook", json!({"cookbook": 1, "name": "other"})).await;
+    assert!(err && msg.contains("already called \"Other\""), "{msg}");
+    let (msg, err) = call("get_cookbook", json!({"cookbook": 99})).await;
+    assert!(err && msg.contains("No cookbook with id 99"), "{msg}");
+
+    // Deletes need a confirmed second call
+    let (msg, err) = call("delete_cookbook", json!({"cookbook": "Other"})).await;
+    assert!(!err && msg.starts_with("Not deleted yet"), "{msg}");
+    let (msg, _) = call("list_cookbooks", json!({})).await;
+    assert!(msg.contains("Other"), "{msg}");
+    let (msg, _) = call(
+        "delete_cookbook",
+        json!({"cookbook": "Other", "confirm": true}),
+    )
+    .await;
+    assert!(msg.starts_with("Deleted the cookbook \"Other\""), "{msg}");
+    let (msg, _) = call("list_cookbooks", json!({})).await;
+    assert!(
+        !msg.contains("Other") && msg.contains("Soup & Stew"),
+        "{msg}"
+    );
+
+    let (msg, _) = call("delete_recipe", json!({"ids": [1, 2]})).await;
+    assert!(
+        msg.starts_with("Not deleted yet") && msg.contains("[2] Toast"),
+        "{msg}"
+    );
+    let (msg, _) = call("search_recipes", json!({})).await;
+    assert!(msg.starts_with("2 recipe(s)"), "{msg}");
+    let (msg, err) = call("delete_recipe", json!({"ids": [1, 99], "confirm": true})).await;
+    assert!(err && msg.contains("No recipe with id 99"), "{msg}");
+    let (msg, _) = call("delete_recipe", json!({"id": 2, "confirm": true})).await;
+    assert!(msg.starts_with("Deleted 1 recipe(s)"), "{msg}");
+    let (msg, _) = call("search_recipes", json!({})).await;
+    assert!(msg.starts_with("1 recipe(s)"), "{msg}");
 }

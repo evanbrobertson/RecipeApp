@@ -590,6 +590,10 @@ fn compute_additional_time(
     cook: Option<&str>,
     total: Option<&str>,
 ) -> Option<String> {
+    // With neither prep nor cook known, the whole total would wrongly count as extra time
+    if prep.is_none_or(str::is_empty) && cook.is_none_or(str::is_empty) {
+        return None;
+    }
     let total = parse_duration_minutes(total).filter(|t| *t != 0)?;
     let additional = total
         - parse_duration_minutes(prep).unwrap_or(0)
@@ -793,6 +797,7 @@ mod tests {
             compute_additional_time(Some("PT10M"), None, Some("PT10M")),
             None
         );
+        assert_eq!(compute_additional_time(None, None, Some("PT40M")), None);
     }
 
     #[test]

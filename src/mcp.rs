@@ -11,7 +11,10 @@ use serde_json::{Map, Value, json};
 use crate::AppState;
 use crate::error::AppError;
 use crate::markdown::recipe_to_markdown;
-use crate::model::{Recipe, RecipeFields, RecipePatch, count_items};
+use crate::model::{
+    BOOK_COLORS, CookbookListItem, Recipe, RecipeFields, RecipePatch, RecipeSummary,
+    cookbook_color, cookbook_description, cookbook_name, count_items,
+};
 use crate::recipes;
 
 const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"Crumb\").
@@ -19,6 +22,9 @@ const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"
 - If the user shares only a link, call import_recipe_from_url.
 - Use search_recipes to find recipes by name or ingredient, then get_recipe for the full text.
 - When the user asks to tweak a saved recipe (scale it, substitute, fix steps), call update_recipe with only the changed fields.
+- To tidy the library, search_recipes with `missing` finds recipes without an image, times, a category, a cookbook and so on; refresh_recipe_from_source fills blanks from the recipe's source page without touching what the user set.
+- Cookbooks are the shelf: get_cookbook, update_cookbook (name, description, colour), add_to_cookbook and remove_from_cookbook organise it.
+- delete_recipe and delete_cookbook first return a preview. Show it to the user and call again with confirm: true only after they agree.
 - Always share the recipe link returned by the tools.";
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -110,9 +116,68 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
+/// A string-array argument, e.g. `missing` or `overwrite`; None if it isn't one.
+fn string_list<'a>(a: &'a Map<String, Value>, key: &str) -> Option<Vec<&'a str>> {
+    match a.get(key) {
+        None => Some(Vec::new()),
+        Some(Value::Array(items)) => items.iter().map(Value::as_str).collect(),
+        Some(_) => None,
+    }
+}
+
+/// An integer-array argument such as `recipeIds`; None unless it's a non-empty list of integers.
+fn id_list(a: &Map<String, Value>, key: &str) -> Option<Vec<i64>> {
+    a.get(key)
+        .and_then(Value::as_array)
+        .and_then(|l| l.iter().map(Value::as_i64).collect::<Option<Vec<_>>>())
+        .filter(|l| !l.is_empty())
+}
+
+/// Finds a cookbook by id or case-insensitive name. `Ok(None)` is a name no cookbook has
+/// yet; an unknown id or a malformed argument is an error for the caller to return.
+fn resolve_book<'b>(
+    books: &'b [CookbookListItem],
+    arg: Option<&Value>,
+) -> Result<Option<&'b CookbookListItem>, Value> {
+    match arg {
+        Some(Value::Number(n)) if n.as_i64().is_some() => {
+            let wanted = n.as_i64().unwrap();
+            books
+                .iter()
+                .find(|b| b.id == wanted)
+                .map(Some)
+                .ok_or_else(|| tool_error(format!("No cookbook with id {wanted}")))
+        }
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(books
+            .iter()
+            .find(|b| b.name.to_lowercase() == s.trim().to_lowercase())),
+        _ => Err(tool_error(
+            "Input validation error: cookbook must be an id or a name",
+        )),
+    }
+}
+
 impl Ctx<'_> {
     fn link(&self, id: i64) -> String {
         format!("{}/recipes/{id}", self.origin)
+    }
+
+    fn book_link(&self, id: i64) -> String {
+        format!("{}/cookbooks/{id}", self.origin)
+    }
+
+    fn recipe_line(&self, r: &RecipeSummary) -> String {
+        let meta = [&r.total_time, &r.recipe_category, &r.recipe_cuisine]
+            .iter()
+            .filter_map(|v| v.as_deref().filter(|v| !v.is_empty()))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let meta = if meta.is_empty() {
+            String::new()
+        } else {
+            format!(" ({meta})")
+        };
+        format!("- [{}] {}{meta} — {}", r.id, r.title, self.link(r.id))
     }
 
     fn saved(&self, r: &Recipe, is_new: bool) -> Value {
@@ -191,33 +256,53 @@ impl Ctx<'_> {
                         None => return Some(invalid("limit must be an integer from 1 to 100")),
                     },
                 };
-                let rows = match recipes::list_recipes(&db.lock(), query, Some(limit), None) {
+                let offset = match a.get("offset") {
+                    None => 0,
+                    Some(v) => match v.as_i64().filter(|o| *o >= 0) {
+                        Some(o) => o,
+                        None => return Some(invalid("offset must be a non-negative integer")),
+                    },
+                };
+                let Some(missing) = string_list(a, "missing") else {
+                    return Some(invalid("missing must be an array of field names"));
+                };
+                let rows = match recipes::search_recipes(
+                    &db.lock(),
+                    query,
+                    &missing,
+                    Some(limit),
+                    Some(offset),
+                ) {
                     Ok(rows) => rows,
                     Err(err) => return Some(tool_error(err.message)),
                 };
+                let filter = if missing.is_empty() {
+                    String::new()
+                } else {
+                    format!(" missing {}", missing.join(" and "))
+                };
                 if rows.is_empty() {
                     return Some(text(match query {
-                        Some(q) => format!("No recipes match \"{q}\"."),
+                        Some(q) => format!("No recipes{filter} match \"{q}\"."),
+                        None if offset > 0 => "No more recipes.".into(),
+                        None if !missing.is_empty() => format!("No recipes{filter}."),
                         None => "No recipes saved yet.".into(),
                     }));
                 }
-                let lines: Vec<String> = rows
-                    .iter()
-                    .map(|r| {
-                        let meta = [&r.total_time, &r.recipe_category, &r.recipe_cuisine]
-                            .iter()
-                            .filter_map(|v| v.as_deref().filter(|v| !v.is_empty()))
-                            .collect::<Vec<_>>()
-                            .join(" · ");
-                        let meta = if meta.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({meta})")
-                        };
-                        format!("- [{}] {}{meta} — {}", r.id, r.title, self.link(r.id))
-                    })
-                    .collect();
-                text(format!("{} recipe(s):\n{}", rows.len(), lines.join("\n")))
+                let lines: Vec<String> = rows.iter().map(|r| self.recipe_line(r)).collect();
+                let more = if rows.len() as i64 == limit {
+                    format!(
+                        "\n\nThere may be more; call again with offset {}.",
+                        offset + limit
+                    )
+                } else {
+                    String::new()
+                };
+                text(format!(
+                    "{} recipe(s){filter}:\n{}{more}",
+                    rows.len(),
+                    lines.join("\n")
+                ))
             }
             "get_recipe" => {
                 let Some(id) = int("id") else {
@@ -291,16 +376,38 @@ impl Ctx<'_> {
                 }
             }
             "delete_recipe" => {
-                let Some(id) = int("id") else {
-                    return Some(invalid("id must be an integer"));
+                let ids = match (int("id"), a.get("ids")) {
+                    (Some(id), None) => vec![id],
+                    (None, Some(_)) => match id_list(a, "ids") {
+                        Some(ids) => ids,
+                        None => return Some(invalid("ids must be a non-empty array of integers")),
+                    },
+                    _ => return Some(invalid("pass either id or ids")),
                 };
                 let conn = db.lock();
-                match recipes::get_recipe(&conn, id) {
-                    Ok(Some(r)) => match recipes::delete_recipes(&conn, &[id]) {
-                        Ok(_) => text(format!("Deleted \"{}\".", r.title)),
-                        Err(err) => tool_error(err.message),
-                    },
-                    Ok(None) => tool_error(format!("No recipe with id {id}")),
+                let mut found = Vec::new();
+                for id in &ids {
+                    match recipes::get_recipe(&conn, *id) {
+                        Ok(Some(r)) => found.push(r),
+                        Ok(None) => return Some(tool_error(format!("No recipe with id {id}"))),
+                        Err(err) => return Some(tool_error(err.message)),
+                    }
+                }
+                let titles: Vec<String> = found
+                    .iter()
+                    .map(|r| format!("- [{}] {}", r.id, r.title))
+                    .collect();
+                if a.get("confirm") != Some(&Value::Bool(true)) {
+                    return Some(text(format!(
+                        "Not deleted yet. This will permanently delete {} recipe(s):\n{}\n\n\
+                         Show this list to the user. Only if they agree, call delete_recipe again \
+                         with the same ids and confirm: true.",
+                        found.len(),
+                        titles.join("\n")
+                    )));
+                }
+                match recipes::delete_recipes(&conn, &ids) {
+                    Ok(n) => text(format!("Deleted {n} recipe(s):\n{}", titles.join("\n"))),
                     Err(err) => tool_error(err.message),
                 }
             }
@@ -309,54 +416,209 @@ impl Ctx<'_> {
                 Ok(books) => text(
                     books
                         .iter()
-                        .map(|b| format!("- [{}] {} ({} recipes)", b.id, b.name, b.recipe_count))
+                        .map(|b| {
+                            let color = b.color.as_deref().unwrap_or("no colour");
+                            format!(
+                                "- [{}] {} ({} recipes, {color})",
+                                b.id, b.name, b.recipe_count
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join("\n"),
                 ),
                 Err(err) => tool_error(err.message),
             },
+            "get_cookbook" => {
+                let conn = db.lock();
+                let result = (|| -> Result<Value, AppError> {
+                    let books = recipes::list_cookbooks(&conn)?;
+                    let book = match resolve_book(&books, a.get("cookbook")) {
+                        Ok(Some(b)) => b,
+                        Ok(None) => return Ok(tool_error("No cookbook with that name")),
+                        Err(e) => return Ok(e),
+                    };
+                    let full = recipes::get_cookbook(&conn, book.id)?;
+                    let mut out = format!(
+                        "Cookbook \"{}\" (id {}, {}) — {}\n",
+                        full.name,
+                        full.id,
+                        full.color.as_deref().unwrap_or("no colour"),
+                        self.book_link(full.id)
+                    );
+                    if let Some(d) = &full.description {
+                        out.push_str(&format!("{d}\n"));
+                    }
+                    if full.recipes.is_empty() {
+                        out.push_str("\nNo recipes in this cookbook yet.");
+                    } else {
+                        out.push_str(&format!("\n{} recipe(s):\n", full.recipes.len()));
+                        let lines: Vec<String> =
+                            full.recipes.iter().map(|r| self.recipe_line(r)).collect();
+                        out.push_str(&lines.join("\n"));
+                    }
+                    Ok(text(out))
+                })();
+                result.unwrap_or_else(|err| tool_error(err.message))
+            }
             "add_to_cookbook" => {
-                let ids: Option<Vec<i64>> = a
-                    .get("recipeIds")
-                    .and_then(Value::as_array)
-                    .and_then(|l| l.iter().map(Value::as_i64).collect());
-                let Some(ids) = ids.filter(|l| !l.is_empty()) else {
+                let Some(ids) = id_list(a, "recipeIds") else {
                     return Some(invalid("recipeIds must be a non-empty array of integers"));
                 };
                 let result = (|| -> Result<Value, AppError> {
                     let conn = db.lock();
                     let books = recipes::list_cookbooks(&conn)?;
-                    let (id, name) = match a.get("cookbook") {
-                        Some(Value::Number(n)) if n.as_i64().is_some() => {
-                            let wanted = n.as_i64().unwrap();
-                            match books.iter().find(|b| b.id == wanted) {
-                                Some(b) => (b.id, b.name.clone()),
-                                None => {
-                                    return Ok(tool_error(format!("No cookbook with id {wanted}")));
-                                }
-                            }
+                    let (id, name) = match resolve_book(&books, a.get("cookbook")) {
+                        Ok(Some(b)) => (b.id, b.name.clone()),
+                        Ok(None) => {
+                            let name = cookbook_name(&a["cookbook"], "Name is required")?;
+                            let b = recipes::create_cookbook(&conn, &name, None, None)?;
+                            (b.id, b.name)
                         }
-                        Some(Value::String(s)) if !s.is_empty() => {
-                            match books
-                                .iter()
-                                .find(|b| b.name.to_lowercase() == s.trim().to_lowercase())
-                            {
-                                Some(b) => (b.id, b.name.clone()),
-                                None => {
-                                    let b = recipes::create_cookbook(&conn, s, None, None)?;
-                                    (b.id, b.name)
-                                }
-                            }
-                        }
-                        _ => return Ok(invalid("cookbook must be an id or a name")),
+                        Err(e) => return Ok(e),
                     };
                     let added = recipes::add_to_cookbook(&conn, id, &ids)?;
                     Ok(text(format!(
-                        "Added {added} recipe(s) to \"{name}\".\n{}/cookbooks/{id}",
-                        self.origin
+                        "Added {added} recipe(s) to \"{name}\".\n{}",
+                        self.book_link(id)
                     )))
                 })();
                 result.unwrap_or_else(|err| tool_error(err.message))
+            }
+            "remove_from_cookbook" => {
+                let Some(ids) = id_list(a, "recipeIds") else {
+                    return Some(invalid("recipeIds must be a non-empty array of integers"));
+                };
+                let result = (|| -> Result<Value, AppError> {
+                    let conn = db.lock();
+                    let books = recipes::list_cookbooks(&conn)?;
+                    let book = match resolve_book(&books, a.get("cookbook")) {
+                        Ok(Some(b)) => b,
+                        Ok(None) => return Ok(tool_error("No cookbook with that name")),
+                        Err(e) => return Ok(e),
+                    };
+                    let mut removed = 0;
+                    for id in &ids {
+                        removed += recipes::remove_from_cookbook(&conn, book.id, *id)?;
+                    }
+                    Ok(text(format!(
+                        "Removed {removed} recipe(s) from \"{}\". The recipes themselves are kept.\n{}",
+                        book.name,
+                        self.book_link(book.id)
+                    )))
+                })();
+                result.unwrap_or_else(|err| tool_error(err.message))
+            }
+            "update_cookbook" => {
+                let result = (|| -> Result<Value, AppError> {
+                    let conn = db.lock();
+                    let books = recipes::list_cookbooks(&conn)?;
+                    let book = match resolve_book(&books, a.get("cookbook")) {
+                        Ok(Some(b)) => b,
+                        Ok(None) => return Ok(tool_error("No cookbook with that name")),
+                        Err(e) => return Ok(e),
+                    };
+                    let validation = |e: AppError| invalid(&e.message);
+                    let name = match a
+                        .get("name")
+                        .map(|n| cookbook_name(n, "Name can't be empty"))
+                    {
+                        None => None,
+                        Some(Ok(n)) => Some(n),
+                        Some(Err(e)) => return Ok(validation(e)),
+                    };
+                    if let Some(n) = &name
+                        && let Some(other) = books
+                            .iter()
+                            .find(|b| b.id != book.id && b.name.to_lowercase() == n.to_lowercase())
+                    {
+                        return Ok(tool_error(format!(
+                            "Another cookbook is already called \"{}\" (id {}). Move its recipes \
+                             with add_to_cookbook instead, or pick a different name.",
+                            other.name, other.id
+                        )));
+                    }
+                    let description = match a.get("description").map(cookbook_description) {
+                        None => None,
+                        Some(Ok(d)) => Some(d),
+                        Some(Err(e)) => return Ok(validation(e)),
+                    };
+                    let color = match a.get("color").map(cookbook_color) {
+                        None => None,
+                        Some(Ok(c)) => Some(c),
+                        Some(Err(e)) => return Ok(validation(e)),
+                    };
+                    if name.is_none() && description.is_none() && color.is_none() {
+                        return Ok(invalid("pass at least one of name, description or color"));
+                    }
+                    let b = recipes::update_cookbook(
+                        &conn,
+                        book.id,
+                        recipes::CookbookPatch {
+                            name,
+                            description,
+                            color,
+                        },
+                    )?;
+                    Ok(text(format!(
+                        "Updated cookbook \"{}\" (id {}, {}).\n{}",
+                        b.name,
+                        b.id,
+                        b.color.as_deref().unwrap_or("no colour"),
+                        self.book_link(b.id)
+                    )))
+                })();
+                result.unwrap_or_else(|err| tool_error(err.message))
+            }
+            "delete_cookbook" => {
+                let conn = db.lock();
+                let books = match recipes::list_cookbooks(&conn) {
+                    Ok(b) => b,
+                    Err(err) => return Some(tool_error(err.message)),
+                };
+                let book = match resolve_book(&books, a.get("cookbook")) {
+                    Ok(Some(b)) => b,
+                    Ok(None) => return Some(tool_error("No cookbook with that name")),
+                    Err(e) => return Some(e),
+                };
+                if a.get("confirm") != Some(&Value::Bool(true)) {
+                    return Some(text(format!(
+                        "Not deleted yet. This will delete the cookbook \"{}\" (id {}), which holds \
+                         {} recipe(s). The recipes stay in the library.\n\nAsk the user to confirm, \
+                         then call delete_cookbook again with confirm: true.",
+                        book.name, book.id, book.recipe_count
+                    )));
+                }
+                match recipes::delete_cookbook(&conn, book.id) {
+                    Ok(()) => text(format!(
+                        "Deleted the cookbook \"{}\". Its {} recipe(s) are still in the library.",
+                        book.name, book.recipe_count
+                    )),
+                    Err(err) => tool_error(err.message),
+                }
+            }
+            "refresh_recipe_from_source" => {
+                let Some(id) = int("id") else {
+                    return Some(invalid("id must be an integer"));
+                };
+                let Some(overwrite) = string_list(a, "overwrite") else {
+                    return Some(invalid("overwrite must be an array of field names"));
+                };
+                match recipes::refresh_from_source(self.state, id, &overwrite).await {
+                    Ok((r, changed)) if changed.is_empty() => text(format!(
+                        "Nothing to fill in for \"{}\" (id {}); the source page had nothing new.\n{}",
+                        r.title,
+                        r.id,
+                        self.link(r.id)
+                    )),
+                    Ok((r, changed)) => text(format!(
+                        "Updated {} on \"{}\" (id {}) from its source page.\n{}",
+                        changed.join(", "),
+                        r.title,
+                        r.id,
+                        self.link(r.id)
+                    )),
+                    Err(err) => tool_error(err.message),
+                }
             }
             _ => return None,
         })
@@ -414,20 +676,31 @@ fn object(properties: Map<String, Value>, required: &[&str]) -> Value {
     json!({"type": "object", "properties": properties, "required": required})
 }
 
+fn cookbook_ref() -> Value {
+    json!({"anyOf": [{"type": "integer"}, {"type": "string", "minLength": 1}], "description": "Cookbook id or name"})
+}
+
+fn props(v: Value) -> Map<String, Value> {
+    v.as_object().unwrap().clone()
+}
+
 pub fn tool_definitions() -> Vec<Value> {
     let mut update_props = Map::new();
     update_props.insert("id".into(), json!({"type": "integer"}));
     update_props.extend(recipe_properties());
+    let missing: Vec<&str> = recipes::MISSING_FILTERS.iter().map(|(k, _)| *k).collect();
 
     vec![
         json!({
             "name": "search_recipes",
             "title": "Search recipes",
-            "description": "Search saved recipes by title, ingredient, category or cuisine. Leave query empty to list the most recent recipes.",
-            "inputSchema": object(json!({
+            "description": "Search saved recipes by title, ingredient, category or cuisine. Leave query empty to list the most recent recipes. Use missing to find recipes that need tidying, e.g. [\"image\"] or [\"cookbook\"] (recipes on no shelf yet).",
+            "inputSchema": object(props(json!({
                 "query": {"type": "string", "description": "Words to match, e.g. \"chicken lemon\""},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}
-            }).as_object().unwrap().clone(), &[]),
+                "missing": {"type": "array", "items": {"type": "string", "enum": missing}, "description": "Only recipes where every listed field is empty; \"cookbook\" means not in any cookbook"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                "offset": {"type": "integer", "minimum": 0, "default": 0}
+            })), &[]),
             "annotations": {"readOnlyHint": true}
         }),
         json!({
@@ -464,27 +737,80 @@ pub fn tool_definitions() -> Vec<Value> {
             "annotations": {"idempotentHint": true}
         }),
         json!({
+            "name": "refresh_recipe_from_source",
+            "title": "Refresh recipe from its source page",
+            "description": "Re-fetch a saved recipe's source URL and fill in fields that are empty (image, description, times, servings, category...). Never changes fields the user has set unless they're listed in overwrite. The title only changes if listed.",
+            "inputSchema": object(props(json!({
+                "id": {"type": "integer"},
+                "overwrite": {"type": "array", "items": {"type": "string", "enum": recipes::REFRESHABLE}, "description": "Fields to replace from the source even if already set. Only include these when the user asked."}
+            })), &["id"]),
+            "annotations": {"openWorldHint": true}
+        }),
+        json!({
             "name": "delete_recipe",
-            "title": "Delete recipe",
-            "description": "Permanently delete a saved recipe. Confirm with the user first.",
-            "inputSchema": object(json!({"id": {"type": "integer"}}).as_object().unwrap().clone(), &["id"]),
+            "title": "Delete recipes",
+            "description": "Permanently delete one or more recipes. Without confirm: true this only returns a preview; show it to the user and call again with confirm: true once they agree.",
+            "inputSchema": object(props(json!({
+                "id": {"type": "integer"},
+                "ids": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "description": "Several recipes at once (instead of id)"},
+                "confirm": {"type": "boolean", "default": false, "description": "Set only after the user has approved the preview"}
+            })), &[]),
             "annotations": {"destructiveHint": true}
         }),
         json!({
             "name": "list_cookbooks",
             "title": "List cookbooks",
-            "description": "List the user's cookbooks (collections of recipes).",
+            "description": "List the user's cookbooks (the shelf) with recipe counts and colours.",
             "inputSchema": object(Map::new(), &[]),
+            "annotations": {"readOnlyHint": true}
+        }),
+        json!({
+            "name": "get_cookbook",
+            "title": "Get cookbook",
+            "description": "Show a cookbook and the recipes in it.",
+            "inputSchema": object(props(json!({"cookbook": cookbook_ref()})), &["cookbook"]),
             "annotations": {"readOnlyHint": true}
         }),
         json!({
             "name": "add_to_cookbook",
             "title": "Add recipes to cookbook",
             "description": "Add recipes to a cookbook by id or name. A cookbook with a new name is created.",
-            "inputSchema": object(json!({
-                "cookbook": {"anyOf": [{"type": "integer"}, {"type": "string", "minLength": 1}], "description": "Cookbook id or name"},
+            "inputSchema": object(props(json!({
+                "cookbook": cookbook_ref(),
                 "recipeIds": {"type": "array", "items": {"type": "integer"}, "minItems": 1}
-            }).as_object().unwrap().clone(), &["cookbook", "recipeIds"])
+            })), &["cookbook", "recipeIds"])
+        }),
+        json!({
+            "name": "remove_from_cookbook",
+            "title": "Remove recipes from cookbook",
+            "description": "Take recipes out of a cookbook. The recipes stay in the library and in any other cookbooks.",
+            "inputSchema": object(props(json!({
+                "cookbook": cookbook_ref(),
+                "recipeIds": {"type": "array", "items": {"type": "integer"}, "minItems": 1}
+            })), &["cookbook", "recipeIds"]),
+            "annotations": {"idempotentHint": true}
+        }),
+        json!({
+            "name": "update_cookbook",
+            "title": "Update cookbook",
+            "description": "Rename a cookbook, change its description, or change its cloth colour on the shelf.",
+            "inputSchema": object(props(json!({
+                "cookbook": cookbook_ref(),
+                "name": {"type": "string", "minLength": 1, "maxLength": 100},
+                "description": {"anyOf": [{"type": "string", "maxLength": 500}, {"type": "null"}]},
+                "color": {"type": "string", "enum": BOOK_COLORS}
+            })), &["cookbook"]),
+            "annotations": {"idempotentHint": true}
+        }),
+        json!({
+            "name": "delete_cookbook",
+            "title": "Delete cookbook",
+            "description": "Delete a cookbook; its recipes stay in the library. Without confirm: true this only returns a preview; ask the user, then call again with confirm: true.",
+            "inputSchema": object(props(json!({
+                "cookbook": cookbook_ref(),
+                "confirm": {"type": "boolean", "default": false, "description": "Set only after the user has approved"}
+            })), &["cookbook"]),
+            "annotations": {"destructiveHint": true}
         }),
     ]
 }

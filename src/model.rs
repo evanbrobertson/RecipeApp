@@ -521,6 +521,46 @@ pub struct CookbookWithRecipes {
     pub recipes: Vec<RecipeSummary>,
 }
 
+// ─── Cookbook fields ────────────────────────────────────────────────────────
+
+pub fn cookbook_name(v: &Value, required_message: &str) -> AppResult<String> {
+    let name = v
+        .as_str()
+        .ok_or_else(|| AppError::bad_request(format!("name: {required_message}")))?
+        .trim();
+    if name.is_empty() {
+        return Err(AppError::bad_request(format!("name: {required_message}")));
+    }
+    if name.chars().count() > 100 {
+        return Err(AppError::bad_request(
+            "name: Name is too long (100 characters max)",
+        ));
+    }
+    Ok(name.to_string())
+}
+
+pub fn cookbook_description(v: &Value) -> AppResult<Option<String>> {
+    match v {
+        Value::Null => Ok(None),
+        Value::String(s) if s.trim().chars().count() <= 500 => {
+            Ok(Some(s.trim().to_string()).filter(|s| !s.is_empty()))
+        }
+        Value::String(_) => Err(AppError::bad_request(
+            "description: Too long (500 characters max)",
+        )),
+        _ => Err(AppError::bad_request("description: expected string")),
+    }
+}
+
+pub fn cookbook_color(v: &Value) -> AppResult<String> {
+    v.as_str()
+        .filter(|c| BOOK_COLORS.contains(c))
+        .map(String::from)
+        .ok_or_else(|| {
+            AppError::bad_request(format!("color: expected one of {}", BOOK_COLORS.join(", ")))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

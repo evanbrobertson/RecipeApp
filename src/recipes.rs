@@ -79,10 +79,50 @@ fn like_pattern(term: &str) -> String {
     escaped
 }
 
+/// Things a recipe can be missing, as (json key, SQL condition on `r`), for `search_recipes`.
+pub const MISSING_FILTERS: [(&str, &str); 15] = [
+    ("image", "coalesce(trim(r.image), '') = ''"),
+    ("description", "coalesce(trim(r.description), '') = ''"),
+    ("url", "coalesce(trim(r.url), '') = ''"),
+    ("author", "coalesce(trim(r.author), '') = ''"),
+    ("prepTime", "coalesce(trim(r.prep_time), '') = ''"),
+    ("cookTime", "coalesce(trim(r.cook_time), '') = ''"),
+    ("totalTime", "coalesce(trim(r.total_time), '') = ''"),
+    ("recipeYield", "coalesce(trim(r.recipe_yield), '') = ''"),
+    (
+        "recipeCategory",
+        "coalesce(trim(r.recipe_category), '') = ''",
+    ),
+    ("recipeCuisine", "coalesce(trim(r.recipe_cuisine), '') = ''"),
+    ("notes", "coalesce(trim(r.notes), '') = ''"),
+    ("ingredients", "coalesce(r.ingredients, '') IN ('', '[]')"),
+    ("instructions", "coalesce(r.instructions, '') IN ('', '[]')"),
+    (
+        "nutrition",
+        "coalesce(r.nutrition, '') IN ('', 'null', '{}')",
+    ),
+    (
+        "cookbook",
+        "NOT EXISTS (SELECT 1 FROM cookbook_recipes cr WHERE cr.recipe_id = r.id)",
+    ),
+];
+
 /// Every whitespace-separated term must match the title, ingredients, category or cuisine.
 pub fn list_recipes(
     conn: &Connection,
     q: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> AppResult<Vec<RecipeSummary>> {
+    search_recipes(conn, q, &[], limit, offset)
+}
+
+/// [`list_recipes`] that also keeps only recipes missing every field in `missing`
+/// (keys of [`MISSING_FILTERS`]; unknown keys are an error).
+pub fn search_recipes(
+    conn: &Connection,
+    q: Option<&str>,
+    missing: &[&str],
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> AppResult<Vec<RecipeSummary>> {
@@ -91,16 +131,23 @@ pub fn list_recipes(
         .split_whitespace()
         .map(like_pattern)
         .collect();
+    let mut clauses: Vec<String> = (1..=terms.len())
+        .map(|i| {
+            format!(
+                "(r.title LIKE ?{i} ESCAPE '\\' OR r.ingredients LIKE ?{i} ESCAPE '\\' \
+                 OR r.recipe_category LIKE ?{i} ESCAPE '\\' OR r.recipe_cuisine LIKE ?{i} ESCAPE '\\')"
+            )
+        })
+        .collect();
+    for key in missing {
+        let (_, condition) = MISSING_FILTERS
+            .iter()
+            .find(|(k, _)| k == key)
+            .ok_or_else(|| AppError::bad_request(format!("missing: unknown field \"{key}\"")))?;
+        clauses.push((*condition).to_string());
+    }
     let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM recipes r");
-    if !terms.is_empty() {
-        let clauses: Vec<String> = (1..=terms.len())
-            .map(|i| {
-                format!(
-                    "(r.title LIKE ?{i} ESCAPE '\\' OR r.ingredients LIKE ?{i} ESCAPE '\\' \
-                     OR r.recipe_category LIKE ?{i} ESCAPE '\\' OR r.recipe_cuisine LIKE ?{i} ESCAPE '\\')"
-                )
-            })
-            .collect();
+    if !clauses.is_empty() {
         sql.push_str(" WHERE ");
         sql.push_str(&clauses.join(" AND "));
     }
@@ -297,6 +344,145 @@ pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Reci
     }
     let fields = crate::scraper::scrape_recipe(state, &url).await?;
     create_recipe(&state.db.lock(), fields, "url")
+}
+
+/// Fields [`refresh_from_source`] can fill or overwrite, as json keys.
+pub const REFRESHABLE: [&str; 15] = [
+    "title",
+    "description",
+    "image",
+    "author",
+    "prepTime",
+    "cookTime",
+    "totalTime",
+    "freezeTime",
+    "recipeYield",
+    "recipeCategory",
+    "recipeCuisine",
+    "ingredients",
+    "instructions",
+    "nutrition",
+    "notes",
+];
+
+/// Re-scrapes a recipe's source URL and fills in fields that are empty, keeping everything
+/// the user has already set. Fields named in `overwrite` are replaced even when set (the
+/// title only ever changes this way). Returns the recipe and the json keys that changed.
+pub async fn refresh_from_source(
+    state: &AppState,
+    id: i64,
+    overwrite: &[&str],
+) -> AppResult<(Recipe, Vec<&'static str>)> {
+    if let Some(bad) = overwrite.iter().find(|k| !REFRESHABLE.contains(k)) {
+        return Err(AppError::bad_request(format!(
+            "overwrite: unknown field \"{bad}\""
+        )));
+    }
+    let current = require_recipe(&state.db.lock(), id)?;
+    let url =
+        current.url.clone().filter(|u| is_http(u)).ok_or_else(|| {
+            AppError::bad_request("This recipe has no source URL to refresh from")
+        })?;
+    let scraped = crate::scraper::scrape_recipe(state, &url).await?;
+
+    let wants = |key: &str| overwrite.contains(&key);
+    let blank = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+    let mut changed = Vec::new();
+    let mut patch = RecipePatch::default();
+
+    if wants("title") && !scraped.title.trim().is_empty() && scraped.title != current.title {
+        patch.title = Some(scraped.title);
+        changed.push("title");
+    }
+    for (key, have, got, slot) in [
+        (
+            "description",
+            &current.description,
+            scraped.description,
+            &mut patch.description,
+        ),
+        ("image", &current.image, scraped.image, &mut patch.image),
+        ("author", &current.author, scraped.author, &mut patch.author),
+        (
+            "prepTime",
+            &current.prep_time,
+            scraped.prep_time,
+            &mut patch.prep_time,
+        ),
+        (
+            "cookTime",
+            &current.cook_time,
+            scraped.cook_time,
+            &mut patch.cook_time,
+        ),
+        (
+            "totalTime",
+            &current.total_time,
+            scraped.total_time,
+            &mut patch.total_time,
+        ),
+        (
+            "freezeTime",
+            &current.freeze_time,
+            scraped.freeze_time,
+            &mut patch.freeze_time,
+        ),
+        (
+            "recipeYield",
+            &current.recipe_yield,
+            scraped.recipe_yield,
+            &mut patch.recipe_yield,
+        ),
+        (
+            "recipeCategory",
+            &current.recipe_category,
+            scraped.recipe_category,
+            &mut patch.recipe_category,
+        ),
+        (
+            "recipeCuisine",
+            &current.recipe_cuisine,
+            scraped.recipe_cuisine,
+            &mut patch.recipe_cuisine,
+        ),
+        ("notes", &current.notes, scraped.notes, &mut patch.notes),
+    ] {
+        if !blank(&got) && (blank(have) || wants(key)) && got != *have {
+            *slot = Some(got);
+            changed.push(key);
+        }
+    }
+    for (key, have, got, slot) in [
+        (
+            "ingredients",
+            &current.ingredients,
+            scraped.ingredients,
+            &mut patch.ingredients,
+        ),
+        (
+            "instructions",
+            &current.instructions,
+            scraped.instructions,
+            &mut patch.instructions,
+        ),
+    ] {
+        if !got.is_empty() && (have.is_empty() || wants(key)) && got != *have {
+            *slot = Some(got);
+            changed.push(key);
+        }
+    }
+    if scraped.nutrition.is_some()
+        && (current.nutrition.is_none() || wants("nutrition"))
+        && scraped.nutrition.clone().map(Value::Object) != current.nutrition
+    {
+        patch.nutrition = Some(scraped.nutrition);
+        changed.push("nutrition");
+    }
+
+    if changed.is_empty() {
+        return Ok((current, changed));
+    }
+    Ok((update_recipe(&state.db.lock(), id, patch)?, changed))
 }
 
 static URL_ONLY: LazyLock<Regex> =
@@ -605,12 +791,16 @@ pub fn add_to_cookbook(
     Ok(added)
 }
 
-pub fn remove_from_cookbook(conn: &Connection, cookbook_id: i64, recipe_id: i64) -> AppResult<()> {
-    conn.execute(
+/// Returns how many links were removed (0 if the recipe wasn't in the cookbook).
+pub fn remove_from_cookbook(
+    conn: &Connection,
+    cookbook_id: i64,
+    recipe_id: i64,
+) -> AppResult<usize> {
+    Ok(conn.execute(
         "DELETE FROM cookbook_recipes WHERE cookbook_id = ?1 AND recipe_id = ?2",
         params![cookbook_id, recipe_id],
-    )?;
-    Ok(())
+    )?)
 }
 
 pub fn recipe_cookbook_ids(conn: &Connection, recipe_id: i64) -> AppResult<Vec<i64>> {
