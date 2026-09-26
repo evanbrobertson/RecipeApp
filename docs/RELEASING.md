@@ -58,6 +58,16 @@ The native Qt6/QML desktop app (`desktop/linux`, binary `crumb-desktop`) shares 
 - **Promote.** After the image is retagged and the GitHub Release made, a `desktop-release` job builds the same commit, renders the AUR `PKGBUILD` from `PKGBUILD.in`, and uploads the tarball, its `.sha256` and the `PKGBUILD` to the release. It runs for both `stable` and `beta`, after the server promotion, so a failure there never rolls it back.
 - **Tarball layout.** `crumb-desktop/{crumb-desktop, crumb-desktop.desktop, crumb-desktop.png, install.sh, README.txt, LICENSE}`. `install.sh` installs per user under `~/.local` (and supports `--uninstall`); the PKGBUILD is the AUR `crumb-desktop-bin` package for a system install.
 
+## Android
+
+The Android app (`android/`, with `crumb-core` linked through `crates/crumb-ffi`) rides the same version too.
+
+- **Checks.** `android.yml` runs on every change to `android/`, `crates/crumb-core`, `crates/crumb-ffi` or the Cargo files: it cross-compiles the core for arm64-v8a, armeabi-v7a and x86_64, generates the Kotlin bindings, runs the JVM tests against the real core, lints, builds debug and release APKs, and fails if an ABI is missing `libcrumb_ffi.so`. The toolchain (JDK, SDK, NDK, Rust targets, cargo-ndk) is one composite action, `.github/actions/android-setup`.
+- **Dev builds.** Every master push builds `crumb-android-<version>.apk` plus `.sha256` (`android/scripts/build-release-apk.sh`) as the `crumb-android-<version>` workflow artifact (30 days), beside the deploy, never blocking it.
+- **Promote.** An `android-release` job builds the promoted commit and uploads the APK and its `.sha256` to the GitHub Release, after the server promotion.
+- **Version code.** Derived from the version so newer always installs over older: `X.Y.Z` → `X·10⁷ + Y·10⁴ + Z·10 + 9`, and a master build (`-main.N`) ends in 0 instead, so the promoted release replaces its dev builds.
+- **Signing.** With the `CRUMB_KEYSTORE_BASE64`, `CRUMB_KEYSTORE_PASSWORD`, `CRUMB_KEY_ALIAS` and `CRUMB_KEY_PASSWORD` secrets the APK is signed; without them it is built and named `-unsigned` (see `android/README.md`).
+
 ## Secrets and variables
 
 Repository secrets (Settings → Secrets and variables → Actions):

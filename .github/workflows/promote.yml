@@ -286,3 +286,31 @@ jobs:
             desktop-dist/crumb-desktop-linux-x86_64-*.tar.gz \
             desktop-dist/crumb-desktop-linux-x86_64-*.tar.gz.sha256 \
             desktop-dist/PKGBUILD --clobber
+
+  # The Android APK for the same commit and version, attached to the same release. Like the
+  # desktop assets it runs after the server promotion, so a failure never rolls it back.
+  android-release:
+    name: Android release assets
+    needs: promote
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.promote.outputs.version }}
+      TAG: ${{ needs.promote.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.promote.outputs.sha }}
+      - uses: ./.github/actions/android-setup
+      - env:
+          KEYSTORE_BASE64: ${{ secrets.CRUMB_KEYSTORE_BASE64 }}
+          CRUMB_KEYSTORE_PASSWORD: ${{ secrets.CRUMB_KEYSTORE_PASSWORD }}
+          CRUMB_KEY_ALIAS: ${{ secrets.CRUMB_KEY_ALIAS }}
+          CRUMB_KEY_PASSWORD: ${{ secrets.CRUMB_KEY_PASSWORD }}
+        run: android/scripts/build-release-apk.sh "$VERSION" android-dist
+      - name: Upload the release assets
+        run: gh release upload "$TAG" android-dist/crumb-android-*.apk android-dist/crumb-android-*.apk.sha256 --clobber

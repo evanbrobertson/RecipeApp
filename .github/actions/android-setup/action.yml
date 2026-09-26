@@ -1,0 +1,38 @@
+# Everything an Android build needs: JDK 17, Gradle, the SDK platform and build tools, and
+# the Rust side of crumb-core (Android targets, cargo-ndk, the NDK). Shared by android.yml,
+# main.yml and promote.yml so the three builds can't drift apart.
+name: Android build setup
+description: JDK, Gradle, Android SDK + NDK, Rust Android targets and cargo-ndk
+
+inputs:
+  save-cache:
+    description: Whether this run may write the Gradle and Cargo caches
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: "17"
+    # Also validates the Gradle wrapper jar
+    - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      with:
+        cache-read-only: ${{ inputs.save-cache != 'true' }}
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      with:
+        toolchain: stable
+        targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        prefix-key: android
+        save-if: ${{ inputs.save-cache == 'true' }}
+    - name: Install Android SDK packages, NDK and cargo-ndk
+      shell: bash
+      run: |
+        sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+        yes | "$sdkmanager" --licenses > /dev/null
+        "$sdkmanager" "platforms;android-37.0" "build-tools;36.1.0" "ndk;28.2.13676358" > /dev/null
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+        cargo install cargo-ndk --version 4.1.2 --locked

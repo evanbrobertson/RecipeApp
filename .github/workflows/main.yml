@@ -162,6 +162,34 @@ jobs:
             --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --yes
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"
 
+  # The Android APK rides the same version, like the desktop app: built here as a workflow
+  # artifact, never blocking deploy-dev. Signed when the CRUMB_KEYSTORE_* secrets exist.
+  android-build:
+    name: Android release build
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/android-setup
+      - id: apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CRUMB_KEYSTORE_BASE64 }}
+          CRUMB_KEYSTORE_PASSWORD: ${{ secrets.CRUMB_KEYSTORE_PASSWORD }}
+          CRUMB_KEY_ALIAS: ${{ secrets.CRUMB_KEY_ALIAS }}
+          CRUMB_KEY_PASSWORD: ${{ secrets.CRUMB_KEY_PASSWORD }}
+        run: android/scripts/build-release-apk.sh "$VERSION" android-dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crumb-android-${{ needs.version.outputs.version }}
+          path: android-dist/
+          retention-days: 30
+          if-no-files-found: error
+
   # The desktop executable rides the same version as the server but ships on its own: it is
   # only built here (nothing is attached to a release yet) and it must never block or change
   # deploy-dev, which does not depend on this job. See docs/RELEASING.md.

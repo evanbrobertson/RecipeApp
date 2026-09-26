@@ -6,7 +6,14 @@ server; the phone keeps a copy of what it has shown so recipes open without a co
 
 ## Build
 
-Needs JDK 17 and the Android SDK (platform 37, build-tools 36.1).
+Needs JDK 17, the Android SDK (platform 37, build-tools 36.1) and NDK 28, and Rust with the
+Android targets and cargo-ndk, because the app links `crumb-core`:
+
+```bash
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+cargo install cargo-ndk
+sdkmanager "ndk;28.2.13676358"
+```
 
 ```bash
 cd android
@@ -17,7 +24,25 @@ cd android
 ./gradlew :app:assembleRelease      # minified; signed if a keystore is configured
 ```
 
-Set `JAVA_HOME` and `ANDROID_HOME` (or `sdk.dir` in `local.properties`) first.
+Set `JAVA_HOME` and `ANDROID_HOME` (or `sdk.dir` in `local.properties`) first; the NDK is
+found under the SDK, or set `ANDROID_NDK_HOME`. Every build cross-compiles the core for
+arm64-v8a, armeabi-v7a and x86_64; add `-PcrumbAbis=arm64-v8a` for a quicker loop on a phone.
+
+### crumb-core
+
+Scaling, mise en place, step timers, step ingredients, durations and text export are the
+same Rust code the server and desktop app use (`crates/crumb-core`), exposed to Kotlin by
+`crates/crumb-ffi` with [UniFFI](https://mozilla.github.io/uniffi-rs/). Gradle runs it all
+before `preBuild`:
+
+- `cargoBuildCoreAndroid`: `cargo ndk` builds `libcrumb_ffi.so` per ABI into `app/build/rustJniLibs`
+- `cargoBuildCoreHost` + `generateCoreBindings`: a host build of the same library, from which
+  UniFFI generates `app.crumb.core` into `app/build/generated/uniffi` (nothing generated is
+  committed). The JVM unit tests load that host library through JNA, so they exercise the
+  real core, not a mock.
+
+To add a function, export it from `crates/crumb-ffi/src/lib.rs` with `#[uniffi::export]`
+(records with `#[derive(uniffi::Record)]`; recipes cross as the API's JSON) and rebuild.
 
 ### Trying it against a local server
 
@@ -71,8 +96,8 @@ app/src/main/java/app/crumb/android/
   `web/src/assets/fonts` (converted to TTF). Butter is only the main action and the active tab.
 - **Photos:** Coil, through the server's resizer with the session cookie; falls back to the
   original image URL like the web does.
-- **Shared logic:** scaling, parsing and ranking belong to `crumb-core` (Rust) and will come in
-  through UniFFI rather than being rewritten in Kotlin.
+- **Shared logic:** anything the web and desktop apps also compute comes from `crumb-core`
+  through `app.crumb.core`, never a Kotlin rewrite.
 
 ## Roadmap
 

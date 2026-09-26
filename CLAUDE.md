@@ -44,6 +44,7 @@ bun run format                   # oxfmt
 
 ```
 crates/crumb-core/  # Pure logic shared by the server and the desktop app (model, fractions, categories, text_parser, markdown, suggest)
+crates/crumb-ffi/   # UniFFI bindings to crumb-core for the Android app (Kotlin package app.crumb.core)
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
@@ -61,7 +62,7 @@ src/
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
-android/          # Native Android app (Kotlin + Jetpack Compose), a client of the REST API; see android/README.md
+android/          # Native Android app (Kotlin + Jetpack Compose), a REST client linking crumb-core; see android/README.md
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes

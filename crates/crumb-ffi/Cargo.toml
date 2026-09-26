@@ -1,0 +1,25 @@
+[package]
+name = "crumb-ffi"
+version = "0.1.0"
+edition = "2024"
+description = "UniFFI bindings to crumb-core for the Android app (Kotlin)."
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "crumb_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+crumb-core = { path = "../crumb-core" }
+serde_json = "1"
+thiserror = "2"
+uniffi = "0.32"
