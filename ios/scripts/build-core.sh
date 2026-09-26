@@ -48,12 +48,12 @@ rustup target add "${targets[@]}" > /dev/null
 for target in "${targets[@]}"; do
   echo "▸ crumb-core for $target ($profile)"
   # A static library for Xcode to link; the crate itself stays a cdylib for Android
-  cargo rustc --locked -p crumb-ffi --lib --crate-type staticlib --target "$target" "${cargo_profile[@]}"
+  cargo rustc --locked -p crumb-ffi --lib --crate-type staticlib --target "$target" ${cargo_profile[@]+"${cargo_profile[@]}"}
 done
 
 # The Swift bindings, generated from a host build's metadata (identical on every target)
 echo "▸ Swift bindings"
-cargo build --locked -p crumb-ffi --lib "${cargo_profile[@]}"
+cargo build --locked -p crumb-ffi --lib ${cargo_profile[@]+"${cargo_profile[@]}"}
 host_lib="target/$profile/libcrumb_ffi.dylib"
 [[ -f $host_lib ]] || host_lib="target/$profile/libcrumb_ffi.so"
 gen=$(mktemp -d)
