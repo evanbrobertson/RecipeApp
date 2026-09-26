@@ -4,6 +4,9 @@
 #include "native.h"
 
 #include <QtCore/QStringList>
+#include <QtCore/QUrl>
+#include <QtGui/QClipboard>
+#include <QtGui/QDesktopServices>
 #include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
@@ -24,4 +27,12 @@ bool crumbPrefersDark() {
 #else
     return true;
 #endif
+}
+
+void crumbSetClipboardText(const QString &text) {
+    QGuiApplication::clipboard()->setText(text);
+}
+
+bool crumbOpenUrl(const QString &url) {
+    return QDesktopServices::openUrl(QUrl(url));
 }

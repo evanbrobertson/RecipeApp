@@ -8,6 +8,16 @@ Item {
     id: page
     property var session
 
+    // Connect needs a URL; signing in doesn't. Drives the submit button's enabled state.
+    readonly property bool canSubmit: {
+        if (!session || session.busy)
+            return false
+        var url = urlField.text.trim()
+        if (connectMode(url))
+            return url.length > 0
+        return true
+    }
+
     function connectMode(url) {
         return !session || session.state === "setup"
                 || session.serverUrl !== url || session.error !== ""
@@ -21,6 +31,21 @@ Item {
             session.connect(url)
         else
             session.login(passwordField.text)
+    }
+
+    // The `--smoke` regression check: the page's `session` must be bound (it once bound to
+    // itself, so the button never enabled), and typing a URL must enable the button.
+    function smokeCheck() {
+        if (!session) {
+            Smoke.fail("LoginPage.session is not bound")
+            return
+        }
+        urlField.text = ""
+        if (submitButton.enabled)
+            Smoke.fail("the submit button enabled with no server")
+        urlField.text = "https://crumb.example"
+        if (!submitButton.enabled)
+            Smoke.fail("the submit button never enabled")
     }
 
     ColumnLayout {
@@ -86,7 +111,7 @@ Item {
             id: submitButton
             Layout.fillWidth: true
             Layout.preferredHeight: 44
-            enabled: session ? !session.busy : false
+            enabled: page.canSubmit
             text: page.connectMode(urlField.text.trim()) ? "Connect" : "Sign in"
             onClicked: page.submit()
 
