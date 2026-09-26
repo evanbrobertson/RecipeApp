@@ -8,6 +8,11 @@ import app.crumb.desktop 1.0
 Item {
     id: page
     property var session
+    signal openRecipe(int recipeId)
+
+    function focusSearch() {
+        searchField.forceActiveFocus()
+    }
 
     RecipeList {
         id: list
@@ -190,6 +195,12 @@ Item {
                                 elide: Text.ElideRight
                             }
                         }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: page.openRecipe(model.recipeId)
                     }
 
                     // Card border, drawn over the photo so the 1px line stays crisp.

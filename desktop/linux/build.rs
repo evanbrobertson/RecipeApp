@@ -12,6 +12,7 @@ fn main() {
             .qml_file("qml/Main.qml")
             .qml_file("qml/LoginPage.qml")
             .qml_file("qml/RecipesPage.qml")
+            .qml_file("qml/RecipePage.qml")
             .qml_file("qml/StyledField.qml")
             // QColor properties need QtQuick for qmllint/qmlls.
             .depends([
@@ -24,9 +25,10 @@ fn main() {
     .file("src/palette.rs")
     .file("src/session.rs")
     .file("src/recipes.rs")
+    .file("src/recipe.rs")
     .file("src/smoke.rs")
     .file("src/native.rs")
-    .qrc_resources(font_resources());
+    .qrc_resources(resources());
 
     // Tiny C++ shims: one makes `--smoke` fail on any QML warning, the other wraps the
     // QFontDatabase/QStyleHints calls cxx-qt-lib does not expose.
@@ -41,20 +43,31 @@ fn main() {
     builder.build();
 }
 
-/// Bundles the WOFF2 fonts from `web/src/assets/fonts` into `:/fonts`.
+/// Bundles the WOFF2 fonts from `web/src/assets/fonts` into `:/fonts`, and the local image
+/// the `--smoke-page recipe` fixture uses into `:/img` (so that smoke run stays offline).
 ///
 /// Qt links FreeType with Brotli, so `addApplicationFont` reads WOFF2 directly; there is no
 /// decompressed-TTF fallback, which would only make local and CI builds differ.
-fn font_resources() -> QResources {
+fn resources() -> QResources {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let dir = manifest.join("../../web/src/assets/fonts");
+    let fonts = manifest.join("../../web/src/assets/fonts");
 
-    let mut resource = QResource::new().prefix("/fonts");
+    let mut font_resource = QResource::new().prefix("/fonts");
     for stem in FONTS {
-        let woff2 = dir.join(format!("{stem}.woff2"));
+        let woff2 = fonts.join(format!("{stem}.woff2"));
         if woff2.is_file() {
-            resource = resource.file(QResourceFile::new(&woff2).alias(format!("{stem}.woff2")));
+            font_resource =
+                font_resource.file(QResourceFile::new(&woff2).alias(format!("{stem}.woff2")));
         }
     }
-    QResources::new().resource(resource)
+
+    let fixture = manifest.join("assets/fixture.png");
+    let mut resources = QResources::new().resource(font_resource);
+    if fixture.is_file() {
+        let image_resource = QResource::new()
+            .prefix("/img")
+            .file(QResourceFile::new(&fixture).alias("fixture.png"));
+        resources = resources.resource(image_resource);
+    }
+    resources
 }

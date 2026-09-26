@@ -58,8 +58,9 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       # The runner's Qt is 6.4 and cxx-qt needs 6.5+, so build inside Arch, which tracks
-      # current Qt. qmake6 ships with qt6-base and cxx-qt finds it on PATH.
-      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git
+      # current Qt. qmake6 ships with qt6-base and cxx-qt finds it on PATH. cmake is for the
+      # server's BoringSSL (wreq): the desktop tests run against the real router.
+      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git cmake
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

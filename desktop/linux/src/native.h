@@ -11,3 +11,9 @@ QString crumbApplicationFontFamily(int id);
 
 /// Whether the desktop prefers a dark colour scheme.
 bool crumbPrefersDark();
+
+/// Puts text on the system clipboard.
+void crumbSetClipboardText(const QString &text);
+
+/// Opens an http(s) URL in the user's default browser; false when nothing handled it.
+bool crumbOpenUrl(const QString &url);
