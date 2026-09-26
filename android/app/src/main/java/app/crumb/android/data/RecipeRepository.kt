@@ -40,7 +40,7 @@ class RecipeRepository(
 
     suspend fun importLink(url: String) = api.importUrl(url)
     suspend fun importText(text: String) = api.importText(text)
-    suspend fun markCooked(id: Long) = api.markCooked(id)
+    suspend fun markCooked(id: Long): Cooked = api.markCooked(id)
 
     fun photoUrl(recipeId: Long, image: String?, width: Int) = api.photoUrl(recipeId, image, width)
 
