@@ -127,6 +127,9 @@
             ? "Anyone with the link sees this book and every recipe in it, including ones you add later."
             : "Anyone with the link can see this recipe, not the rest of your box."}
         </p>
+        {#if book}
+          <p class="meta mt-1">Links to single recipes in this book open the whole book.</p>
+        {/if}
         <button type="button" class="btn btn-soft mt-3" disabled={busy} onclick={create}>
           <Link /> Create link
         </button>
@@ -139,6 +142,9 @@
           value={share.url}
           onfocus={(e) => e.currentTarget.select()}
         />
+        {#if book}
+          <p class="meta mt-2">Links to single recipes in this book open the whole book.</p>
+        {/if}
         <div class="mt-3 flex flex-wrap gap-2">
           <button
             type="button"

@@ -354,6 +354,8 @@ pub struct BookImport {
     pub name: String,
     pub created: Vec<CreatedRef>,
     pub duplicates: usize,
+    /// Recipes in the export that couldn't be saved.
+    pub skipped: usize,
 }
 
 /// One recipe from a link; a shared cookbook link is refused (the Add page and the MCP tool
@@ -423,7 +425,7 @@ fn save_shared(
     let original = fields
         .url
         .take()
-        .filter(|u| is_valid_url(u) && !same_host(u, share_url));
+        .filter(|u| crate::share::publishable_source(u) && !same_host(u, share_url));
     fields.url = Some(share_url.to_string());
     // A share from a Crumb before the fixed list may carry a site's wording
     fields.recipe_category = crate::categories::for_import(fields.recipe_category.as_deref());
@@ -468,19 +470,14 @@ fn save_shared_book(
         (!id.is_empty() && id.len() <= 18 && id.bytes().all(|b| b.is_ascii_digit()))
             .then(|| format!("{base}/{id}"))
     };
-    let mut summary = ImportSummary {
-        file: String::new(),
-        created: vec![],
-        duplicates: 0,
-        error: None,
-    };
+    let mut summary = ImportSummary::default();
     let conn = state.db.lock();
     let tx = conn.unchecked_transaction()?;
-    let book_id = find_or_create_cookbook(&conn, &name, book.color.as_deref())?;
-    let mut skipped = 0;
+    let book_id = cookbook_for_shared_book(&conn, &name, book.color.as_deref(), &base)?;
+    let mut unlinked = 0;
     for mut item in book.recipes.into_iter().take(MAX_BOOK_RECIPES) {
         let Some(link) = item.fields.url.as_deref().and_then(recipe_link) else {
-            skipped += 1;
+            unlinked += 1;
             continue;
         };
         item.fields.url = Some(link);
@@ -490,12 +487,12 @@ fn save_shared_book(
             crate::categories::for_import(item.fields.recipe_category.as_deref());
         item.restored = true;
         item.cooked.clear();
-        item.cookbooks = vec![name.clone()];
-        save_imported(&conn, item, &mut summary, &mut Vec::new());
+        item.cookbooks.clear();
+        save_imported(&conn, item, &mut summary, &mut Vec::new(), Some(book_id));
     }
-    if skipped > 0 {
+    if unlinked > 0 {
         tracing::info!(
-            "[share] skipped {skipped} recipes of a shared cookbook: not under its link"
+            "[share] skipped {unlinked} recipes of a shared cookbook: not under its link"
         );
     }
     tx.commit()?;
@@ -505,7 +502,70 @@ fn save_shared_book(
         name,
         created: summary.created,
         duplicates: summary.duplicates,
+        skipped: summary.skipped + unlinked,
     })
+}
+
+/// The cookbook a shared book (by its link, `book_url`) is saved into: the one an earlier save
+/// of the same link made, else a new one named after the book. An existing cookbook of that
+/// name is only used when it's empty (it's then marked as this link's); otherwise the new one
+/// is "Name (2)", "Name (3)" and so on, so a shared book never mixes into one of the box's own.
+fn cookbook_for_shared_book(
+    conn: &Connection,
+    name: &str,
+    color: Option<&str>,
+    book_url: &str,
+) -> AppResult<i64> {
+    let earlier: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM cookbooks WHERE source_share_url = ?1 ORDER BY id LIMIT 1",
+            [book_url],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(id) = earlier {
+        return Ok(id);
+    }
+    let name = name.trim();
+    for n in 1..=1000 {
+        let candidate = if n == 1 {
+            name.to_string()
+        } else {
+            // Still within the 100-character limit on names
+            let base: String = name.chars().take(100 - 3 - n.to_string().len()).collect();
+            format!("{} ({n})", base.trim_end())
+        };
+        let existing: Option<(i64, Option<String>, i64)> = conn
+            .query_row(
+                "SELECT c.id, c.source_share_url,
+                        (SELECT count(*) FROM cookbook_recipes cr WHERE cr.cookbook_id = c.id)
+                 FROM cookbooks c WHERE lower(c.name) = lower(?1) ORDER BY c.id LIMIT 1",
+                [&candidate],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        match existing {
+            None => {
+                let id = create_cookbook(conn, &candidate, None, color.and_then(book_color))?.id;
+                mark_shared_source(conn, id, book_url)?;
+                return Ok(id);
+            }
+            Some((id, None, 0)) => {
+                mark_shared_source(conn, id, book_url)?;
+                return Ok(id);
+            }
+            Some(_) => {}
+        }
+    }
+    Err(AppError::internal("couldn't name the cookbook"))
+}
+
+fn mark_shared_source(conn: &Connection, id: i64, book_url: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE cookbooks SET source_share_url = ?1 WHERE id = ?2",
+        params![book_url, id],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn same_host(a: &str, b: &str) -> bool {
@@ -518,8 +578,10 @@ pub(crate) fn same_host(a: &str, b: &str) -> bool {
     host(a).is_some() && host(a) == host(b)
 }
 
+/// Notes where a recipe saved from a share came from: only an http(s) link that isn't itself
+/// a share link (an export can name anything; a share link is someone's key to their share).
 fn set_original_url(conn: &Connection, id: i64, url: Option<&str>) -> AppResult<()> {
-    if let Some(url) = url.filter(|u| is_valid_url(u)) {
+    if let Some(url) = url.filter(|u| crate::share::publishable_source(u)) {
         conn.execute(
             "UPDATE recipes SET original_url = ?1 WHERE id = ?2",
             params![url, id],
@@ -731,11 +793,13 @@ pub struct CreatedRef {
     pub title: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct ImportSummary {
     pub file: String,
     pub created: Vec<CreatedRef>,
     pub duplicates: usize,
+    /// Recipes read from the file that couldn't be saved.
+    pub skipped: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -744,9 +808,8 @@ impl ImportSummary {
     pub fn failed(file: &str, error: impl Into<String>) -> Self {
         Self {
             file: file.into(),
-            created: vec![],
-            duplicates: 0,
             error: Some(error.into()),
+            ..Self::default()
         }
     }
 }
@@ -779,70 +842,98 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
 
     let mut summary = ImportSummary {
         file: name.into(),
-        created: vec![],
-        duplicates: 0,
-        error: None,
+        ..ImportSummary::default()
     };
     let conn = state.db.lock();
     let mut to_check = Vec::new();
     for item in found {
-        save_imported(&conn, item, &mut summary, &mut to_check);
+        save_imported(&conn, item, &mut summary, &mut to_check, None);
     }
     crate::checks::queue(state, &conn, &to_check, crate::checks::Mode::Import);
     summary
 }
 
-/// Saves one recipe read from a file (or a shared cookbook), with its cookbooks and cook
-/// log, counting it in `summary`. New recipes that need Wee Chef's check go in `to_check`.
-/// A recipe that can't be saved is skipped (and logged, without its name).
+/// Saves one recipe read from a file (or a shared cookbook, into cookbook `into`), with its
+/// cookbooks and cook log, counting it in `summary`. New recipes that need Wee Chef's check
+/// go in `to_check`. Each recipe is saved under its own savepoint: one that can't be saved is
+/// rolled back whole, counted as skipped and logged (without its name).
 fn save_imported(
     conn: &Connection,
     mut item: ImportedRecipe,
     summary: &mut ImportSummary,
     to_check: &mut Vec<i64>,
+    into: Option<i64>,
 ) {
-    let result = (|| -> AppResult<()> {
-        let tidied = (!item.restored)
-            .then(|| crate::checks::tidy_import(&mut item.fields, "import"))
-            .flatten();
-        let (recipe, is_new) = create_recipe(conn, item.fields, "import")?;
-        if is_new {
-            if item.restored {
-                // Saved as it was backed up. Not checked now; "Check all" checks it
-                // later, suggesting only, with the small undoable clean-up
-                crate::checks::mark_restored(conn, recipe.id)?;
-                set_original_url(conn, recipe.id, item.original_url.as_deref())?;
-            } else {
-                if let Some(undo) = tidied {
-                    crate::checks::remember_tidy(conn, &recipe, undo)?;
+    let result = (|| -> AppResult<(Recipe, bool, bool)> {
+        conn.execute_batch("SAVEPOINT import_recipe")?;
+        let saved = (|| -> AppResult<(Recipe, bool, bool)> {
+            let tidied = (!item.restored)
+                .then(|| crate::checks::tidy_import(&mut item.fields, "import"))
+                .flatten();
+            let (recipe, is_new) = create_recipe(conn, item.fields, "import")?;
+            let mut check = false;
+            if is_new {
+                if item.restored {
+                    // Saved as it was backed up. Not checked now; "Check all" checks it
+                    // later, suggesting only, with the small undoable clean-up
+                    crate::checks::mark_restored(conn, recipe.id)?;
+                    set_original_url(conn, recipe.id, item.original_url.as_deref())?;
+                } else {
+                    if let Some(undo) = tidied {
+                        crate::checks::remember_tidy(conn, &recipe, undo)?;
+                    }
+                    check = true;
                 }
+            }
+            for book in item.cookbooks.iter().filter(|b| !b.trim().is_empty()) {
+                let id = find_or_create_cookbook(conn, book, None)?;
+                add_to_cookbook(conn, id, &[recipe.id])?;
+            }
+            if let Some(id) = into {
+                add_to_cookbook(conn, id, &[recipe.id])?;
+            }
+            // Restoring the same backup twice doesn't double the cook log
+            for at in &item.cooked {
+                conn.execute(
+                    "INSERT INTO recipe_events (recipe_id, kind, created_at)
+                     SELECT ?1, 'cooked', ?2 WHERE NOT EXISTS (
+                       SELECT 1 FROM recipe_events WHERE recipe_id = ?1 AND kind = 'cooked' AND created_at = ?2)",
+                    params![recipe.id, at],
+                )?;
+            }
+            Ok((recipe, is_new, check))
+        })();
+        match saved {
+            Ok(done) => {
+                conn.execute_batch("RELEASE import_recipe")?;
+                Ok(done)
+            }
+            Err(err) => {
+                if let Err(e) =
+                    conn.execute_batch("ROLLBACK TO import_recipe; RELEASE import_recipe")
+                {
+                    tracing::warn!("[import] couldn't roll a recipe back: {e}");
+                }
+                Err(err)
+            }
+        }
+    })();
+    match result {
+        Ok((recipe, true, check)) => {
+            if check {
                 to_check.push(recipe.id);
             }
             summary.created.push(CreatedRef {
                 id: recipe.id,
-                title: recipe.title.clone(),
+                title: recipe.title,
             });
-        } else {
-            summary.duplicates += 1;
         }
-        for book in item.cookbooks.iter().filter(|b| !b.trim().is_empty()) {
-            let id = find_or_create_cookbook(conn, book, None)?;
-            add_to_cookbook(conn, id, &[recipe.id])?;
+        Ok((_, false, _)) => summary.duplicates += 1,
+        Err(err) => {
+            summary.skipped += 1;
+            // Not the file name: it can say whose recipes these are
+            tracing::warn!("[import] skipped a recipe in an imported file: {err}");
         }
-        // Restoring the same backup twice doesn't double the cook log
-        for at in &item.cooked {
-            conn.execute(
-                "INSERT INTO recipe_events (recipe_id, kind, created_at)
-                 SELECT ?1, 'cooked', ?2 WHERE NOT EXISTS (
-                   SELECT 1 FROM recipe_events WHERE recipe_id = ?1 AND kind = 'cooked' AND created_at = ?2)",
-                params![recipe.id, at],
-            )?;
-        }
-        Ok(())
-    })();
-    if let Err(err) = result {
-        // Not the file name: it can say whose recipes these are
-        tracing::warn!("[import] skipped a recipe in an imported file: {err}");
     }
 }
 
@@ -869,44 +960,61 @@ pub fn export_shared(recipe: &Recipe, include_notes: bool) -> Value {
 /// link it was itself saved from), and no notes unless the share includes them.
 fn shared_fields(recipe: &Recipe, include_notes: bool) -> Map<String, Value> {
     let mut m = recipe.fields().to_json();
-    // A recipe itself saved from a share: pass on where it came from, not that share link
-    if let Some(original) = &recipe.original_url {
-        m.insert("url".into(), json!(original));
-    }
+    public_url(&mut m, recipe);
     if !include_notes {
         m.insert("notes".into(), Value::Null);
     }
     m
 }
 
-/// How a cookbook's export is written: the owner's own download, or a share link's.
-pub enum BookExport<'a> {
-    /// `/api/cookbooks/{id}/export`: the recipes as they are (notes, original links).
-    Owner,
-    /// `/s/{token}/crumb.json`: each recipe with its own link under the book's (`base`), and
-    /// notes only when the share includes them.
-    Shared { base: &'a str, include_notes: bool },
+/// Sets `url` in a recipe's exported fields to a link that may leave the box: its original
+/// source when it was saved from a share, else its own link, and none when that's a share
+/// link (a recipe saved from a share without a source). A share link is someone's key to
+/// their share, so it's never passed on. `originalUrl` isn't written.
+fn public_url(m: &mut Map<String, Value>, recipe: &Recipe) {
+    m.insert("url".into(), json!(crate::share::source_url(recipe)));
 }
 
-/// A cookbook in the backup format: its recipes (at most [`MAX_BOOK_RECIPES`]), each in this
-/// book and no other, so importing the file (or saving the link) recreates the book. No
-/// cook log, and nothing about the box's other cookbooks.
+/// How a cookbook's export is written: the owner's own download, or a share link's.
+pub enum BookExport<'a> {
+    /// `/api/cookbooks/{id}/export`: every recipe, as it is (notes; sources, never share links).
+    Owner,
+    /// `/s/{token}/crumb.json`: at most [`MAX_BOOK_RECIPES`] recipes, each with its own link
+    /// under the book's (`base`), and notes only when the share includes them. `total` is how
+    /// many the book holds, which the export states when it's cut short.
+    Shared {
+        base: &'a str,
+        include_notes: bool,
+        total: usize,
+    },
+}
+
+/// What a shared cookbook's page and export say when a book is cut at [`MAX_BOOK_RECIPES`].
+pub const TRUNCATED_NOTE: &str = "Showing the first 500 recipes";
+
+/// A cookbook in the backup format: its recipes, each in this book and no other, so importing
+/// the file (or saving the link) recreates the book. No cook log, and nothing about the box's
+/// other cookbooks.
 pub fn export_book(book: &Cookbook, recipes: &[Recipe], how: BookExport) -> Value {
-    let recipes: Vec<Value> = recipes
+    let limit = match how {
+        BookExport::Owner => usize::MAX,
+        BookExport::Shared { .. } => MAX_BOOK_RECIPES,
+    };
+    let list: Vec<Value> = recipes
         .iter()
-        .take(MAX_BOOK_RECIPES)
+        .take(limit)
         .map(|r| {
             let mut m = match how {
+                // A file the owner may hand on: no share links in it either
                 BookExport::Owner => {
                     let mut m = r.fields().to_json();
-                    if let Some(original) = &r.original_url {
-                        m.insert("originalUrl".into(), json!(original));
-                    }
+                    public_url(&mut m, r);
                     m
                 }
                 BookExport::Shared {
                     base,
                     include_notes,
+                    ..
                 } => {
                     let mut m = shared_fields(r, include_notes);
                     m.insert("shareUrl".into(), json!(format!("{base}/{}", r.id)));
@@ -917,26 +1025,50 @@ pub fn export_book(book: &Cookbook, recipes: &[Recipe], how: BookExport) -> Valu
             Value::Object(m)
         })
         .collect();
-    json!({
+    let mut info = json!({
+        "name": book.name,
+        "description": book.description,
+        "color": book.color.as_deref().and_then(book_color),
+    });
+    let mut doc = json!({
         "format": "crumb",
         "version": 1,
         "kind": "cookbook",
-        "cookbooks": [{
-            "name": book.name,
-            "description": book.description,
-            "color": book.color.as_deref().and_then(book_color),
-        }],
-        "recipes": recipes,
-    })
+    });
+    if let BookExport::Shared { total, .. } = how {
+        let total = total.max(list.len());
+        info["recipeCount"] = json!(total);
+        if total > list.len() {
+            doc["note"] = json!(TRUNCATED_NOTE);
+        }
+    }
+    doc["cookbooks"] = json!([info]);
+    doc["recipes"] = json!(list);
+    doc
 }
 
-/// A cookbook's recipes in full, in the book's order (by title), at most `limit`.
-pub fn cookbook_recipes(conn: &Connection, id: i64, limit: usize) -> AppResult<Vec<Recipe>> {
+/// How many recipes a cookbook holds.
+pub fn cookbook_recipe_count(conn: &Connection, id: i64) -> AppResult<usize> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM cookbook_recipes WHERE cookbook_id = ?1",
+        [id],
+        |r| r.get::<_, i64>(0),
+    )? as usize)
+}
+
+/// A cookbook's recipes in full, in the book's order (by title), at most `limit` (None: all).
+pub fn cookbook_recipes(
+    conn: &Connection,
+    id: i64,
+    limit: Option<usize>,
+) -> AppResult<Vec<Recipe>> {
     let mut stmt = conn.prepare(
         "SELECT r.* FROM cookbook_recipes cr INNER JOIN recipes r ON cr.recipe_id = r.id
          WHERE cr.cookbook_id = ?1 ORDER BY r.title LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![id, limit as i64], recipe_from_row)?;
+    // A negative LIMIT is none
+    let limit = limit.map_or(-1, |n| i64::try_from(n).unwrap_or(i64::MAX));
+    let rows = stmt.query_map(params![id, limit], recipe_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -987,7 +1119,12 @@ fn export_json(conn: &Connection, only: Option<i64>) -> AppResult<Value> {
         .iter()
         .map(|r| {
             let mut m = r.fields().to_json();
-            if let Some(original) = &r.original_url {
+            if only.is_some() {
+                // One recipe's file, which may be handed on: no share links in it
+                public_url(&mut m, r);
+            } else if let Some(original) = &r.original_url {
+                // A backup restores into a box losslessly (the share link is how a recipe
+                // saved from a share dedupes)
                 m.insert("originalUrl".into(), json!(original));
             }
             let names: Vec<String> = links

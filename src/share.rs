@@ -17,8 +17,9 @@
 //! - the page: `shell/share-book/index.html`, the book's name, colour and recipe cards;
 //! - `{recipeId}` (and its `img/{width}`, `og.jpg`, `crumb.json`): a recipe's page as above,
 //!   while that recipe is in the book (404 from the moment it's taken out);
-//! - `og.jpg`: the first photo in the book; `crumb.json`: every recipe in it (up to 500),
-//!   each in that book, so saving the link in another Crumb recreates the book.
+//! - `og.jpg`: the first photo in the book; `crumb.json`: every recipe in it (up to 500, with
+//!   the book's true count and a note when it holds more), each in that book, so saving the
+//!   link in another Crumb recreates the book.
 //!
 //! Nothing else about the box shows: no cook log, views, checks, other cookbooks, dates or
 //! names. Unknown, stopped and expired tokens all get the same plain 404, and an address that
@@ -511,12 +512,12 @@ async fn page(State(state): State<AppState>, Path(token): Path<String>, req: Req
             html_page(&state, TEMPLATE, |t| render(t, &recipe, &place, &origin))
         }
         Found::Book(share, book) => {
-            let listed = match book_listing(&state.db.lock(), book.id) {
+            let (listed, total) = match book_listing(&state.db.lock(), book.id) {
                 Ok(listed) => listed,
                 Err(err) => return err.into_response(),
             };
             html_page(&state, BOOK_TEMPLATE, |t| {
-                render_book(t, &book, &listed, &share, &origin)
+                render_book(t, &book, &listed, total, &share, &origin)
             })
         }
     }
@@ -594,8 +595,13 @@ async fn file(
                 ("crumb.json", None) => {
                     let base = share_url(&origin, &token);
                     let conn = state.db.lock();
-                    match recipes::cookbook_recipes(&conn, book.id, recipes::MAX_BOOK_RECIPES) {
-                        Ok(list) => {
+                    let found =
+                        recipes::cookbook_recipes(&conn, book.id, Some(recipes::MAX_BOOK_RECIPES))
+                            .and_then(|list| {
+                                Ok((list, recipes::cookbook_recipe_count(&conn, book.id)?))
+                            });
+                    match found {
+                        Ok((list, total)) => {
                             let list: Vec<Recipe> = list.into_iter().map(shown).collect();
                             let doc = recipes::export_book(
                                 &book,
@@ -603,6 +609,7 @@ async fn file(
                                 recipes::BookExport::Shared {
                                     base: &base,
                                     include_notes: share.include_notes,
+                                    total,
                                 },
                             );
                             json_file(&doc, &book.name)
@@ -613,7 +620,7 @@ async fn file(
                 ("og.jpg", None) => {
                     let cover = book_listing(&state.db.lock(), book.id)
                         .ok()
-                        .and_then(|l| cover(&l).map(|r| r.id));
+                        .and_then(|(l, _)| cover(&l).map(|r| r.id));
                     match cover {
                         // `v` is the cover's photo key, so a new cover gets a new URL
                         Some(id) => photo(&state, id, Variant::Preview, v.as_deref()).await,
@@ -702,14 +709,16 @@ fn json_file(doc: &Value, name: &str) -> Response {
     res
 }
 
-/// The recipes a shared cookbook's page lists, in the book's order (up to 500).
-fn book_listing(conn: &Connection, id: i64) -> AppResult<Vec<RecipeSummary>> {
+/// The recipes a shared cookbook's page lists, in the book's order (up to 500), and how many
+/// the book holds.
+fn book_listing(conn: &Connection, id: i64) -> AppResult<(Vec<RecipeSummary>, usize)> {
     let mut list = recipes::get_cookbook(conn, id)?.recipes;
+    let total = list.len();
     list.truncate(recipes::MAX_BOOK_RECIPES);
     for r in &mut list {
         r.recipe_category = crate::categories::for_import(r.recipe_category.as_deref());
     }
-    Ok(list)
+    Ok((list, total))
 }
 
 /// The book's cover for link previews: its first recipe with a photo.
@@ -824,13 +833,30 @@ fn present(v: &Option<String>) -> Option<&str> {
     v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+static SHARE_PATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/s/[A-Za-z0-9_-]{16,}(?:/\d+)?/?$").unwrap());
+
+/// Whether a URL is a Crumb share link (this box's or any other's): `/s/{token}`, or a
+/// recipe's page in a shared cookbook, `/s/{token}/{id}`. A recipe saved from a share is kept
+/// under that link, which must never be published again: whoever sees it can open the share
+/// (and, from a book recipe's link, the whole book).
+pub fn is_share_link(url: &str) -> bool {
+    url::Url::parse(url.trim()).is_ok_and(|u| SHARE_PATH.is_match(u.path()))
+}
+
+/// A link a share may publish as the recipe's source: http(s), and never a share link.
+pub fn publishable_source(url: &str) -> bool {
+    crate::model::is_valid_url(url) && !is_share_link(url)
+}
+
 /// Where the recipe came from, as a link the page may show: its original source when it was
-/// saved from a share, else its own link. Only http(s): older rows may hold anything.
-fn source_url(r: &Recipe) -> Option<&str> {
+/// saved from a share, else its own link. Only http(s) (older rows may hold anything), and
+/// never a share link: a recipe saved from a share without a source has none to show.
+pub fn source_url(r: &Recipe) -> Option<&str> {
     [&r.original_url, &r.url]
         .into_iter()
         .filter_map(present)
-        .find(|u| crate::model::is_valid_url(u))
+        .find(|u| publishable_source(u))
 }
 
 /// At most `max` characters, cut at a word and marked with an ellipsis.
@@ -1394,20 +1420,22 @@ pub fn render_book(
     template: &str,
     book: &Cookbook,
     list: &[RecipeSummary],
+    total: usize,
     share: &Share,
     origin: &str,
 ) -> String {
     let path = format!("/s/{}", share.token);
     let page_url = format!("{origin}{path}");
     let export_url = format!("{page_url}/crumb.json");
-    let count = match list.len() {
+    let total = total.max(list.len());
+    let count = match total {
         0 => "No recipes yet".to_string(),
         1 => "1 recipe".to_string(),
         n => format!("{n} recipes"),
     };
     let description = present(&book.description)
         .map(|d| clip(d, 200))
-        .unwrap_or_else(|| match list.len() {
+        .unwrap_or_else(|| match total {
             0 => "A cookbook shared from Crumb.".to_string(),
             _ => format!("A cookbook shared from Crumb: {}.", count.to_lowercase()),
         });
@@ -1529,6 +1557,12 @@ pub fn render_book(
             ));
         }
         out.push_str("</ul>");
+        if total > list.len() {
+            out.push_str(&format!(
+                "<p class=\"meta share-more\">{}</p>",
+                recipes::TRUNCATED_NOTE
+            ));
+        }
         out
     };
     fill(&mut page, "<!--share:recipes-->", &cards);

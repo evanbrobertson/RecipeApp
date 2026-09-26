@@ -51,7 +51,8 @@ pub fn recipe_to_markdown(r: &Recipe) -> String {
     if let Some(n) = r.notes.as_deref().filter(|n| !n.is_empty()) {
         out.extend(["".into(), "## Notes".into(), n.to_string()]);
     }
-    if let Some(u) = r.url.as_deref().filter(|u| !u.is_empty()) {
+    // Where it came from, never a share link it was saved from (the file may be handed on)
+    if let Some(u) = crate::share::source_url(r) {
         out.extend(["".into(), format!("Source: {u}")]);
     }
     out.join("\n")

@@ -4638,3 +4638,328 @@ async fn shared_cookbook_photos_come_from_the_books_recipes() {
     let (status, _, _) = send_raw(&t, get(&format!("{path}/{}/img/321", ids[1]))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// The token in a share link.
+fn token_of(url: &str) -> String {
+    url.split("/s/")
+        .nth(1)
+        .unwrap()
+        .split('/')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// Crumb C shares a book; Crumb B saves it.
+async fn saved_from_a_shared_book(
+    b: &TestApp,
+    name: &str,
+    recipes: &[Value],
+) -> (TestApp, String, Value) {
+    let c = TestApp::new(None);
+    let (_, book) = c
+        .json("POST", "/api/cookbooks", Some(json!({"name": name})))
+        .await;
+    for r in recipes {
+        let (_, r) = c.json("POST", "/api/recipes", Some(r.clone())).await;
+        c.json(
+            "POST",
+            &format!("/api/cookbooks/{}/recipes", book["id"]),
+            Some(json!({"recipeIds": [r["id"]]})),
+        )
+        .await;
+    }
+    let (_, s) = c
+        .json(
+            "POST",
+            &format!("/api/cookbooks/{}/share", book["id"]),
+            None,
+        )
+        .await;
+    let origin = serve_app(&c).await;
+    let link = format!("{origin}{}", book_path(s["url"].as_str().unwrap()));
+    let (status, saved) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    (c, link, saved)
+}
+
+#[tokio::test]
+async fn sharing_a_recipe_saved_from_a_share_never_passes_on_that_link() {
+    let b = TestApp::new(None);
+    let (_c, link, saved) =
+        saved_from_a_shared_book(&b, "Stews", &[book_recipe("Plain Stew", None, "")]).await;
+    let token_c = token_of(&link);
+    assert_eq!(saved["cookbook"]["added"], 1, "{saved}");
+    let stew_id = saved["id"].clone();
+    let (_, stew) = b
+        .json("GET", &format!("/api/recipes/{stew_id}"), None)
+        .await;
+    // Kept under C's link (so saving it again dedupes), with no source of its own
+    assert!(stew["url"].as_str().unwrap().contains(&token_c));
+    assert!(stew["originalUrl"].is_null());
+
+    // B shares the recipe on its own, and in a book of B's
+    let (_, rs) = b
+        .json("POST", &format!("/api/recipes/{stew_id}/share"), None)
+        .await;
+    let recipe_path = book_path(rs["url"].as_str().unwrap());
+    let (_, mine) = b
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Mine"})))
+        .await;
+    b.json(
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", mine["id"]),
+        Some(json!({"recipeIds": [stew_id]})),
+    )
+    .await;
+    let (_, bs) = b
+        .json(
+            "POST",
+            &format!("/api/cookbooks/{}/share", mine["id"]),
+            None,
+        )
+        .await;
+    let book = book_path(bs["url"].as_str().unwrap());
+    let mut seen = Vec::new();
+    for path in [
+        recipe_path.clone(),
+        format!("{recipe_path}/crumb.json"),
+        book.clone(),
+        format!("{book}/crumb.json"),
+        format!("{book}/{stew_id}"),
+        format!("{book}/{stew_id}/crumb.json"),
+        // The owner's files, which may be handed on
+        format!("/api/cookbooks/{}/export", mine["id"]),
+        format!("/api/recipes/{stew_id}/export"),
+        format!("/api/recipes/{stew_id}/export?format=md"),
+    ] {
+        let (status, _, body) = b.send(get(&path)).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(!body.contains(&token_c), "{path} holds C's token: {body}");
+        seen.push(body);
+    }
+    // No "Original recipe" link, no url in the JSON-LD or the export
+    assert!(!seen[0].contains("Original recipe"));
+    assert!(!seen[0].contains("isBasedOn"));
+    assert!(seen[0].contains("og:url"));
+    let doc: Value = serde_json::from_str(&seen[1]).unwrap();
+    assert!(doc["recipes"][0]["url"].is_null(), "{doc}");
+    let doc: Value = serde_json::from_str(&seen[3]).unwrap();
+    assert!(doc["recipes"][0]["url"].is_null(), "{doc}");
+    assert!(
+        doc["recipes"][0]["shareUrl"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("{book}/{stew_id}"))
+    );
+
+    // A full backup still restores losslessly (the link is how the recipe dedupes)
+    let (_, _, backup) = b.send(get("/api/export")).await;
+    assert!(backup.contains(&token_c));
+}
+
+#[tokio::test]
+async fn a_share_link_is_never_taken_as_where_a_recipe_came_from() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let export = json!({"format": "crumb", "version": 1, "kind": "cookbook",
+    "cookbooks": [{"name": "Relayed"}],
+    "recipes": [
+        {"title": "Relayed Pie", "url": "https://third.test/s/someoneElsesTokenXYZ/4",
+         "shareUrl": "http://elsewhere.test/s/bookTokenBBBBBBBBBBB/7",
+         "ingredients": [{"items": ["1 egg"]}], "instructions": [{"items": ["Cook."]}]},
+        {"title": "Real Pie", "url": "https://food.test/pie",
+         "shareUrl": "http://elsewhere.test/s/bookTokenBBBBBBBBBBB/8",
+         "ingredients": [{"items": ["1 egg"]}], "instructions": [{"items": ["Cook."]}]}
+    ]})
+    .to_string();
+    let page = r#"<html><head><title>Relayed</title>
+        <link rel="alternate" type="application/vnd.crumb+json" href="/s/bookTokenBBBBBBBBBBB/crumb.json">
+        </head><body></body></html>"#;
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/bookTokenBBBBBBBBBBB",
+                route(move || async move { Html(page) }),
+            )
+            .route(
+                "/s/bookTokenBBBBBBBBBBB/crumb.json",
+                route(move || async move { export }),
+            ),
+    )
+    .await;
+    let b = TestApp::new(None);
+    let (_, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/bookTokenBBBBBBBBBBB")})),
+        )
+        .await;
+    assert_eq!(saved["cookbook"]["added"], 2, "{saved}");
+    let (_, list) = b.json("GET", "/api/recipes", None).await;
+    for r in list.as_array().unwrap() {
+        let (_, full) = b
+            .json("GET", &format!("/api/recipes/{}", r["id"]), None)
+            .await;
+        match full["title"].as_str().unwrap() {
+            "Relayed Pie" => assert!(full["originalUrl"].is_null(), "{full}"),
+            _ => assert_eq!(full["originalUrl"], "https://food.test/pie"),
+        }
+    }
+    // Nor from a file's originalUrl
+    let file = json!({"format": "crumb", "version": 1, "recipes": [{
+        "title": "Filed Pie", "url": "https://mine.test/filed",
+        "originalUrl": "https://third.test/s/someoneElsesTokenXYZ",
+        "ingredients": [{"items": ["1 egg"]}], "instructions": [{"items": ["Cook."]}]}]})
+    .to_string();
+    let got = import_file_json(&b, &file).await;
+    let (_, filed) = b
+        .json(
+            "GET",
+            &format!("/api/recipes/{}", got["created"][0]["id"]),
+            None,
+        )
+        .await;
+    assert!(filed["originalUrl"].is_null(), "{filed}");
+}
+
+#[tokio::test]
+async fn a_saved_book_only_joins_a_cookbook_it_made_or_an_empty_one() {
+    // B already has a cookbook of that name with a recipe in it
+    let b = TestApp::new(None);
+    let (_, own) = b
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Own Stew", Some("https://food.test/own"), "")),
+        )
+        .await;
+    let (_, mine) = b
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Weeknight"})))
+        .await;
+    b.json(
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", mine["id"]),
+        Some(json!({"recipeIds": [own["id"]]})),
+    )
+    .await;
+    let (_c, link, saved) =
+        saved_from_a_shared_book(&b, "weeknight", &[book_recipe("Their Stew", None, "")]).await;
+    assert_eq!(saved["cookbook"]["name"], "weeknight (2)", "{saved}");
+    assert_ne!(saved["cookbook"]["id"], mine["id"]);
+    let (_, got) = b
+        .json("GET", &format!("/api/cookbooks/{}", mine["id"]), None)
+        .await;
+    assert_eq!(got["recipes"].as_array().unwrap().len(), 1);
+    // Saving the same link again goes back into the book it made
+    let (_, again) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(again["cookbook"]["id"], saved["cookbook"]["id"], "{again}");
+    assert_eq!(again["cookbook"]["duplicates"], 1);
+    // A second book of that name, from another link: "(3)"
+    let (_c2, _, third) =
+        saved_from_a_shared_book(&b, "Weeknight", &[book_recipe("Other Stew", None, "")]).await;
+    assert_eq!(third["cookbook"]["name"], "Weeknight (3)", "{third}");
+
+    // An empty cookbook of that name is used
+    let d = TestApp::new(None);
+    let (_, empty) = d
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Soups"})))
+        .await;
+    let (_c3, _, saved) =
+        saved_from_a_shared_book(&d, "Soups", &[book_recipe("Leek Soup", None, "")]).await;
+    assert_eq!(saved["cookbook"]["id"], empty["id"], "{saved}");
+    let (_, books) = d.json("GET", "/api/cookbooks", None).await;
+    assert_eq!(books.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_recipe_that_cant_be_saved_is_rolled_back_and_counted() {
+    // Anything filing a recipe titled "Bad" into a cookbook fails
+    let fail_bad = "CREATE TRIGGER fail_bad BEFORE INSERT ON cookbook_recipes
+        WHEN (SELECT title FROM recipes WHERE id = NEW.recipe_id) = 'Bad'
+        BEGIN SELECT RAISE(ABORT, 'nope'); END;";
+    let t = TestApp::new(None);
+    t.state.db.lock().execute_batch(fail_bad).unwrap();
+    let recipe = |title: &str| {
+        json!({"title": title, "url": format!("https://food.test/{title}"), "cookbooks": ["Box"],
+            "ingredients": [{"items": ["1 egg"]}], "instructions": [{"items": ["Cook."]}]})
+    };
+    let file = json!({"format": "crumb", "version": 1,
+        "recipes": [recipe("Good"), recipe("Bad"), recipe("Fine")]})
+    .to_string();
+    let got = import_file_json(&t, &file).await;
+    assert_eq!(got["created"].as_array().unwrap().len(), 2, "{got}");
+    assert_eq!(got["skipped"], 1);
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    let titles: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["title"].as_str().unwrap())
+        .collect();
+    assert!(!titles.contains(&"Bad"), "half-saved: {titles:?}");
+    assert_eq!(titles.len(), 2);
+
+    // Saving a shared book: the same, and the result says so
+    let b = TestApp::new(None);
+    b.state.db.lock().execute_batch(fail_bad).unwrap();
+    let (_c, _, saved) = saved_from_a_shared_book(
+        &b,
+        "Mixed",
+        &[book_recipe("Good", None, ""), book_recipe("Bad", None, "")],
+    )
+    .await;
+    assert_eq!(saved["cookbook"]["added"], 1, "{saved}");
+    assert_eq!(saved["cookbook"]["skipped"], 1);
+    let (_, list) = b.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_big_shared_book_says_it_shows_the_first_500() {
+    let t = TestApp::new(None);
+    let (_, book) = t
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Huge"})))
+        .await;
+    let book_id = book["id"].as_i64().unwrap();
+    {
+        let conn = t.state.db.lock();
+        for i in 0..501 {
+            let (r, _) = crumb::recipes::create_recipe(
+                &conn,
+                crumb::model::RecipeFields {
+                    title: format!("Dish {i:03}"),
+                    ..older_recipe()
+                },
+                "manual",
+            )
+            .unwrap();
+            crumb::recipes::add_to_cookbook(&conn, book_id, &[r.id]).unwrap();
+        }
+    }
+    // The owner's own download has every recipe
+    let (_, _, owner) = t
+        .send(get(&format!("/api/cookbooks/{book_id}/export")))
+        .await;
+    let owner: Value = serde_json::from_str(&owner).unwrap();
+    assert_eq!(owner["recipes"].as_array().unwrap().len(), 501);
+    // The share shows 500, and says so
+    let (_, s) = t
+        .json("POST", &format!("/api/cookbooks/{book_id}/share"), None)
+        .await;
+    let path = book_path(s["url"].as_str().unwrap());
+    let (_, _, html) = t.send(get(&path)).await;
+    assert!(html.contains("501 recipes"));
+    assert!(html.contains("Showing the first 500 recipes"));
+    assert_eq!(html.matches("class=\"share-card\"").count(), 500);
+    let (_, _, doc) = t.send(get(&format!("{path}/crumb.json"))).await;
+    let doc: Value = serde_json::from_str(&doc).unwrap();
+    assert_eq!(doc["recipes"].as_array().unwrap().len(), 500);
+    assert_eq!(doc["cookbooks"][0]["recipeCount"], 501);
+    assert_eq!(doc["note"], "Showing the first 500 recipes");
+}

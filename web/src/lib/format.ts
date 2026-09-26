@@ -4,6 +4,7 @@ interface FormattableRecipe {
   title: string
   description?: string | null
   url?: string | null
+  originalUrl?: string | null
   author?: string | null
   prepTime?: string | null
   cookTime?: string | null
@@ -15,6 +16,23 @@ interface FormattableRecipe {
   ingredients: RecipeSection[]
   instructions: RecipeSection[]
   notes?: string | null
+}
+
+/** A Crumb share link (`/s/{token}`, or `/s/{token}/{id}` in a shared cookbook), from any box. */
+export function isShareLink(url: string): boolean {
+  try {
+    return /^\/s\/[A-Za-z0-9_-]{16,}(?:\/\d+)?\/?$/.test(new URL(url).pathname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Where a recipe came from, as a link that may be passed on: its original source, else its
+ * own link, never a share link it was saved from (that's the sharer's key to their share).
+ */
+export function publicSource(r: { url?: string | null; originalUrl?: string | null }) {
+  return [r.originalUrl, r.url].find((u) => u && !isShareLink(u)) ?? null
 }
 
 /** Plain-text/Markdown rendering used for "copy recipe" and the Claude connector. */
@@ -48,7 +66,8 @@ export function recipeToMarkdown(r: FormattableRecipe): string {
   }
 
   if (r.notes) out.push("", "## Notes", r.notes)
-  if (r.url) out.push("", `Source: ${r.url}`)
+  const source = publicSource(r)
+  if (source) out.push("", `Source: ${source}`)
   return out.join("\n")
 }
 
@@ -89,9 +108,18 @@ export function bookToText(name: string, titles: string[], link?: string | null)
 
 const count = (n: number) => `${n} recipe${n === 1 ? "" : "s"}`
 
-/** The toast after saving another Crumb's shared cookbook: "Added 12 recipes to Weeknight dinners". */
-export function bookImportedTitle(b: { name: string; added: number; duplicates: number }): string {
-  if (b.added) return `Added ${count(b.added)} to ${b.name}`
-  if (b.duplicates) return `Already in your recipes, now in ${b.name}`
+/**
+ * The toast after saving another Crumb's shared cookbook: "Added 12 recipes to Weeknight
+ * dinners", with ", 1 skipped" when some couldn't be saved.
+ */
+export function bookImportedTitle(b: {
+  name: string
+  added: number
+  duplicates: number
+  skipped?: number
+}): string {
+  const skipped = b.skipped ? `, ${b.skipped} skipped` : ""
+  if (b.duplicates && !b.added) return `Already in your recipes, now in ${b.name}${skipped}`
+  if (b.added || b.skipped) return `Added ${count(b.added)} to ${b.name}${skipped}`
   return `Added ${b.name}, an empty cookbook`
 }

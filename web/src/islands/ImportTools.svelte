@@ -92,6 +92,7 @@
     state: "working" | "done" | "failed"
     created: { id: number; title: string }[]
     duplicates: number
+    skipped?: number
     message?: string
     /** Open the editor: the recipe was read by OCR and needs checking. */
     edit?: boolean
@@ -100,6 +101,7 @@
     file: string
     created: { id: number; title: string }[]
     duplicates: number
+    skipped?: number
     error?: string
   }
 
@@ -148,7 +150,13 @@
         const [result] = await api<ImportSummary[]>("/api/import/files", { method: "POST", form })
         if (!result || result.error)
           Object.assign(job, { state: "failed", message: result?.error ?? "Nothing imported" })
-        else Object.assign(job, { state: "done", created: result.created, duplicates: result.duplicates })
+        else
+          Object.assign(job, {
+            state: "done",
+            created: result.created,
+            duplicates: result.duplicates,
+            skipped: result.skipped,
+          })
       } catch (e) {
         Object.assign(job, { state: "failed", message: errorMessage(e) })
       }
@@ -269,7 +277,7 @@
             <span class="truncate text-[15px] font-bold">{job.name}</span>
             {#if job.state === "done"}
               <span class="text-ink-muted ml-auto shrink-0">
-                {job.created.length} added{#if job.duplicates}, {job.duplicates} already saved{/if}
+                {job.created.length} added{#if job.duplicates}, {job.duplicates} already saved{/if}{#if job.skipped}, {job.skipped} skipped{/if}
               </span>
             {/if}
           </div>

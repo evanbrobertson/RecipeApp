@@ -73,6 +73,8 @@ export interface BookImported {
   name: string
   added: number
   duplicates: number
+  /** Recipes in the book that couldn't be saved. */
+  skipped?: number
 }
 
 export interface Cookbook {

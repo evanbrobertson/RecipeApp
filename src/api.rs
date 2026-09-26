@@ -287,7 +287,7 @@ async fn export_cookbook(
     let (body, name) = {
         let conn = state.db.lock();
         let book = recipes::require_cookbook(&conn, id)?;
-        let list = recipes::cookbook_recipes(&conn, id, recipes::MAX_BOOK_RECIPES)?;
+        let list = recipes::cookbook_recipes(&conn, id, None)?;
         let doc = recipes::export_book(&book, &list, recipes::BookExport::Owner);
         (
             serde_json::to_string_pretty(&doc).map_err(AppError::internal)?,
@@ -424,6 +424,7 @@ fn book_imported(book: &recipes::BookImport) -> Value {
             "name": book.name,
             "added": added,
             "duplicates": book.duplicates,
+            "skipped": book.skipped,
         },
     })
 }
