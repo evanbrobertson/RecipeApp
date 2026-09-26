@@ -18,7 +18,7 @@ let package = Package(
     // libcrumb_ffi.a for each Apple platform, with the C header UniFFI generates
     .binaryTarget(name: "CrumbCoreFFI", path: "Frameworks/CrumbCoreFFI.xcframework"),
     // UniFFI's Swift half: the exported crumb-core functions as plain Swift
-    .target(name: "CrumbCore", dependencies: ["CrumbCoreFFI"]),
+    .target(name: "CrumbCore", dependencies: ["CrumbCoreFFI"], exclude: ["README.md"]),
     .target(name: "CrumbKit", dependencies: ["CrumbCore"]),
     .testTarget(name: "CrumbKitTests", dependencies: ["CrumbKit"]),
   ]

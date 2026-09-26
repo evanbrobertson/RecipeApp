@@ -68,6 +68,16 @@ The Android app (`android/`, with `crumb-core` linked through `crates/crumb-ffi`
 - **Version code.** Derived from the version so newer always installs over older: `X.Y.Z` → `X·10⁷ + Y·10⁴ + Z·10 + 9`, and a master build (`-main.N`) ends in 0 instead, so the promoted release replaces its dev builds.
 - **Signing.** With the `CRUMB_KEYSTORE_BASE64`, `CRUMB_KEYSTORE_PASSWORD`, `CRUMB_KEY_ALIAS` and `CRUMB_KEY_PASSWORD` secrets the APK is signed; without them it is built and named `-unsigned` (see `android/README.md`).
 
+## iOS
+
+The iPhone app (`ios/`, with `crumb-core` linked through `crates/crumb-ffi` as an XCFramework) rides the same version.
+
+- **Checks.** `ios.yml` runs on every change to `ios/`, `crates/crumb-core`, `crates/crumb-ffi` or the Cargo files, on macOS runners: it builds the core for iPhone, the simulator and the Mac, runs CrumbKit's tests against the real core, checks swift-format (printing the patch when something isn't formatted), runs the app's unit and UI tests on a simulator against the built-in demo server, and builds Release for iPhone unsigned. The toolchain (Xcode, Rust Apple targets, XcodeGen) is one composite action, `.github/actions/ios-setup`.
+- **Dev builds.** Every master push runs `ios-release.yml`: a versioned Release archive (`ios/scripts/build-release.sh`), uploaded to **TestFlight** when the App Store Connect secrets below exist, and kept as the `crumb-ios-<version>` workflow artifact (30 days). It never blocks deploy-dev.
+- **Promote.** An `ios-release` job builds the promoted commit and attaches `crumb-ios-<version>.ipa` (or `-unsigned.ipa`) and its `.sha256` to the GitHub Release. Submitting a TestFlight build for App Store review is done in App Store Connect.
+- **Version and build.** `3.1.0-main.57` ships as version `3.1.0`; the build number is the build's UTC time, `YYYYMMDD.HHMM`, so each upload is newer than the last.
+- **Signing.** Cloud-managed through an App Store Connect API key (`APPLE_TEAM_ID`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_PRIVATE_KEY`; optionally `IOS_CERTIFICATE_P12_BASE64` and `IOS_CERTIFICATE_PASSWORD`). Without them the build is unsigned. See `ios/README.md`.
+
 ## Secrets and variables
 
 Repository secrets (Settings → Secrets and variables → Actions):

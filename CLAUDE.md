@@ -43,8 +43,8 @@ bun run format                   # oxfmt
 ## Project Structure
 
 ```
-crates/crumb-core/  # Pure logic shared by the server and the desktop app (model, fractions, categories, text_parser, markdown, suggest)
-crates/crumb-ffi/   # UniFFI bindings to crumb-core for the Android app (Kotlin package app.crumb.core)
+crates/crumb-core/  # Pure logic shared by the server and the native apps (model, fractions, categories, text_parser, markdown, suggest, client, sun, checks)
+crates/crumb-ffi/   # UniFFI bindings to crumb-core for the native apps (Kotlin app.crumb.core, Swift module CrumbCore)
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
@@ -63,6 +63,7 @@ src/
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 android/          # Native Android app (Kotlin + Jetpack Compose), a REST client linking crumb-core; see android/README.md
+ios/              # Native iOS app (SwiftUI + Share extension; XcodeGen, CrumbKit package), linking crumb-core; see ios/README.md
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes

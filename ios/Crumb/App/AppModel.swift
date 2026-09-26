@@ -72,13 +72,13 @@ final class AppModel {
   var tab: AppTab = .home
   var paths: [AppTab: [Route]] = [:]
   /// Text for Add (a crumb://add link or a paste), and whether Add is showing.
-  var addDraft: String?
+  var addDraft: String? = nil
   var showAdd = false
   /// The recipe open in cook mode.
-  var cooking: Recipe?
-  var toast: Toast?
+  var cooking: Recipe? = nil
+  var toast: Toast? = nil
   /// What the server can do (Wee Chef, photo reading), once asked.
-  var connector: ConnectorInfo?
+  var connector: ConnectorInfo? = nil
 
   init(mode: LaunchMode = .current) {
     self.mode = mode

@@ -77,6 +77,7 @@ jobs:
       - run: xcodegen generate
       - name: Unit and UI tests on a simulator
         run: |
+          mkdir -p build
           sim=$(scripts/simulator.sh)
           xcrun simctl list devices available | grep "$sim"
           set -o pipefail

@@ -67,7 +67,9 @@ enum Radius {
 /// Nunito Sans for text, DM Serif Display for titles, Caveat for greetings and the cook's
 /// notes only. All scale with Dynamic Type.
 enum Typeface {
-  static func body(_ size: CGFloat = 17, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body)
+  static func body(
+    _ size: CGFloat = 17, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body
+  )
     -> Font
   {
     let name: String

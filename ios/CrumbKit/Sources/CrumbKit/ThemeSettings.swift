@@ -32,6 +32,11 @@ public struct ThemeDecision: Equatable, Sendable {
   public var dark: Bool?
   /// When "Sunrise & sunset" next flips (nil for the other modes).
   public var recheckAt: Date?
+
+  public init(dark: Bool?, recheckAt: Date? = nil) {
+    self.dark = dark
+    self.recheckAt = recheckAt
+  }
 }
 
 /// Theme mode and the location saved by "Use my location", on this phone only. The sunrise
