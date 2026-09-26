@@ -45,7 +45,7 @@ const links = [
   { href: "/", label: "Home", key: "kitchen", icon: House },
   { href: "/recipes", label: "Recipes", key: "recipes", icon: BookOpenText },
   { href: "/cookbooks", label: "Shelf", key: "shelf", icon: LibraryBig },
-  // Only while Wee Chef has suggestions waiting (the server's crumb-review hint), or on its page
+  // Only while Wee Chef checks are set up (the server's crumb-review hint), or on its page
   { href: "/suggestions", label: "Suggestions", key: "suggestions", icon: Sparkles },
   { href: "/more", label: "More", key: "more", icon: Ellipsis },
 ] as const
@@ -82,17 +82,21 @@ const links = [
     <!-- Theme before first paint: light, dark, system, or sunrise/sunset -->
     <script is:inline set:html={themeBoot} />
     <script is:inline set:html={transitionsBoot} />
-    <!-- Wee Chef suggestions waiting? Reveal the nav item (and its count) before first paint -->
+    <!-- Wee Chef checks set up? Reveal the nav item before first paint, and its count while
+         suggestions are waiting. The server only sends the hint when checks are set up -->
     <script is:inline>
       try {
         const hint = performance
           .getEntriesByType("navigation")[0]
           ?.serverTiming?.find((t) => t.name === "crumb-review")
-        const n = Number(hint?.description) || 0
-        if (n > 0) {
+        if (hint) {
           const root = document.documentElement
-          root.dataset.review = ""
-          root.style.setProperty("--review-count", JSON.stringify(n > 99 ? "99+" : String(n)))
+          root.dataset.weeChef = ""
+          const n = Number(hint.description) || 0
+          if (n > 0) {
+            root.dataset.review = ""
+            root.style.setProperty("--review-count", JSON.stringify(n > 99 ? "99+" : String(n)))
+          }
         }
       } catch {}
     </script>

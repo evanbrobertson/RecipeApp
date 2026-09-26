@@ -300,23 +300,23 @@ async fn connector_page(
     req: Request,
 ) -> Response {
     let name = req.uri().path().trim_matches('/').to_string();
-    let mut data = json!({"connector": crate::api::connector_info(&state, &headers)});
-    if name == "more" && crate::checks::enabled(&state) {
-        match crate::checks::status(&state, &state.db.lock()) {
-            Ok(status) => data["checks"] = status,
-            Err(err) => return err.into_response(),
-        }
-    }
+    let data = json!({"connector": crate::api::connector_info(&state, &headers)});
     render(&state, &format!("{name}/index.html"), data)
 }
 
+/// The recipes with suggestions waiting and, when Wee Chef checks are set up, their
+/// progress for the page's Check all card. Empty is fine: the page says so.
 async fn suggestions_page(State(state): State<AppState>) -> Response {
-    match crate::checks::to_review(&state.db.lock()) {
-        Ok(recipes) => render(
-            &state,
-            "suggestions/index.html",
-            json!({"recipes": recipes}),
-        ),
+    let data = (|| -> AppResult<Value> {
+        let conn = state.db.lock();
+        let mut data = json!({"recipes": crate::checks::to_review(&conn)?});
+        if crate::checks::enabled(&state) {
+            data["checks"] = crate::checks::status(&state, &conn)?;
+        }
+        Ok(data)
+    })();
+    match data {
+        Ok(data) => render(&state, "suggestions/index.html", data),
         Err(err) => err.into_response(),
     }
 }

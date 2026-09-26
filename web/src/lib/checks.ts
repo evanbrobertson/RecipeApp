@@ -1,6 +1,6 @@
 /** Wording for Wee Chef's import checks (see src/checks.rs). */
 
-import type { CheckFlag } from "./recipe"
+import type { CheckFlag, ChecksStatus } from "./recipe"
 
 /** A line quoted in a sentence, shortened when long. */
 export function quote(text: string, max = 48): string {
@@ -55,3 +55,32 @@ export function reviewText(f: CheckFlag): string {
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/**
+ * One line on where Wee Chef's Check all stands: "5 recipes to check (2 restored) · …",
+ * "Checking… 3 of 12 done", "All 79 recipes checked".
+ */
+export function checksStatusText(c: ChecksStatus, run?: number): string {
+  // `run`: how many this Check all queued, so progress counts failures as done too
+  if (c.pending > 0 && run && run >= c.pending) return `Checking… ${run - c.pending} of ${run} done`
+  if (c.pending > 0) return `Checking… ${c.checked} of ${c.eligible} done`
+  const parts: string[] = []
+  if (c.due > 0) {
+    // Never checked, restored from a backup, or edited since Wee Chef last looked
+    const why = [
+      c.restored && `${c.restored} restored`,
+      c.edited && `${c.edited} edited since`,
+    ].filter(Boolean)
+    parts.push(`${plural(c.due, "recipe")} to check${why.length ? ` (${why.join(", ")})` : ""}`)
+    // On recipes already in the box it only suggests (plus an undoable symbol clean-up)
+    parts.push("suggests fixes, tidies only stray symbols")
+  } else if (c.checked < c.eligible) {
+    // The rest failed too often; a recipe's own menu can still try again
+    parts.push(`${c.checked} of ${c.eligible} checked`)
+  } else {
+    parts.push(`All ${plural(c.checked, "recipe")} checked`)
+  }
+  if (c.tidied) parts.push(`${plural(c.tidied, "thing")} tidied`)
+  if (c.toCheck) parts.push(`${plural(c.toCheck, "recipe")} to look at`)
+  return parts.join(" · ")
+}
