@@ -19,20 +19,20 @@ ApplicationWindow {
     }
 
     Session {
-        id: session
+        id: appSession
     }
 
     Component.onCompleted: {
-        if (session.state === "checking" && session.serverUrl !== "")
-            session.connect(session.serverUrl)
+        if (appSession.state === "checking" && appSession.serverUrl !== "")
+            appSession.connect(appSession.serverUrl)
     }
 
     Loader {
         anchors.fill: parent
         sourceComponent: {
-            if (session.state === "ready")
+            if (appSession.state === "ready")
                 return recipesPage
-            if (session.state === "checking")
+            if (appSession.state === "checking")
                 return checkingPage
             return loginPage
         }
@@ -41,14 +41,14 @@ ApplicationWindow {
     Component {
         id: loginPage
         LoginPage {
-            session: session
+            session: appSession
         }
     }
 
     Component {
         id: recipesPage
         RecipesPage {
-            session: session
+            session: appSession
         }
     }
 
