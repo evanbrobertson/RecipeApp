@@ -243,6 +243,31 @@ const WORDS: &[(&str, &str)] = &[
     ("latte", "Drink"),
 ];
 
+/// Words that as often name a flavour or a topping as the dish itself.
+const FLAVOURS: &[&str] = &[
+    "tea",
+    "coffee",
+    "juice",
+    "lemonade",
+    "latte",
+    "punch",
+    "jam",
+    "pesto",
+    "salsa",
+    "chutney",
+    "relish",
+    "aioli",
+    "mayo",
+    "mayonnaise",
+    "sweet",
+];
+
+fn is_flavour(w: &str) -> bool {
+    FLAVOURS
+        .iter()
+        .any(|f| w == *f || w.strip_suffix('s') == Some(*f) || w.strip_suffix("es") == Some(*f))
+}
+
 /// The listed name for `s` when it is one already (any case).
 pub fn listed(s: &str) -> Option<&'static str> {
     let s = s.trim();
@@ -273,6 +298,7 @@ fn one_value(value: &str) -> Option<&'static str> {
         .map(String::from)
         .collect();
     let mut found: Vec<&'static str> = Vec::new();
+    let mut weak: Vec<bool> = Vec::new();
     let mut i = 0;
     'scan: while i < words.len() {
         for n in [3, 2] {
@@ -280,16 +306,27 @@ fn one_value(value: &str) -> Option<&'static str> {
                 && let Some(c) = lookup(PHRASES, &words[i..i + n].join(" "))
             {
                 found.push(c);
+                weak.push(false);
                 i += n;
                 continue 'scan;
             }
         }
         if let Some(c) = word(&words[i]) {
             found.push(c);
+            weak.push(is_flavour(&words[i]));
         }
         i += 1;
     }
-    PRIORITY.iter().copied().find(|c| found.contains(c))
+    // A flavour word ("tea cakes", "jam tarts", "pesto pasta") names the dish only when
+    // nothing else in the value does
+    let strong: Vec<&'static str> = found
+        .iter()
+        .zip(&weak)
+        .filter(|(_, w)| !**w)
+        .map(|(c, _)| *c)
+        .collect();
+    let pick = if strong.is_empty() { &found } else { &strong };
+    PRIORITY.iter().copied().find(|c| pick.contains(c))
 }
 
 /// Maps a site's category wording to [`LIST`], or None when nothing in it maps.
@@ -432,6 +469,17 @@ mod tests {
             ("Sweet Potatoes", Some("Side")),
             ("Bread Pudding", Some("Dessert")),
             ("Other Desserts", Some("Dessert")),
+            ("Tea Cakes", Some("Baking")),
+            ("Coffee Cookies", Some("Baking")),
+            ("Jam Tarts", Some("Baking")),
+            ("Pesto Pasta", Some("Main")),
+            ("Salsa Chicken", Some("Main")),
+            ("Lemonade Cupcakes", Some("Baking")),
+            ("Sweets", Some("Dessert")),
+            ("Tea", Some("Drink")),
+            ("Coffee", Some("Drink")),
+            ("Salsa", Some("Sauce")),
+            ("Jams and Preserves", Some("Sauce")),
         ] {
             assert_eq!(normalize(raw), want, "{raw:?}");
         }

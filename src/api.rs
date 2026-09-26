@@ -451,8 +451,10 @@ async fn patch_recipe(
     body: Bytes,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
-    let patch = RecipePatch::from_json(&json_body(&body)?)?.file_category();
-    let recipe = recipes::update_recipe(&state.db.lock(), id, patch)?;
+    let conn = state.db.lock();
+    let stored = recipes::get_recipe(&conn, id)?.and_then(|r| r.recipe_category);
+    let patch = RecipePatch::from_json(&json_body(&body)?)?.file_category(stored.as_deref());
+    let recipe = recipes::update_recipe(&conn, id, patch)?;
     Ok(Json(recipes::to_value(&recipe)))
 }
 

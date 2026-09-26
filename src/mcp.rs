@@ -363,11 +363,16 @@ impl Ctx<'_> {
                 };
                 let mut patch_input = a.clone();
                 patch_input.remove("id");
+                let conn = db.lock();
+                let stored = match recipes::get_recipe(&conn, id) {
+                    Ok(r) => r.and_then(|r| r.recipe_category),
+                    Err(err) => return Some(tool_error(err.message)),
+                };
                 let patch = match RecipePatch::from_json(&Value::Object(patch_input)) {
-                    Ok(p) => p.file_category(),
+                    Ok(p) => p.file_category(stored.as_deref()),
                     Err(err) => return Some(invalid(&err.message)),
                 };
-                match recipes::update_recipe(&db.lock(), id, patch) {
+                match recipes::update_recipe(&conn, id, patch) {
                     Ok(r) => text(format!(
                         "Updated \"{}\" (id {})\n{}",
                         r.title,

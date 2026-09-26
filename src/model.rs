@@ -353,8 +353,14 @@ impl RecipePatch {
 
 impl RecipePatch {
     /// Files a category someone set under the fixed list ([`crate::categories::for_save`]).
-    pub fn file_category(mut self) -> Self {
-        self.recipe_category = self.recipe_category.map(crate::categories::for_save);
+    /// The one the recipe already has (`stored`), sent back as it is, is left be: the
+    /// editor sends every field, and saving a typo fix mustn't turn an old "Holiday" into
+    /// Other (a check files it, under Undo).
+    pub fn file_category(mut self, stored: Option<&str>) -> Self {
+        self.recipe_category = match self.recipe_category {
+            Some(Some(c)) if stored.is_some_and(|s| s.trim() == c.trim()) => None,
+            other => other.map(crate::categories::for_save),
+        };
         self
     }
 }

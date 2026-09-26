@@ -283,7 +283,13 @@ fn find(state: &AppState, req: &Request, token: &str) -> Result<(Share, Recipe),
         return Err(Box::new(too_many()));
     }
     match lookup(&state.db.lock(), token, now_secs()) {
-        Ok(Some(found)) => Ok(found),
+        // The page, its JSON-LD and crumb.json show a category from before the fixed list
+        // filed under it (or none), as the recipe will be once it's checked
+        Ok(Some((share, mut recipe))) => {
+            recipe.recipe_category =
+                crate::categories::for_import(recipe.recipe_category.as_deref());
+            Ok((share, recipe))
+        }
         Ok(None) => {
             state.share_misses.miss(&ip);
             Err(Box::new(missing()))

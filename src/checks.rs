@@ -2709,6 +2709,8 @@ mod tests {
         assert_eq!(get(a.id).recipe_category.as_deref(), Some("Main"));
         assert_eq!(get(b.id).recipe_category.as_deref(), Some("Soup"));
         assert_eq!(get(c.id).recipe_category, None);
+        // Filed, filled or left blank: none is due again (no re-queue loop)
+        assert!(to_check_all(&conn).unwrap().is_empty());
         let flags = for_recipe(&conn, b.id).unwrap();
         assert_eq!(flags["canUndo"], true);
         assert_eq!(flags["flags"][0]["kind"], "category");

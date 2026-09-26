@@ -377,6 +377,8 @@ fn save_shared(
         .take()
         .filter(|u| is_valid_url(u) && !same_host(u, share_url));
     fields.url = Some(share_url.to_string());
+    // A share from a Crumb before the fixed list may carry a site's wording
+    fields.recipe_category = crate::categories::for_import(fields.recipe_category.as_deref());
     let conn = state.db.lock();
     let (recipe, is_new) = create_recipe(&conn, fields, "url")?;
     if !is_new {

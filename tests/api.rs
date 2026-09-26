@@ -3313,6 +3313,17 @@ async fn saving_another_crumbs_share_imports_its_export() {
     let mut own = shared_recipe("House Bread");
     own["url"] = Value::Null;
     let (_, r2) = a.json("POST", "/api/recipes", Some(own)).await;
+    // Categories from before the fixed list, straight into A's database
+    for (id, category) in [(&r["id"], "Cakes"), (&r2["id"], "Holiday")] {
+        a.state
+            .db
+            .lock()
+            .execute(
+                "UPDATE recipes SET recipe_category = ?1 WHERE id = ?2",
+                rusqlite::params![category, id.as_i64().unwrap()],
+            )
+            .unwrap();
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let svc = NormalizePathLayer::trim_trailing_slash().layer(app(a.state.clone()));
@@ -3357,6 +3368,11 @@ async fn saving_another_crumbs_share_imports_its_export() {
     assert_eq!(saved["ingredients"][0]["name"], "Cake");
     assert_eq!(saved["instructions"][1]["name"], "Finish");
     assert_eq!(saved["cookTime"], "45 mins");
+    // A's "Cakes" went out filed under the list
+    assert_eq!(saved["recipeCategory"], "Baking");
+    let (_, _, page) = a.send(get(&share_path(&links[0]))).await;
+    assert!(page.contains(r#""recipeCategory":"Baking""#), "{page}");
+    assert!(!page.contains("Cakes"));
     // Saved as it was, like a restore
     let (_, checks) = b
         .json("GET", &format!("/api/recipes/{}/checks", first["id"]), None)
@@ -3427,6 +3443,7 @@ async fn saving_another_crumbs_share_imports_its_export() {
         .await;
     assert_eq!(saved["url"], links[1].as_str());
     assert!(saved["originalUrl"].is_null());
+    assert!(saved["recipeCategory"].is_null(), "{saved}");
     let (_, again) = b
         .json(
             "POST",
@@ -3525,6 +3542,43 @@ async fn a_made_up_share_export_cant_plant_a_script_link_or_claim_a_url() {
         .await;
     assert_eq!(saved["title"], "Self Pie");
     assert!(saved["originalUrl"].is_null());
+}
+
+#[tokio::test]
+async fn a_share_from_an_older_crumb_has_its_category_filed() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let mut old: Value = serde_json::from_str(&fake_export(
+        "Old Pie",
+        "https://food.test/old-pie",
+        "https://img.test/p.jpg",
+    ))
+    .unwrap();
+    old["recipes"][0]["recipeCategory"] = json!("Dinner, Entree");
+    let old = old.to_string();
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/old",
+                route(|| async { Html(fake_share_page("/s/old/crumb.json")) }),
+            )
+            .route("/s/old/crumb.json", route(move || async move { old })),
+    )
+    .await;
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/old")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(saved["title"], "Old Pie");
+    assert_eq!(saved["recipeCategory"], "Main");
 }
 
 #[tokio::test]
@@ -3706,6 +3760,46 @@ async fn categories_are_filed_under_the_fixed_list() {
         assert_eq!(status, StatusCode::OK, "{r}");
         assert_eq!(r["recipeCategory"], saved, "{set}");
     }
+    // The editor sends every field: an old category sent back as it is stays (a check
+    // files it, under Undo), while a new one is filed
+    t.state
+        .db
+        .lock()
+        .execute(
+            "UPDATE recipes SET recipe_category = 'Holiday' WHERE id = ?1",
+            [joes["id"].as_i64().unwrap()],
+        )
+        .unwrap();
+    let (status, r) = t
+        .json(
+            "PATCH",
+            &at,
+            Some(json!({"title": "Sloppy Joe", "recipeCategory": "Holiday"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    assert_eq!(
+        (&r["title"], &r["recipeCategory"]),
+        (&json!("Sloppy Joe"), &json!("Holiday"))
+    );
+    let (msg, _) = mcp_call(
+        &t,
+        "update_recipe",
+        json!({"id": joes["id"], "notes": "Toast the buns.", "recipeCategory": "Holiday"}),
+    )
+    .await;
+    assert!(msg.contains("Updated"), "{msg}");
+    let (_, r) = t.json("GET", &at, None).await;
+    assert_eq!(r["recipeCategory"], "Holiday");
+    let (msg, _) = mcp_call(
+        &t,
+        "update_recipe",
+        json!({"id": joes["id"], "recipeCategory": "supper"}),
+    )
+    .await;
+    assert!(msg.contains("Updated"), "{msg}");
+    let (_, r) = t.json("GET", &at, None).await;
+    assert_eq!(r["recipeCategory"], "Main");
     let (msg, _) = mcp_call(
         &t,
         "save_recipe",
