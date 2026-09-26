@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.crumb.android.AppContainer
@@ -165,6 +167,13 @@ class RecipePageViewModel(
         load()
     }
 
+    private var shown = false
+
+    /** The page is showing again; reload unless this is the first time (init already did). */
+    fun resumed() {
+        if (shown) load() else shown = true
+    }
+
     fun load() {
         loadJob?.cancel()
         _state.update { it.copy(loading = it.recipe == null, error = null) }
@@ -193,6 +202,7 @@ class RecipePageViewModel(
         val wee = runCatching { container.api.connector().weeChefChecks }.getOrNull()
         // Servers older than the Android app have no GET here; the line just stays hidden
         val cooked = runCatching { container.api.cookStats(id) }.getOrNull()
+        val share = runCatching { container.api.existingShare(ShareKind.Recipe, id) }.getOrNull()
         _state.update {
             it.copy(
                 cookbooks = books?.value ?: it.cookbooks,
@@ -201,6 +211,7 @@ class RecipePageViewModel(
                 checks = checks ?: it.checks,
                 weeChefChecks = wee ?: it.weeChefChecks,
                 cookStats = cooked?.let { c -> CookStats(c.count, c.lastCookedAt) } ?: it.cookStats,
+                share = share ?: it.share,
             )
         }
     }
@@ -347,6 +358,12 @@ fun RecipeScreen(id: Long, fromRandom: Boolean = false, onSignedOut: () -> Unit)
     val container = AppContainerProvider
     val nav = LocalNav.current
     val recipe = state.recipe
+
+    // Coming back from the editor (or anywhere) shows the saved recipe, as the web's page load does
+    LifecycleResumeEffect(Unit) {
+        vm.resumed()
+        onPauseOrDispose {}
+    }
 
     LaunchedEffect(state.signedOut) {
         if (state.signedOut) onSignedOut()

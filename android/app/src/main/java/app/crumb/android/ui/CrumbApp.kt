@@ -43,7 +43,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import app.crumb.android.ui.add.AddScreen
-import app.crumb.android.ui.books.BookScreen
+import app.crumb.android.ui.books.CookbookScreen
 import app.crumb.android.ui.books.ShelfScreen
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.Message
@@ -185,7 +185,7 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                 composable<ImportRoute> { Message("Import recipes", "Coming together.") }
                 composable<ConnectRoute> { Message("Connect to Claude", "Coming together.") }
                 composable<BookRoute> { backStack ->
-                    BookScreen(
+                    CookbookScreen(
                         id = backStack.toRoute<BookRoute>().id,
                         onBack = { crumbNav.back() },
                         onOpenRecipe = { crumbNav.recipe(it) },

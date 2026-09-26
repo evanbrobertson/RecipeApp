@@ -277,6 +277,13 @@ class CrumbApi(
     suspend fun shares(): List<SharedLink> =
         get(url("api/shares"), ListSerializer(SharedLink.serializer()))
 
+    /** The live share link for one recipe or cookbook, if it has one (from `GET /api/shares`). */
+    suspend fun existingShare(kind: ShareKind, id: Long): Share? {
+        val type = if (kind == ShareKind.Recipe) "recipe" else "cookbook"
+        val link = shares().firstOrNull { it.kind == type && it.id == id } ?: return null
+        return Share(link.url.substringAfterLast('/'), link.url, link.includeNotes, link.createdAt)
+    }
+
     /** `GET /api/connector`: what this server has (MCP URL, keys, scraping). */
     suspend fun connector(): ConnectorInfo = get(url("api/connector"), ConnectorInfo.serializer())
 

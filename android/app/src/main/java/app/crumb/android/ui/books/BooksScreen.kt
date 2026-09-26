@@ -7,7 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,21 +15,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,14 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.crumb.android.data.Cookbook
 import app.crumb.android.data.CookbookListItem
 import app.crumb.android.data.Loaded
 import app.crumb.android.data.RecipeRepository
@@ -67,17 +54,14 @@ import app.crumb.android.ui.components.CrumbModal
 import app.crumb.android.ui.components.CrumbText
 import app.crumb.android.ui.components.EmptyState
 import app.crumb.android.ui.components.FieldLabel
-import app.crumb.android.ui.components.Loading
 import app.crumb.android.ui.components.Message
 import app.crumb.android.ui.components.OfflineNote
-import app.crumb.android.ui.components.SecondaryButton
 import app.crumb.android.ui.components.Skeleton
 import app.crumb.android.ui.components.ToastTone
 import app.crumb.android.ui.components.Toaster
 import app.crumb.android.ui.components.VSpace
 import app.crumb.android.ui.crumbViewModel
 import app.crumb.android.ui.friendlyMessage
-import app.crumb.android.ui.recipes.RecipeCard
 import app.crumb.android.ui.theme.Crumb
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.LibraryBig
@@ -91,14 +75,6 @@ class BooksViewModel(private val repo: RecipeRepository) : LoadingViewModel<List
     }
 
     override suspend fun fetch(): Loaded<List<CookbookListItem>> = repo.cookbooks()
-}
-
-class BookViewModel(private val repo: RecipeRepository, private val id: Long) : LoadingViewModel<Cookbook>() {
-    init {
-        load()
-    }
-
-    override suspend fun fetch(): Loaded<Cookbook> = repo.cookbook(id)
 }
 
 /** "Your shelf": the cookbooks as a stack of books (web/src/islands/ShelfPage.svelte). */
@@ -269,61 +245,6 @@ fun BookColorPicker(value: String, onChange: (String) -> Unit) {
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Lucide.Check, null, tint = c.onTile, modifier = Modifier.size(14.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BookScreen(id: Long, onBack: () -> Unit, onOpenRecipe: (Long) -> Unit, onSignedOut: () -> Unit) {
-    val vm = crumbViewModel(key = "book-$id") { BookViewModel(it.recipes, id) }
-    val state by vm.state.collectAsStateWithLifecycle()
-    val container = AppContainerProvider
-    val photoPx = with(LocalDensity.current) { 200.dp.roundToPx() }
-    LaunchedEffect(state) {
-        if ((state as? UiState.Failed)?.signedOut == true) onSignedOut()
-    }
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag("back")) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-            }
-        }
-        when (val s = state) {
-            UiState.Loading -> Loading()
-            is UiState.Failed -> Message("Couldn't open this cookbook", s.message, action = {
-                SecondaryButton("Try again", onClick = { vm.load() })
-            })
-            is UiState.Ready -> {
-                val book = s.value
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(150.dp),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (s.offline) OfflineNote()
-                            Text(book.name, style = MaterialTheme.typography.headlineMedium)
-                            book.description?.takeIf { it.isNotBlank() }?.let {
-                                Text(it, style = MaterialTheme.typography.bodyLarge, color = Crumb.colors.inkMuted)
-                            }
-                        }
-                    }
-                    if (book.recipes.isEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Text("No recipes in this cookbook yet.", color = Crumb.colors.inkMuted)
-                        }
-                    }
-                    items(book.recipes, key = { it.id }) { recipe ->
-                        RecipeCard(recipe, container.recipes.photoUrl(recipe.id, recipe.image, photoPx)) {
-                            onOpenRecipe(recipe.id)
-                        }
                     }
                 }
             }
