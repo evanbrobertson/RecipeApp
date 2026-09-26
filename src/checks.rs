@@ -19,8 +19,10 @@
 //!    only suggest: on recipes already in the box (restored, edited, or checked before)
 //!    every Jev fix becomes a review flag, and only the deterministic clean-up of
 //!    [`TidyScope::Saved`] is applied (checkbox glyphs, web codes, float quantities as
-//!    fractions, raw ISO times), under the same Undo. Once the cook has undone a Wee
-//!    Chef fix on a recipe, no check tidies it again. Undo is offered only while the recipe
+//!    fractions, raw ISO times, a category from before the fixed list), under the same
+//!    Undo. A recipe with no category gets one question more, which of
+//!    [`crate::categories::LIST`] it is; a sure answer fills the blank in any mode. Once
+//!    the cook has undone a Wee Chef fix on a recipe, no check tidies it again. Undo is offered only while the recipe
 //!    still holds exactly what the fix wrote (compared by a content hash); once the cook
 //!    changes it, the fix is superseded and no longer claimed. Off without
 //!    `TYPESAFE_API_KEY`.
@@ -54,6 +56,8 @@ const OK_BELOW: f64 = 0.2;
 const FLAG_FROM: f64 = 0.6;
 /// Only answers this confident are applied; the rest are left for the cook to review.
 const FIX_FROM: f64 = 0.9;
+/// A category is filled in (it was blank, so nothing is overwritten) from this sure.
+const CATEGORY_FROM: f64 = 0.7;
 
 /// Recipe sources that came from outside and are worth checking.
 pub const CHECKED_SOURCES: [&str; 4] = ["url", "text", "import", "photo"];
@@ -349,6 +353,15 @@ pub fn tidy(fields: &mut RecipeFields, scope: TidyScope) -> Tidied {
             text(item, true);
         }
     }
+    // Categories come from Crumb's fixed list: a site's wording is filed under it, and
+    // one that names nothing on the list is cleared (for Wee Chef's check to pick)
+    if let Some(c) = fields.recipe_category.take() {
+        let next = crate::categories::normalize(&c).map(String::from);
+        if next.as_deref() != Some(c.as_str()) {
+            changes += 1;
+        }
+        fields.recipe_category = next;
+    }
     // Raw ISO durations some sites publish ("P0Y0M0DT0H10M0.000S") read as "10m". Only
     // what parses as one, so anything the cook typed is left alone, and only a minute or
     // more: "PT30S" or "P0D" would read as no time at all, and a time is never cleared.
@@ -442,8 +455,21 @@ pub fn tidy(fields: &mut RecipeFields, scope: TidyScope) -> Tidied {
     out
 }
 
-/// The lists a check or tidy may rewrite, as they were, for Undo.
+/// What a check or tidy may rewrite, as it was, for Undo.
 fn original_of(
+    ingredients: &[Section],
+    instructions: &[Section],
+    notes: &Option<String>,
+    times: [&Option<String>; 4],
+    category: &Option<String>,
+) -> Value {
+    let mut v = lists_and_times(ingredients, instructions, notes, times);
+    v["recipeCategory"] = json!(category);
+    v
+}
+
+/// [`original_of`] without the category: what `2:` hashes covered.
+fn lists_and_times(
     ingredients: &[Section],
     instructions: &[Section],
     notes: &Option<String>,
@@ -465,6 +491,17 @@ fn times_of(r: &Recipe) -> [&Option<String>; 4] {
     [&r.prep_time, &r.cook_time, &r.total_time, &r.freeze_time]
 }
 
+/// [`original_of`] for a saved recipe.
+fn original_of_recipe(r: &Recipe) -> Value {
+    original_of(
+        &r.ingredients,
+        &r.instructions,
+        &r.notes,
+        times_of(r),
+        &r.recipe_category,
+    )
+}
+
 fn fnv1a(text: &str) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.bytes() {
@@ -476,22 +513,22 @@ fn fnv1a(text: &str) -> String {
 
 /// FNV-1a over the parts of a recipe a fix writes. Stored with a fix so Undo can tell
 /// whether the recipe still holds exactly what the fix wrote. Stable across builds.
-/// `2:` marks the version that covers every time; see [`hash_holds`].
+/// `3:` marks the version that covers the category too; see [`hash_holds`].
 pub fn content_hash(r: &Recipe) -> String {
-    let text = to_text(&original_of(
-        &r.ingredients,
-        &r.instructions,
-        &r.notes,
-        times_of(r),
-    ));
-    format!("2:{}", fnv1a(&text))
+    format!("3:{}", fnv1a(&to_text(&original_of_recipe(r))))
 }
 
-/// Whether a stored [`content_hash`] matches the recipe. Hashes from before the `2:`
-/// version covered the lists, the notes and the total time only.
+/// Whether a stored [`content_hash`] matches the recipe. `2:` hashes covered the lists,
+/// the notes and every time; older ones the lists, the notes and the total time only.
 fn hash_holds(stored: &str, r: &Recipe) -> bool {
+    if stored.starts_with("3:") {
+        return stored == content_hash(r);
+    }
     match stored.strip_prefix("2:") {
-        Some(_) => stored == content_hash(r),
+        Some(hash) => {
+            let v2 = lists_and_times(&r.ingredients, &r.instructions, &r.notes, times_of(r));
+            hash == fnv1a(&to_text(&v2))
+        }
         None => {
             let legacy = json!({
                 "ingredients": r.ingredients,
@@ -513,6 +550,14 @@ pub struct TidyUndo {
 /// [`tidy`] for a fresh import from `source`. When it drops steps, returns what
 /// [`remember_tidy`] needs to make that undoable once the recipe is saved.
 pub fn tidy_import(fields: &mut RecipeFields, source: &str) -> Option<TidyUndo> {
+    // The site's category wording isn't kept, not even for Undo
+    fields.recipe_category = crate::categories::for_import(
+        fields
+            .recipe_category
+            .as_deref()
+            .map(decode_entities)
+            .as_deref(),
+    );
     let original = original_of(
         &fields.ingredients,
         &fields.instructions,
@@ -523,6 +568,7 @@ pub fn tidy_import(fields: &mut RecipeFields, source: &str) -> Option<TidyUndo> 
             &fields.total_time,
             &fields.freeze_time,
         ],
+        &fields.recipe_category,
     );
     let t = tidy(fields, TidyScope::for_source(source));
     (!t.dropped.is_empty()).then_some(TidyUndo {
@@ -578,6 +624,39 @@ const ING_QUESTION: &str = "This `line` was extracted from the ingredient list o
 const STEP_QUESTION: &str =
     "`step` was extracted as one item of the recipe's method. What kind of item is `step`?";
 const WAIT_QUESTION: &str = "Do the recipe's steps include unattended waiting outside prep and cooking, such as marinating, chilling, rising, soaking, resting, cooling or overnight setting?";
+
+const CATEGORY_QUESTION: &str = "Which one of these kinds of dish is the recipe in the state, as a cook would file it in a recipe box?";
+
+/// The category question's labels, with the listed name each stands for.
+const CATEGORY_LABELS: [(&str, &str); 11] = [
+    ("breakfast", "Breakfast"),
+    ("main", "Main"),
+    ("side", "Side"),
+    ("soup", "Soup"),
+    ("salad", "Salad"),
+    ("baking", "Baking"),
+    ("dessert", "Dessert"),
+    ("snack", "Snack"),
+    ("sauce", "Sauce"),
+    ("drink", "Drink"),
+    ("other", "Other"),
+];
+
+fn category_criteria() -> Value {
+    json!({
+        "breakfast": "A breakfast or brunch dish: pancakes, crepes, eggs, oatmeal, a breakfast sandwich.",
+        "main": "The main dish of a lunch or dinner: meat, fish, pasta, curry, a casserole, a sandwich, a burger, a one-pot meal.",
+        "side": "A side dish served with a main: vegetables, potatoes, rice, grains, beans.",
+        "soup": "A soup, stew, chili or chowder.",
+        "salad": "A salad or slaw.",
+        "baking": "A baked good: bread, cookies, cake, cupcakes, muffins, brownies, bars, pie, tart, pastry, scones, or a frosting for them.",
+        "dessert": "A dessert that isn't a baked good: pudding, custard, mousse, ice cream, candy, a plated or chilled sweet.",
+        "snack": "A snack, appetizer, starter or dip.",
+        "sauce": "A sauce, dressing, gravy, condiment, marinade, spread or seasoning used with other food.",
+        "drink": "A drink: a smoothie, cocktail, juice, tea, coffee or shake.",
+        "other": "None of the other kinds.",
+    })
+}
 
 fn ing_criteria() -> Value {
     json!({
@@ -704,7 +783,40 @@ fn questions(r: &Recipe) -> Map<String, Value> {
             json!({"type": "noul", "instructions": WAIT_QUESTION}),
         );
     }
+    // Only when there's none to keep: blank, or wording the tidy will clear
+    if category_missing(r) {
+        q.insert(
+            "category".into(),
+            json!({"type": "choice",
+                "instructions": {"question": CATEGORY_QUESTION},
+                "criteria": category_criteria()}),
+        );
+    }
     q
+}
+
+/// The recipe has no category from the list, and none it could be filed under.
+fn category_missing(r: &Recipe) -> bool {
+    r.recipe_category
+        .as_deref()
+        .and_then(crate::categories::normalize)
+        .is_none()
+}
+
+/// Jev's category, when its top answer is at least [`CATEGORY_FROM`] sure: the listed
+/// name and how sure.
+fn category_answer(answers: &Map<String, Value>) -> Option<(&'static str, f64)> {
+    let a = answers.get("category")?;
+    let label = a.get("choice").and_then(Value::as_str)?;
+    let name = CATEGORY_LABELS
+        .iter()
+        .find(|(l, _)| *l == label)
+        .map(|(_, name)| *name)?;
+    let p = a
+        .get("probabilities")
+        .and_then(|p| p.get(label))
+        .and_then(Value::as_f64)?;
+    (p >= CATEGORY_FROM).then_some((name, p))
 }
 
 // ─── Reading the answers ─────────────────────────────────────────────────────
@@ -1225,7 +1337,8 @@ fn apply(
     let unchanged = current.ingredients == snapshot.ingredients
         && current.instructions == snapshot.instructions
         && current.notes == snapshot.notes
-        && times_of(&current) == times_of(snapshot);
+        && times_of(&current) == times_of(snapshot)
+        && current.recipe_category == snapshot.recipe_category;
     // Fresh: queued by its import and never edited since (restores and older recipes
     // come through "Check all", edits bump updated_at past created_at)
     let fresh = mode == Mode::Import && snapshot.updated_at <= snapshot.created_at;
@@ -1287,6 +1400,8 @@ fn apply(
     let mut total_time = snapshot.total_time.clone();
     // Prep, cook and extra time, when the tidy made an ISO one readable
     let mut other_times: [Option<Option<String>>; 3] = Default::default();
+    // The category, when this check files it under the list or fills it in
+    let mut category: Option<Option<String>> = None;
     if unchanged && !undone {
         let scope = if fresh {
             TidyScope::for_source(&snapshot.source)
@@ -1332,6 +1447,31 @@ fn apply(
                 detail: json!({"p": 1.0, "fix": "tidy", "count": count}),
             });
         }
+        // Wording that isn't on the list is filed under it, or cleared; a blank one is
+        // filled in when Jev is sure enough (in any mode: nothing the cook set is lost)
+        let was = &snapshot.recipe_category;
+        let mut next = was
+            .as_deref()
+            .map(decode_entities)
+            .as_deref()
+            .and_then(crate::categories::normalize)
+            .map(String::from);
+        let mut p = 1.0;
+        if next.is_none()
+            && let Some((name, sure)) = category_answer(&reply.answers)
+        {
+            next = Some(name.to_string());
+            p = sure;
+        }
+        if next != *was {
+            plan.fixed.push(Flag {
+                field: "recipe",
+                item_text: String::new(),
+                kind: "category".into(),
+                detail: json!({"p": p, "fix": "category", "category": next, "was": was}),
+            });
+            category = Some(next);
+        }
     }
 
     // An earlier fix (the import's tidy) that the recipe still holds stays undoable
@@ -1365,12 +1505,7 @@ fn apply(
     let final_recipe = if plan.fixed.is_empty() {
         current
     } else {
-        let before = original_of(
-            &snapshot.ingredients,
-            &snapshot.instructions,
-            &snapshot.notes,
-            times_of(snapshot),
-        );
+        let before = original_of_recipe(snapshot);
         original = Some(match earlier_original.filter(|_| earlier_holds) {
             // An older original may lack some times: they're as the snapshot has them
             Some(o) => match serde_json::from_str::<Value>(&o) {
@@ -1393,6 +1528,7 @@ fn apply(
             prep_time: other_times[0].take(),
             cook_time: other_times[1].take(),
             freeze_time: other_times[2].take(),
+            recipe_category: category.take(),
             ..Default::default()
         };
         let updated = crate::recipes::update_recipe(&tx, id, patch)?;
@@ -1586,7 +1722,7 @@ pub fn undo(conn: &Connection, id: i64) -> AppResult<Value> {
     }
     let original: Value = serde_json::from_str(&original).map_err(AppError::internal)?;
     let sections = |key: &str| crate::model::normalize_sections_value(&original[key]);
-    // Older originals have no prep, cook or extra time: those are left as they are
+    // Older originals have no prep, cook or extra time or category: those are left as they are
     let time = |key: &str| original.get(key).map(|t| t.as_str().map(String::from));
     let tx = conn.unchecked_transaction()?;
     let now = now_secs();
@@ -1605,6 +1741,7 @@ pub fn undo(conn: &Connection, id: i64) -> AppResult<Value> {
             prep_time: time("prepTime"),
             cook_time: time("cookTime"),
             freeze_time: time("freezeTime"),
+            recipe_category: time("recipeCategory"),
             ..Default::default()
         },
     )?;
@@ -1690,7 +1827,8 @@ const EDITED_SINCE: &str =
 /// Why "Check all" would queue a recipe now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Due {
-    /// Never checked (or only tidied on import), failed with tries left, or stuck waiting.
+    /// Never checked (or only tidied on import), failed with tries left, stuck waiting, or
+    /// with a category from before the fixed list.
     Unchecked,
     /// Restored from a backup and never checked since.
     Restored,
@@ -1701,6 +1839,15 @@ enum Due {
 /// The recipes "Check all" queues, and why (see [`check_all`]).
 fn due(conn: &Connection) -> AppResult<Vec<(i64, Due)>> {
     let marks = CHECKED_SOURCES.map(|s| format!("'{s}'")).join(", ");
+    let listed = crate::categories::LIST.map(|c| format!("'{c}'")).join(", ");
+    // A category from before the fixed list, which the tidy files under it (unless the
+    // cook undid a fix, or the check failed for good)
+    let off_list = format!(
+        "(coalesce(trim(r.recipe_category), '') <> '' AND r.recipe_category NOT IN ({listed})
+           AND coalesce(c.status, '') <> 'pending'
+           AND (c.status IS NOT 'failed' OR c.attempts < ?1)
+           AND NOT EXISTS (SELECT 1 FROM recipe_flags f WHERE f.recipe_id = r.id AND f.state = 'undone'))"
+    );
     let mut stmt = conn.prepare(&format!(
         "SELECT r.id, CASE
            WHEN c.status = 'skipped' THEN 1
@@ -1711,7 +1858,8 @@ fn due(conn: &Connection) -> AppResult<Vec<(i64, Due)>> {
            OR c.status IN ('tidied', 'skipped')
            OR (c.status = 'failed' AND c.attempts < ?1)
            OR (c.status = 'pending' AND c.queued_at < ?2)
-           OR (c.status IN ('done', 'failed') AND {EDITED_SINCE}))
+           OR (c.status IN ('done', 'failed') AND {EDITED_SINCE})
+           OR {off_list})
          ORDER BY r.id"
     ))?;
     let rows = stmt
@@ -2202,6 +2350,15 @@ mod tests {
         let mut other = r.clone();
         other.prep_time = Some("5m".into());
         assert!(!hash_holds(&content_hash(&r), &other));
+        // `2:` hashes, from before the category was covered, still hold
+        let v2 = lists_and_times(&r.ingredients, &r.instructions, &r.notes, times_of(&r));
+        let v2 = format!("2:{}", fnv1a(&to_text(&v2)));
+        assert!(hash_holds(&v2, &r));
+        assert!(!hash_holds(&v2, &other));
+        let mut filed = r.clone();
+        filed.recipe_category = Some("Main".into());
+        assert!(hash_holds(&v2, &filed));
+        assert!(!hash_holds(&content_hash(&r), &filed));
     }
 
     #[test]
@@ -2451,13 +2608,159 @@ mod tests {
             None,
         );
         let q = questions(&r);
-        assert_eq!(q.len(), 5);
+        // Two lines, two steps, the wait and (with no category) the category
+        assert_eq!(q.len(), 6);
+        assert_eq!(q["category"]["type"], "choice");
+        assert_eq!(
+            q["category"]["criteria"].as_object().unwrap().len(),
+            crate::categories::LIST.len()
+        );
         assert_eq!(q["ing_1"]["instructions"]["line"], "2 cups flour");
         assert_eq!(q["step_0"]["instructions"]["previous_step"], Value::Null);
         assert_eq!(q["step_0"]["instructions"]["next_step"], "Bake.");
         assert_eq!(q["has_wait"]["type"], "noul");
         let s = jev_state(&r);
         assert!(s.get("url").is_none() && s.get("image").is_none());
+
+        // A category on the list, or one the tidy files under it, isn't asked about
+        for (have, asked) in [
+            ("Main", false),
+            ("Dinner, Entree", false),
+            ("Holiday", true),
+        ] {
+            let mut r = r.clone();
+            r.recipe_category = Some(have.into());
+            assert_eq!(questions(&r).contains_key("category"), asked, "{have}");
+        }
+    }
+
+    fn category_reply(label: &str, p: f64) -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert(
+            "category".into(),
+            json!({"choice": label, "probabilities": {label: p, "other": (1.0 - p) / 2.0}}),
+        );
+        m
+    }
+
+    #[test]
+    fn reads_the_category_answer() {
+        assert_eq!(
+            category_answer(&category_reply("main", 0.93)),
+            Some(("Main", 0.93))
+        );
+        assert_eq!(
+            category_answer(&category_reply("baking", 0.7)),
+            Some(("Baking", 0.7))
+        );
+        assert_eq!(category_answer(&category_reply("dessert", 0.69)), None);
+        // An unknown label, a missing probability or no answer at all
+        assert_eq!(category_answer(&category_reply("lunch", 0.99)), None);
+        let mut m = Map::new();
+        m.insert("category".into(), json!({"choice": "soup"}));
+        assert_eq!(category_answer(&m), None);
+        assert_eq!(category_answer(&Map::new()), None);
+        for (label, name) in CATEGORY_LABELS {
+            assert_eq!(crate::categories::listed(name), Some(name));
+            assert!(category_criteria().get(label).is_some());
+        }
+    }
+
+    #[test]
+    fn a_check_files_the_category_and_fills_a_blank_one_under_undo() {
+        let db = crate::db::open_in_memory().unwrap();
+        let conn = db.lock();
+        let make = |title: &str, category: Option<&str>| RecipeFields {
+            title: title.into(),
+            recipe_category: category.map(String::from),
+            ingredients: vec![section(None, &["1 cup broth"])],
+            instructions: vec![section(None, &["Simmer."])],
+            ..Default::default()
+        };
+        // Saved before the list: "One dish meal" is filed as Main, whatever Jev says
+        let (a, _) =
+            crate::recipes::create_recipe(&conn, make("A", Some("One dish meal")), "url").unwrap();
+        // Wording that names nothing on the list is cleared, then Jev fills it in
+        let (b, _) =
+            crate::recipes::create_recipe(&conn, make("B", Some("Holiday")), "url").unwrap();
+        // Blank, and Jev isn't sure enough: left blank, nothing to undo
+        let (c, _) = crate::recipes::create_recipe(&conn, make("C", None), "url").unwrap();
+        for r in [&a, &b, &c] {
+            queued(&conn, r.id, Mode::Review);
+        }
+        let with = |r: &Recipe, label: &str, p: f64| {
+            let mut rep = reply(r, &[]);
+            rep.answers.extend(category_reply(label, p));
+            rep
+        };
+        assert_eq!(
+            apply(&conn, &a, with(&a, "soup", 0.99), Mode::Review).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(
+            apply(&conn, &b, with(&b, "soup", 0.8), Mode::Review).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(
+            apply(&conn, &c, with(&c, "soup", 0.5), Mode::Review).unwrap(),
+            (0, 0)
+        );
+        let get = |id| crate::recipes::require_recipe(&conn, id).unwrap();
+        assert_eq!(get(a.id).recipe_category.as_deref(), Some("Main"));
+        assert_eq!(get(b.id).recipe_category.as_deref(), Some("Soup"));
+        assert_eq!(get(c.id).recipe_category, None);
+        let flags = for_recipe(&conn, b.id).unwrap();
+        assert_eq!(flags["canUndo"], true);
+        assert_eq!(flags["flags"][0]["kind"], "category");
+        assert_eq!(flags["flags"][0]["detail"]["category"], "Soup");
+        assert_eq!(flags["flags"][0]["detail"]["was"], "Holiday");
+        assert_eq!(flags["flags"][0]["detail"]["p"], 0.8);
+
+        undo(&conn, a.id).unwrap();
+        assert_eq!(get(a.id).recipe_category.as_deref(), Some("One dish meal"));
+        // Undone: "Check all" leaves it be from now on
+        assert!(!to_check_all(&conn).unwrap().contains(&a.id));
+    }
+
+    #[test]
+    fn check_all_picks_up_categories_from_before_the_list() {
+        let db = crate::db::open_in_memory().unwrap();
+        let conn = db.lock();
+        let (r, _) = crate::recipes::create_recipe(
+            &conn,
+            RecipeFields {
+                title: "Sloppy Joes".into(),
+                recipe_category: Some("Dinner, Entree, Sandwich".into()),
+                ingredients: vec![section(None, &["1 lb beef"])],
+                ..Default::default()
+            },
+            "url",
+        )
+        .unwrap();
+        queued(&conn, r.id, Mode::Review);
+        apply(&conn, &r, reply(&r, &[]), Mode::Review).unwrap();
+        // Checked and filed: not due again
+        assert_eq!(
+            crate::recipes::require_recipe(&conn, r.id)
+                .unwrap()
+                .recipe_category
+                .as_deref(),
+            Some("Main")
+        );
+        assert!(to_check_all(&conn).unwrap().is_empty());
+        // One checked before the list that still has old wording is due again
+        conn.execute(
+            "UPDATE recipes SET recipe_category = 'Lunch' WHERE id = ?1",
+            [r.id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE recipe_checks SET original = NULL, fixed_hash = NULL, seen_at = NULL,
+               checked_at = 9999999999 WHERE recipe_id = ?1",
+            [r.id],
+        )
+        .unwrap();
+        assert_eq!(to_check_all(&conn).unwrap(), [r.id]);
     }
 
     fn reply(r: &Recipe, odd: &[(&str, &str, f64)]) -> Reply {

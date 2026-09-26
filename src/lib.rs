@@ -3,6 +3,7 @@
 pub mod api;
 pub mod auth;
 pub mod browser;
+pub mod categories;
 pub mod checks;
 pub mod config;
 pub mod db;

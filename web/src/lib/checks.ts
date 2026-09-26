@@ -21,6 +21,12 @@ export function fixText(f: CheckFlag): string {
       return `Joined a step that was split in two: ${quote(f.itemText)}`
     case "tidy":
       return "Cleaned up stray checkboxes, web codes, repeated lines, quantities or times"
+    case "category": {
+      const { category, was } = f.detail ?? {}
+      if (category && was) return `Changed the category from ${quote(was)} to ${category}`
+      if (category) return `Set the category to ${category}`
+      return `Cleared the category ${quote(was ?? "")}: it isn't one of Crumb's`
+    }
     default:
       return `Tidied ${quote(f.itemText)}`
   }

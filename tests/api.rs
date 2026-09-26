@@ -116,6 +116,8 @@ async fn recipes_crud_search_and_cookbooks() {
     assert_eq!(created["title"], "Lemon Chicken");
     assert_eq!(created["isNew"], true);
     assert_eq!(created["source"], "manual");
+    // Filed under the fixed list
+    assert_eq!(created["recipeCategory"], "Main");
     assert_eq!(
         created["ingredients"][0]["items"],
         json!(["2 lemons", "1 chicken"])
@@ -147,7 +149,7 @@ async fn recipes_crud_search_and_cookbooks() {
     assert_eq!(all[0]["title"], "Tomato Soup");
     assert!(all[0].get("ingredients").is_none());
 
-    let (_, found) = t.json("GET", "/api/recipes?q=lemon%20dinner", None).await;
+    let (_, found) = t.json("GET", "/api/recipes?q=lemon%20main", None).await;
     assert_eq!(found.as_array().unwrap().len(), 1);
     let (_, found) = t.json("GET", "/api/recipes?q=tomatoes", None).await;
     assert_eq!(found[0]["title"], "Tomato Soup");
@@ -1944,6 +1946,14 @@ async fn fake_jev() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) 
                             } else {
                                 choice("step", "step", 1.0)
                             }
+                        } else if id == "category" {
+                            // Only the recipes written to have one
+                            let title = body["state"]["title"].as_str().unwrap_or_default();
+                            if title.contains("Mystery") {
+                                choice("other", "soup", 0.88)
+                            } else {
+                                choice("other", "other", 0.4)
+                            }
                         } else {
                             json!({"type": "noul", "noul": 0.2})
                         };
@@ -3638,4 +3648,135 @@ fn crumb_exports_are_only_taken_from_the_same_host() {
         crumb_alternate("<html></html>", "https://a.test/s/abc"),
         None
     );
+}
+
+#[tokio::test]
+async fn categories_are_filed_under_the_fixed_list() {
+    let site = recipe_site(vec![
+        (
+            "joes",
+            json!({"@type": "Recipe", "name": "Sloppy Joes",
+                "recipeCategory": ["Dinner", "Entree", "Sandwich"],
+                "recipeIngredient": ["1 lb beef"], "recipeInstructions": ["Brown the beef."]}),
+        ),
+        (
+            "fudge",
+            json!({"@type": "Recipe", "name": "Fudge", "recipeCategory": "Holiday",
+                "recipeIngredient": ["1 cup sugar"], "recipeInstructions": ["Boil."]}),
+        ),
+    ])
+    .await;
+    let t = TestApp::new(None);
+    let (status, joes) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/joes")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{joes}");
+    let at = format!("/api/recipes/{}", joes["id"]);
+    let (_, r) = t.json("GET", &at, None).await;
+    assert_eq!(r["recipeCategory"], "Main");
+    // Wording that names nothing on the list isn't kept (Wee Chef's check picks one)
+    let (_, fudge) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/fudge")})),
+        )
+        .await;
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", fudge["id"]), None)
+        .await;
+    assert_eq!(r["title"], "Fudge");
+    assert_eq!(r["recipeCategory"], Value::Null);
+
+    // Every save is filed too: synonyms map, anything else is Other
+    for (set, saved) in [
+        (json!("lunch"), json!("Main")),
+        (json!("whatever"), json!("Other")),
+        (json!("cookies"), json!("Baking")),
+        (json!(" "), Value::Null),
+        (Value::Null, Value::Null),
+    ] {
+        let (status, r) = t
+            .json("PATCH", &at, Some(json!({"recipeCategory": set})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{r}");
+        assert_eq!(r["recipeCategory"], saved, "{set}");
+    }
+    let (msg, _) = mcp_call(
+        &t,
+        "save_recipe",
+        json!({"title": "Punch", "recipeCategory": "Beverages",
+            "ingredients": [{"items": ["juice"]}], "instructions": [{"items": ["Stir."]}]}),
+    )
+    .await;
+    assert!(msg.contains("Punch"), "{msg}");
+    let (_, all) = t.json("GET", "/api/recipes?q=punch", None).await;
+    assert_eq!(all[0]["recipeCategory"], "Drink");
+}
+
+#[tokio::test]
+async fn check_all_files_old_categories_and_undo_puts_them_back() {
+    let (jev, _) = fake_jev().await;
+    let t = jev_app(&jev);
+    let make = |title: &str, category: &str| crumb::model::RecipeFields {
+        title: title.into(),
+        recipe_category: Some(category.into()),
+        ingredients: vec![crumb::model::Section {
+            name: None,
+            items: vec!["1 cup broth".into()],
+        }],
+        instructions: vec![crumb::model::Section {
+            name: None,
+            items: vec!["Simmer it.".into()],
+        }],
+        ..Default::default()
+    };
+    // Saved before the list, straight into the database
+    let (old, _) = crumb::recipes::create_recipe(
+        &t.state.db.lock(),
+        make("Casserole", "One dish meal"),
+        "url",
+    )
+    .unwrap();
+    let (odd, _) =
+        crumb::recipes::create_recipe(&t.state.db.lock(), make("Mystery Stew", "Holiday"), "url")
+            .unwrap();
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 2);
+
+    let c = wait_for_check(&t, old.id).await;
+    assert_eq!(c["status"], "done", "{c}");
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", old.id), None)
+        .await;
+    assert_eq!(r["recipeCategory"], "Main");
+    assert_eq!(c["flags"][0]["kind"], "category");
+    assert_eq!(c["flags"][0]["detail"]["was"], "One dish meal");
+    assert_eq!(c["canUndo"], true);
+    // Cleared, then filled in by Wee Chef
+    wait_for_check(&t, odd.id).await;
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", odd.id), None)
+        .await;
+    assert_eq!(r["recipeCategory"], "Soup");
+
+    let (status, _) = t
+        .json(
+            "POST",
+            &format!("/api/recipes/{}/checks/undo", old.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, r) = t
+        .json("GET", &format!("/api/recipes/{}", old.id), None)
+        .await;
+    assert_eq!(r["recipeCategory"], "One dish meal");
+    // Undone, so the next "Check all" leaves it as the cook has it
+    let (_, all) = t.json("POST", "/api/checks", None).await;
+    assert_eq!(all["queued"], 0);
 }

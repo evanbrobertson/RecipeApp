@@ -336,7 +336,7 @@ async fn list_recipes(
 }
 
 async fn create_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<Response> {
-    let fields = RecipeFields::from_json(&json_body(&body)?)?;
+    let fields = RecipeFields::from_json(&json_body(&body)?)?.file_category();
     let (recipe, is_new) = recipes::create_recipe(&state.db.lock(), fields, "manual")?;
     let status = if is_new {
         StatusCode::CREATED
@@ -451,7 +451,7 @@ async fn patch_recipe(
     body: Bytes,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
-    let patch = RecipePatch::from_json(&json_body(&body)?)?;
+    let patch = RecipePatch::from_json(&json_body(&body)?)?.file_category();
     let recipe = recipes::update_recipe(&state.db.lock(), id, patch)?;
     Ok(Json(recipes::to_value(&recipe)))
 }

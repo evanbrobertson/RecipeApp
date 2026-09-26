@@ -323,7 +323,7 @@ impl Ctx<'_> {
             }
             "save_recipe" => {
                 let fields = match RecipeFields::from_json(args) {
-                    Ok(f) => f,
+                    Ok(f) => f.file_category(),
                     Err(err) => return Some(invalid(&err.message)),
                 };
                 match recipes::create_recipe(&db.lock(), fields, "claude") {
@@ -364,7 +364,7 @@ impl Ctx<'_> {
                 let mut patch_input = a.clone();
                 patch_input.remove("id");
                 let patch = match RecipePatch::from_json(&Value::Object(patch_input)) {
-                    Ok(p) => p,
+                    Ok(p) => p.file_category(),
                     Err(err) => return Some(invalid(&err.message)),
                 };
                 match recipes::update_recipe(&db.lock(), id, patch) {
@@ -796,6 +796,9 @@ fn sections(description: &str) -> Value {
     })
 }
 
+/// Lists the allowed categories for Claude.
+const CATEGORY_HINT: &str = "One of: Breakfast, Main, Side, Soup, Salad, Baking, Dessert, Snack, Sauce, Drink, Other. Other wording is filed under the closest one (\"Dinner\" or \"Lunch\" is Main, \"Cookies\" is Baking), or Other when nothing fits.";
+
 fn recipe_properties() -> Map<String, Value> {
     let v = json!({
         "title": {"type": "string", "minLength": 1, "description": "Recipe name"},
@@ -806,7 +809,7 @@ fn recipe_properties() -> Map<String, Value> {
         "cookTime": nullable(Some("e.g. \"1h 10m\""), None),
         "totalTime": nullable(None, None),
         "recipeYield": nullable(Some("e.g. \"4 servings\""), None),
-        "recipeCategory": nullable(Some("e.g. \"Dessert\""), None),
+        "recipeCategory": nullable(Some(CATEGORY_HINT), None),
         "recipeCuisine": nullable(Some("e.g. \"Italian\""), None),
         "author": nullable(None, None),
         "notes": nullable(Some("Tips, substitutions, storage notes"), None),

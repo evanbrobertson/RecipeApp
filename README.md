@@ -18,7 +18,7 @@ Without the keys, Crumb uses its built-in text reader and its own "Try next" ran
 The recipe box holds all your recipes. The Recipes page shows the recipes as cards, with the newest recipe first.
 
 - Type in the search field to find recipes. Crumb compares each word with the title, the ingredients, the category and the cuisine.
-- Select a category to show only the recipes in that category.
+- Select a category to show only the recipes in that category. Each recipe has one of these categories, or no category: Breakfast, Main, Side, Soup, Salad, Baking, Dessert, Snack, Sauce, Drink and Other. The Recipes page shows only the categories that have recipes. A recipe without a category shows only in **Everything**.
 - Select **Select** to choose more than one recipe. Then add the recipes to a cookbook, or delete them.
 
 The home page shows these parts:
@@ -84,6 +84,7 @@ Crumb cleans up each new recipe that comes from a link, pasted text, a file or p
 - It removes a step that is the same as the step before it.
 - From a web page, it removes a photo credit or an advertisement line that repeats three or more times. It keeps the first one.
 - It calculates the total time from the prep time and the cook time when the total time is missing.
+- It changes the category from the source into one of the Crumb categories. For example, "Dinner, Entree, Sandwich" and "Lunch" become Main, and "Cookies" becomes Baking. If the category from the source is not like a Crumb category, for example "Holiday", Crumb does not keep it.
 
 **Background check.** This check needs the check key. After Crumb saves a new recipe, Wee Chef examines each ingredient line and each step. On a new recipe that you did not edit, Wee Chef makes the changes that it is sure about:
 
@@ -91,6 +92,7 @@ Crumb cleans up each new recipe that comes from a link, pasted text, a file or p
 - It joins a step that the source divided into two parts.
 - It moves a tip from the steps to the notes.
 - It removes a line that is not part of the recipe.
+- If the recipe has no category, it selects one when it is sure. Wee Chef does this on all recipes that it checks, because it changes nothing that you set.
 
 Wee Chef does not change a line that it is not sure about. It flags the line for you to examine. If you edit the recipe before the check ends, Wee Chef only flags lines and changes nothing.
 
@@ -110,7 +112,7 @@ A flag also goes away when you change or remove the line.
 
 **Suggestions page.** When recipes have flagged lines, the navigation shows **Suggestions** with a count. On a phone, the tab bar shows **Review**. The Suggestions page lists each recipe and the number of flagged lines in it. Wee Chef changes nothing on this page.
 
-**Check with Wee Chef.** This menu item on the recipe page needs the check key. It checks the recipe again now. Wee Chef only flags lines on a recipe that is already in your recipe box. The one exception is a new import that you did not edit and that Wee Chef did not check yet. Wee Chef treats that recipe as a new import. The check can also do the small clean-up again: checkbox characters, web codes, fractions and raw times. You can undo these changes.
+**Check with Wee Chef.** This menu item on the recipe page needs the check key. It checks the recipe again now. Wee Chef only flags lines on a recipe that is already in your recipe box. The one exception is a new import that you did not edit and that Wee Chef did not check yet. Wee Chef treats that recipe as a new import. The check can also do the small clean-up again: checkbox characters, web codes, fractions, raw times and categories. You can undo these changes.
 
 **Check all recipes with Wee Chef.** This item on the More page needs the check key. It checks these recipes:
 
@@ -118,8 +120,9 @@ A flag also goes away when you change or remove the line.
 - Recipes that you restored from a backup
 - Recipes that you edited after their last check
 - Recipes whose check failed, up to three tries
+- Recipes with a category from before the Crumb categories, for example "Lunch"
 
-"Check all" only flags lines. It also does the small clean-up, which you can undo. It does not check recipes that you wrote yourself or that Claude saved. The More page shows the progress.
+"Check all" only flags lines. It also does the small clean-up, which you can undo. The clean-up changes an old category into a Crumb category, or removes it if it is not like one. Then Wee Chef can select a category. It does not check recipes that you wrote yourself or that Claude saved. The More page shows the progress.
 
 ### Recipe page
 

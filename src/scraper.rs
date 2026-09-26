@@ -402,6 +402,14 @@ fn finish(mut recipe: RecipeFields, url: &str) -> Option<RecipeFields> {
     if recipe.url.as_deref() == Some("") {
         recipe.url = None;
     }
+    // The site's own wording ("Dinner, Entree, Sandwich") filed under Crumb's list
+    recipe.recipe_category = crate::categories::for_import(
+        recipe
+            .recipe_category
+            .as_deref()
+            .map(decode_text)
+            .as_deref(),
+    );
     if recipe.ingredients.is_empty() && recipe.instructions.is_empty() {
         return None;
     }

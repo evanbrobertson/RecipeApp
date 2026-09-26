@@ -5,10 +5,12 @@
    */
   import Check from "@lucide/svelte/icons/check"
   import ChefHat from "@lucide/svelte/icons/chef-hat"
+  import ChevronDown from "@lucide/svelte/icons/chevron-down"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import Plus from "@lucide/svelte/icons/plus"
   import Trash2 from "@lucide/svelte/icons/trash-2"
   import { autosize } from "../lib/autosize"
+  import { CATEGORIES, isCategory } from "../lib/categories"
   import { quote, reviewText } from "../lib/checks"
   import type { CheckFlag, RecipeFields, RecipeSection } from "../lib/recipe"
 
@@ -79,6 +81,8 @@
     ingredients: toDraft(i.ingredients),
     instructions: toDraft(i.instructions),
   })
+  // A category from before the fixed list stays selected (marked old) until it's changed
+  const oldCategory = i.recipeCategory && !isCategory(i.recipeCategory) ? i.recipeCategory : null
 
   const metaFields = [
     { key: "prepTime", label: "Prep time", placeholder: "15m" },
@@ -86,7 +90,7 @@
     { key: "freezeTime", label: "Extra time", placeholder: "Chill 1h" },
     { key: "totalTime", label: "Total time", placeholder: "1h 45m" },
     { key: "recipeYield", label: "Yield", placeholder: "4 servings" },
-    { key: "recipeCategory", label: "Category", placeholder: "Dinner" },
+    { key: "recipeCategory", label: "Category", placeholder: "" },
     { key: "recipeCuisine", label: "Cuisine", placeholder: "Italian" },
     { key: "author", label: "Author", placeholder: "" },
   ] as const
@@ -294,12 +298,30 @@
       {#each metaFields as f (f.key)}
         <div>
           <label class="label" for={`r-${f.key}`}>{f.label}</label>
-          <input
-            id={`r-${f.key}`}
-            bind:value={draft[f.key]}
-            placeholder={f.placeholder}
-            class="input"
-          />
+          {#if f.key === "recipeCategory"}
+            <div class="relative">
+              <select id="r-recipeCategory" bind:value={draft.recipeCategory} class="input">
+                <option value="">None</option>
+                {#if oldCategory && draft.recipeCategory === oldCategory}
+                  <option value={oldCategory}>(old) {oldCategory}</option>
+                {/if}
+                {#each CATEGORIES as c (c)}
+                  <option value={c}>{c}</option>
+                {/each}
+              </select>
+              <ChevronDown
+                class="text-ink-muted pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2"
+                aria-hidden="true"
+              />
+            </div>
+          {:else}
+            <input
+              id={`r-${f.key}`}
+              bind:value={draft[f.key]}
+              placeholder={f.placeholder}
+              class="input"
+            />
+          {/if}
         </div>
       {/each}
     </div>

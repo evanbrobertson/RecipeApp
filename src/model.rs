@@ -351,7 +351,21 @@ impl RecipePatch {
     }
 }
 
+impl RecipePatch {
+    /// Files a category someone set under the fixed list ([`crate::categories::for_save`]).
+    pub fn file_category(mut self) -> Self {
+        self.recipe_category = self.recipe_category.map(crate::categories::for_save);
+        self
+    }
+}
+
 impl RecipeFields {
+    /// Files a category someone set under the fixed list ([`crate::categories::for_save`]).
+    pub fn file_category(mut self) -> Self {
+        self.recipe_category = crate::categories::for_save(self.recipe_category);
+        self
+    }
+
     /// Parses a full recipe (zod `recipeFieldsSchema`): title required, lists default to [].
     pub fn from_json(v: &Value) -> AppResult<Self> {
         let o = object(v)?;

@@ -50,64 +50,33 @@ impl Bucket {
     }
 }
 
-/// Keyword rules, checked in order: the first that matches the category wins.
-const BUCKET_WORDS: [(Bucket, &[&str]); 10] = [
-    (
-        Bucket::Sauce,
-        &[
-            "sauce",
-            "condiment",
-            "dressing",
-            "dip",
-            "gravy",
-            "marinade",
-            "seasoning",
-            "spice",
-        ],
-    ),
-    (
-        Bucket::Drink,
-        &["drink", "beverage", "cocktail", "smoothie"],
-    ),
-    (Bucket::Breakfast, &["breakfast", "brunch"]),
-    (Bucket::Soup, &["soup", "stew", "chili", "chowder"]),
-    (Bucket::Salad, &["salad"]),
-    (
-        Bucket::Baking,
-        &[
-            "baking",
-            "baked good",
-            "cookie",
-            "cake",
-            "bread",
-            "muffin",
-            "pastry",
-            "brownie",
-        ],
-    ),
-    (Bucket::Dessert, &["dessert", "sweet", "treat"]),
-    (Bucket::Side, &["side"]),
-    (Bucket::Snack, &["snack", "appetizer", "starter"]),
-    (
-        Bucket::Main,
-        &["main", "dinner", "entree", "entrée", "lunch", "supper"],
-    ),
-];
+impl Bucket {
+    /// The bucket for a name on the fixed category list.
+    fn of_listed(name: &str) -> Self {
+        match name {
+            "Main" => Self::Main,
+            "Side" => Self::Side,
+            "Soup" => Self::Soup,
+            "Salad" => Self::Salad,
+            "Breakfast" => Self::Breakfast,
+            "Dessert" => Self::Dessert,
+            "Baking" => Self::Baking,
+            "Snack" => Self::Snack,
+            "Drink" => Self::Drink,
+            "Sauce" => Self::Sauce,
+            _ => Self::Other,
+        }
+    }
+}
 
-/// The broad kind of dish, from the free-text category (or the title when there's none).
+/// The broad kind of dish: the recipe's category (filed under the fixed list, so older
+/// wording still counts), or the title when there's none.
 pub fn bucket(category: Option<&str>, title: &str) -> Bucket {
-    let find = |text: &str| {
-        let text = text.to_lowercase();
-        BUCKET_WORDS
-            .iter()
-            .find(|(_, words)| words.iter().any(|w| text.contains(w)))
-            .map(|(b, _)| *b)
-    };
-    if let Some(b) = category.and_then(find) {
-        return b;
+    if let Some(c) = category.and_then(crate::categories::normalize) {
+        return Bucket::of_listed(c);
     }
     // Titles only settle the unambiguous dish types
-    match find(title) {
+    match crate::categories::normalize(title).map(Bucket::of_listed) {
         Some(b @ (Bucket::Soup | Bucket::Salad)) => b,
         _ => Bucket::Other,
     }
