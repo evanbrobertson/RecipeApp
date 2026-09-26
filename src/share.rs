@@ -120,22 +120,15 @@ pub fn delete_for_recipe(conn: &Connection, recipe_id: i64) -> AppResult<bool> {
     Ok(conn.execute("DELETE FROM shares WHERE recipe_id = ?1", [recipe_id])? > 0)
 }
 
-pub fn set_include_notes(conn: &Connection, token: &str, include: bool) -> AppResult<Share> {
-    let missing = || AppError::not_found("Share link not found");
-    if !plausible_token(token) {
-        return Err(missing());
-    }
+/// Whether the recipe's share shows its notes. By recipe id, so the token never goes into
+/// an API URL (and from there into traces and error reports).
+pub fn set_include_notes(conn: &Connection, recipe_id: i64, include: bool) -> AppResult<Share> {
+    recipes::require_recipe(conn, recipe_id)?;
     conn.execute(
-        "UPDATE shares SET include_notes = ?1 WHERE token = ?2",
-        params![include, token],
+        "UPDATE shares SET include_notes = ?1 WHERE recipe_id = ?2",
+        params![include, recipe_id],
     )?;
-    conn.query_row(
-        &format!("SELECT {COLUMNS} FROM shares WHERE token = ?1"),
-        [token],
-        from_row,
-    )
-    .optional()?
-    .ok_or_else(missing)
+    for_recipe(conn, recipe_id)?.ok_or_else(|| AppError::not_found("Share link not found"))
 }
 
 /// A live share and its recipe: None for an unknown, stopped or expired token.
@@ -198,12 +191,10 @@ pub fn to_json(share: &Share, origin: &str) -> Value {
 
 /// Behind the login, with the rest of /api.
 pub fn api_routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/recipes/{id}/share",
-            routing::post(create).delete(stop),
-        )
-        .route("/api/shares/{token}", routing::patch(update))
+    Router::new().route(
+        "/api/recipes/{id}/share",
+        routing::post(create).patch(update).delete(stop),
+    )
 }
 
 /// The public pages under /s/ (see `auth::PUBLIC_PREFIXES`).
@@ -234,17 +225,18 @@ async fn stop(State(state): State<AppState>, Path(id): Path<String>) -> AppResul
 
 async fn update(
     State(state): State<AppState>,
-    Path(token): Path<String>,
+    Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
+    let id = crate::api::id_param(&id, "id")?;
     let body: Value =
         serde_json::from_slice(&body).map_err(|_| AppError::bad_request("Invalid JSON body"))?;
     let include = body
         .get("includeNotes")
         .and_then(Value::as_bool)
         .ok_or_else(|| AppError::bad_request("includeNotes: expected true or false"))?;
-    let share = set_include_notes(&state.db.lock(), &token, include)?;
+    let share = set_include_notes(&state.db.lock(), id, include)?;
     Ok(Json(to_json(&share, &state.config.public_origin(&headers))))
 }
 
@@ -312,8 +304,10 @@ async fn page(State(state): State<AppState>, Path(token): Path<String>, req: Req
         return missing();
     };
     let origin = state.config.public_origin(req.headers());
+    // From the template, not the rendered page: nothing the recipe puts in the page can
+    // ever authorise a script of its own
+    let csp = template_csp(&template);
     let body = render(&template, &recipe, &share, &origin);
-    let csp = content_security_policy(&body);
     let tag = crate::web::etag_for(body.as_bytes());
     let mut res = body.into_response();
     let h = res.headers_mut();
@@ -389,32 +383,42 @@ fn export(recipe: &Recipe, share: &Share) -> Response {
 
 // ─── Who's asking ───────────────────────────────────────────────────────────
 
-/// The client's address: behind Railway's proxy the first `X-Forwarded-For` hop (then
-/// `X-Real-IP`), otherwise the connection's peer. "unknown" when neither is there (tests).
+/// The client's address for the miss limit (see [`client_ip_from`]).
 pub fn client_ip(req: &Request, trust_proxy_headers: bool) -> String {
-    let header_ip = |name: &str| {
-        req.headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .and_then(|v| v.trim().parse::<IpAddr>().ok())
-    };
-    let forwarded = trust_proxy_headers
-        .then(|| header_ip("x-forwarded-for").or_else(|| header_ip("x-real-ip")))
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip());
+    client_ip_from(req.headers(), peer, trust_proxy_headers)
+}
+
+/// Behind Railway's proxy: `X-Real-IP`, which the proxy sets itself, else the last
+/// `X-Forwarded-For` entry (the one the proxy appended; earlier ones are whatever the client
+/// sent, so trusting them would let anyone dodge the limit or get someone else blocked).
+/// Otherwise the connection's peer. "unknown" when there's neither (tests).
+pub fn client_ip_from(headers: &HeaderMap, peer: Option<IpAddr>, trust_proxy: bool) -> String {
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let forwarded = trust_proxy
+        .then(|| {
+            header("x-real-ip")
+                .and_then(|v| v.trim().parse::<IpAddr>().ok())
+                .or_else(|| {
+                    header("x-forwarded-for")
+                        .and_then(|v| v.rsplit(',').next())
+                        .and_then(|v| v.trim().parse::<IpAddr>().ok())
+                })
+        })
         .flatten();
     forwarded
-        .or_else(|| {
-            req.extensions()
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|c| c.0.ip())
-        })
+        .or(peer)
         .map(|ip| ip.to_string())
         .unwrap_or_else(|| "unknown".into())
 }
 
 /// Misses (404s) per client address under /s/, in fixed one-minute windows. Bounded: at
 /// most [`MAX_TRACKED`] addresses are remembered; past that, stale windows are dropped, and
-/// if that isn't enough, everything is forgotten.
+/// if that isn't enough, the address whose window started longest ago. A flood of new
+/// addresses never resets everyone else's count.
 #[derive(Default)]
 pub struct Misses {
     seen: Mutex<HashMap<String, (Instant, u32)>>,
@@ -439,8 +443,13 @@ impl Misses {
         let mut seen = self.locked();
         if seen.len() >= MAX_TRACKED && !seen.contains_key(ip) {
             seen.retain(|_, (at, _)| at.elapsed() < MISS_WINDOW);
-            if seen.len() >= MAX_TRACKED {
-                seen.clear();
+            if seen.len() >= MAX_TRACKED
+                && let Some(oldest) = seen
+                    .iter()
+                    .min_by_key(|(_, (at, _))| *at)
+                    .map(|(k, _)| k.clone())
+            {
+                seen.remove(&oldest);
             }
         }
         let entry = seen.entry(ip.to_string()).or_insert((Instant::now(), 0));
@@ -476,6 +485,15 @@ fn host_of(url: &str) -> Option<String> {
 
 fn present(v: &Option<String>) -> Option<&str> {
     v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Where the recipe came from, as a link the page may show: its original source when it was
+/// saved from a share, else its own link. Only http(s): older rows may hold anything.
+fn source_url(r: &Recipe) -> Option<&str> {
+    [&r.original_url, &r.url]
+        .into_iter()
+        .filter_map(present)
+        .find(|u| crate::model::is_valid_url(u))
 }
 
 /// At most `max` characters, cut at a word and marked with an ellipsis.
@@ -755,7 +773,7 @@ impl<'a> View<'a> {
             }
             ld.insert("nutrition".into(), Value::Object(n));
         }
-        if let Some(source) = present(&r.url).filter(|u| crate::model::is_valid_url(u)) {
+        if let Some(source) = source_url(r) {
             ld.insert("url".into(), json!(source));
             ld.insert("isBasedOn".into(), json!(source));
         }
@@ -911,7 +929,7 @@ impl<'a> View<'a> {
     }
 
     fn source(&self) -> String {
-        let Some(url) = present(&self.recipe.url).filter(|u| crate::model::is_valid_url(u)) else {
+        let Some(url) = source_url(self.recipe) else {
             return String::new();
         };
         let host = host_of(url).unwrap_or_else(|| url.to_string());
@@ -966,12 +984,27 @@ pub fn render(template: &str, recipe: &Recipe, share: &Share, origin: &str) -> S
     page
 }
 
+/// The CSP for a template, worked out once per template text (it's cached in release
+/// builds and re-read in debug ones, so a changed template gets a fresh policy).
+fn template_csp(template: &str) -> String {
+    static CACHE: Mutex<Option<(String, String)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    match &*cache {
+        Some((t, csp)) if t == template => csp.clone(),
+        _ => {
+            let csp = content_security_policy(template);
+            *cache = Some((template.to_string(), csp.clone()));
+            csp
+        }
+    }
+}
+
 static SCRIPT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<script\b([^>]*)>(.*?)</script>").unwrap());
 static SCRIPT_TYPE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\btype\s*=\s*["']?([^"'\s>]+)"#).unwrap());
 
-/// The page's CSP: scripts only from this origin, plus each inline script the template
+/// A page's CSP: scripts only from this origin, plus each inline script the template
 /// runs (the theme boot, Astro's island loader) by its hash. Data blocks (page data,
 /// JSON-LD) don't run, so they need none.
 pub fn content_security_policy(page: &str) -> String {
@@ -1011,19 +1044,43 @@ pub fn content_security_policy(page: &str) -> String {
 
 // ─── Saving another Crumb's share ───────────────────────────────────────────
 
+/// The client for exports: redirects are followed only within the export's own origin
+/// (scheme, host and port), so a share page can't bounce the fetch to another address.
+static EXPORT_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        let same = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| crate::scraper::same_origin(attempt.url(), first));
+        if same && attempt.previous().len() < 5 {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(policy)
+        .build()
+        .expect("HTTP client")
+});
+
 /// Fetches another Crumb's export (`crumb.json` from a share page) and reads its recipe.
 /// None when it can't be had or isn't a Crumb export; the caller falls back to the page.
-pub async fn fetch_export(state: &AppState, url: &str) -> Option<RecipeFields> {
+/// Log lines name only the host: the URL holds that share's token.
+pub async fn fetch_export(url: &str) -> Option<RecipeFields> {
     let host = crate::telemetry::host_of(url);
-    let res = state
-        .http
+    let res = EXPORT_CLIENT
         .get(url)
         .timeout(EXPORT_TIMEOUT)
         .header(header::ACCEPT, "application/json")
         .header(header::USER_AGENT, crate::scraper::USER_AGENT)
         .send()
         .await
-        .inspect_err(|e| tracing::info!("[share] {host}: export fetch failed: {e}"))
+        .map_err(|e| {
+            let e = e.without_url();
+            tracing::info!("[share] {host}: export fetch failed: {e}")
+        })
         .ok()?;
     if !res.status().is_success()
         || res
@@ -1099,6 +1156,62 @@ mod tests {
             m.miss(&format!("ip{i}"));
         }
         assert!(m.locked().len() <= MAX_TRACKED);
+    }
+
+    #[test]
+    fn a_flood_of_new_addresses_evicts_the_oldest_not_everyone() {
+        let m = Misses::default();
+        // A stale window is dropped first
+        m.locked().insert(
+            "stale".into(),
+            (Instant::now() - MISS_WINDOW - Duration::from_secs(1), 3),
+        );
+        for _ in 0..MISS_LIMIT {
+            m.miss("victim");
+        }
+        for i in 0..MAX_TRACKED - 2 {
+            m.miss(&format!("ip{i}"));
+        }
+        assert_eq!(m.locked().len(), MAX_TRACKED);
+        m.miss("new-1");
+        assert!(!m.locked().contains_key("stale"));
+        assert!(m.blocked("victim"));
+        // Full of live windows: only the oldest goes, and the blocked address stays blocked
+        // for as long as it isn't the oldest
+        m.locked().insert(
+            "oldest".into(),
+            (Instant::now() - Duration::from_secs(30), 1),
+        );
+        m.locked().remove("ip0");
+        m.miss("new-2");
+        assert!(!m.locked().contains_key("oldest"));
+        assert!(m.locked().contains_key("new-1") && m.locked().contains_key("new-2"));
+        assert!(m.blocked("victim"));
+        assert_eq!(m.locked().len(), MAX_TRACKED);
+    }
+
+    #[test]
+    fn the_client_address_is_the_one_the_proxy_saw() {
+        let peer = Some("10.0.0.9".parse().unwrap());
+        let headers = |pairs: &[(&'static str, &str)]| {
+            let mut h = HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(*k, HeaderValue::from_str(v).unwrap());
+            }
+            h
+        };
+        let spoofed = headers(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]);
+        assert_eq!(client_ip_from(&spoofed, peer, true), "203.0.113.7");
+        let both = headers(&[
+            ("x-forwarded-for", "6.6.6.6, 203.0.113.7"),
+            ("x-real-ip", "198.51.100.2"),
+        ]);
+        assert_eq!(client_ip_from(&both, peer, true), "198.51.100.2");
+        let junk = headers(&[("x-real-ip", "nope"), ("x-forwarded-for", "1.1.1.1, bad")]);
+        assert_eq!(client_ip_from(&junk, peer, true), "10.0.0.9");
+        // Not behind the proxy: headers are ignored
+        assert_eq!(client_ip_from(&both, peer, false), "10.0.0.9");
+        assert_eq!(client_ip_from(&HeaderMap::new(), None, true), "unknown");
     }
 
     #[test]

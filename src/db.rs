@@ -64,6 +64,7 @@ fn recipes_table_sql(name: &str) -> String {
     instructions text NOT NULL,
     nutrition text,
     notes text,
+    original_url text,
     created_at integer NOT NULL,
     updated_at integer NOT NULL
   );"
@@ -242,6 +243,14 @@ fn upgrade_legacy_schema(conn: &mut Connection) -> rusqlite::Result<()> {
 
 /// Additive column changes (new nullable columns) for existing databases.
 fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
+    // Where a recipe saved from another Crumb's share came from originally (its `url` is
+    // the share link)
+    if !columns(conn, "recipes")?
+        .iter()
+        .any(|c| c.name == "original_url")
+    {
+        conn.execute_batch("ALTER TABLE recipes ADD COLUMN original_url text")?;
+    }
     if !columns(conn, "cookbooks")?
         .iter()
         .any(|c| c.name == "color")

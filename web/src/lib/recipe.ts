@@ -29,6 +29,8 @@ export interface RecipeFields {
 export interface Recipe extends RecipeFields {
   id: number
   source: RecipeSource
+  /** Saved from another Crumb's share (`url` is that link): where the recipe came from. */
+  originalUrl?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -199,11 +201,19 @@ export function kicker(r: { recipeCategory: string | null; recipeCuisine: string
   return [r.recipeCategory, r.recipeCuisine].filter(Boolean).join(" · ")
 }
 
-export function hostOf(url: string | null | undefined): string | null {
+/** `url` when it's an http(s) address, else null: never link a `javascript:` or `data:` URL. */
+export function webLink(url: string | null | undefined): string | null {
   if (!url) return null
   try {
-    return new URL(url).hostname.replace(/^www\./, "")
+    const u = new URL(url)
+    return (u.protocol === "http:" || u.protocol === "https:") && u.hostname ? url : null
   } catch {
     return null
   }
+}
+
+/** An http(s) address's host without `www.`; null for anything else. */
+export function hostOf(url: string | null | undefined): string | null {
+  const link = webLink(url)
+  return link ? new URL(link).hostname.replace(/^www\./, "") : null
 }

@@ -58,14 +58,15 @@ pub fn scrub_text(s: &str) -> String {
 }
 
 /// A path with any share token hidden: `/s/{token}/og.jpg` → `/s/[token]/og.jpg`. The
-/// token is the share, so it never goes into a span, an event or a log line.
+/// token is the share, so it never goes into a span, an event or a log line. `/api/shares/…`
+/// is hidden too, though nothing routes there now (the API names shares by recipe id).
 pub fn redact_path(path: &str) -> std::borrow::Cow<'_, str> {
     static SHARE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"(^|/)s/[^/?#\s]+").unwrap());
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(^|/)(s|shares)/[^/?#\s]+").unwrap());
     if !path.contains("s/") {
         return path.into();
     }
-    SHARE.replace_all(path, "${1}s/[token]")
+    SHARE.replace_all(path, "${1}${2}/[token]")
 }
 
 /// A URL's host for a log line (`example.com`), never its path or query.
@@ -534,6 +535,8 @@ mod tests {
             "https://crumb.example/s/[token]/og.jpg"
         );
         assert_eq!(redact_path("/s/tok"), "/s/[token]");
+        assert_eq!(redact_path("/api/shares/tok"), "/api/shares/[token]");
+        assert_eq!(redact_path("/api/recipes/1/share"), "/api/recipes/1/share");
         assert_eq!(redact_path("/sx/tok"), "/sx/tok");
         assert_eq!(redact_path("/recipes/1"), "/recipes/1");
         assert_eq!(

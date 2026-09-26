@@ -36,6 +36,7 @@
     countItems,
     hostOf,
     kicker,
+    webLink,
     nutritionLabels,
     type ConnectorInfo,
     type Cookbook,
@@ -186,7 +187,9 @@
         ].filter((m) => m.value)
       : [],
   )
-  const sourceHost = $derived(hostOf(recipe?.url))
+  // Only an http(s) link is ever shown: older rows (or another Crumb's export) may hold anything
+  const sourceUrl = $derived(webLink(recipe?.originalUrl) ?? webLink(recipe?.url))
+  const sourceHost = $derived(hostOf(sourceUrl))
   const ingredientCount = $derived(recipe ? countItems(recipe.ingredients) : 0)
   const sub = $derived(recipe ? kicker(recipe) : "")
   const hasHero = $derived(!!recipe?.image)
@@ -371,9 +374,9 @@
             {/if}
             {#if recipe.author}<span>By {recipe.author}</span>{/if}
             {#if recipe.author && sourceHost}<span aria-hidden="true">·</span>{/if}
-            {#if sourceHost}
+            {#if sourceUrl && sourceHost}
               <a
-                href={recipe.url}
+                href={sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 class="link print-url inline-flex min-h-11 items-center gap-1 text-sm"

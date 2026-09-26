@@ -61,7 +61,7 @@
     const before = share
     share = { ...share, includeNotes: include }
     try {
-      share = await api<ShareLink>(`/api/shares/${before.token}`, {
+      share = await api<ShareLink>(`/api/recipes/${recipe.id}/share`, {
         method: "PATCH",
         body: { includeNotes: include },
       })

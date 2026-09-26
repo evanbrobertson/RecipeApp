@@ -199,7 +199,7 @@ pub const CRUMB_JSON_TYPE: &str = "application/vnd.crumb+json";
 
 /// `<link rel="alternate" type="application/vnd.crumb+json" href>` on a page: another Crumb's
 /// share page offering the recipe as a Crumb export. Only an http(s) address on the page's
-/// own host is taken.
+/// own origin (scheme, host and port) is taken, so a page can't point the fetch elsewhere.
 pub fn crumb_alternate(html: &str, page_url: &str) -> Option<String> {
     if !html.contains(CRUMB_JSON_TYPE) {
         return None;
@@ -213,8 +213,16 @@ pub fn crumb_alternate(html: &str, page_url: &str) -> Option<String> {
         .value()
         .attr("href")?;
     let target = base.join(href.trim()).ok()?;
-    let same_host = target.host_str().is_some() && target.host_str() == base.host_str();
-    (matches!(target.scheme(), "http" | "https") && same_host).then(|| target.to_string())
+    (matches!(target.scheme(), "http" | "https") && same_origin(&target, &base))
+        .then(|| target.to_string())
+}
+
+/// Same scheme, host and port (a missing port is the scheme's default).
+pub fn same_origin(a: &url::Url, b: &url::Url) -> bool {
+    a.host_str().is_some()
+        && a.scheme() == b.scheme()
+        && a.host_str().map(str::to_ascii_lowercase) == b.host_str().map(str::to_ascii_lowercase)
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 enum Verdict {

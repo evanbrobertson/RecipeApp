@@ -3048,7 +3048,7 @@ async fn share_pages_are_public_read_only_pages() {
     let (status, _) = call(
         &t,
         "PATCH",
-        &format!("/api/shares/{token}"),
+        &format!("/api/recipes/{id}/share"),
         Some(json!({"includeNotes": false})),
         None,
     )
@@ -3057,7 +3057,7 @@ async fn share_pages_are_public_read_only_pages() {
     let (status, updated) = call(
         &t,
         "PATCH",
-        &format!("/api/shares/{token}"),
+        &format!("/api/recipes/{id}/share"),
         Some(json!({"includeNotes": false})),
         Some(&cookie),
     )
@@ -3075,16 +3075,26 @@ async fn share_pages_are_public_read_only_pages() {
     let (status, _) = call(
         &t,
         "PATCH",
-        "/api/shares/nope",
+        "/api/recipes/999/share",
         Some(json!({"includeNotes": true})),
         Some(&cookie),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    call(
+    // The old address, with the token in it, is gone
+    let (status, _) = call(
         &t,
         "PATCH",
         &format!("/api/shares/{token}"),
+        Some(json!({"includeNotes": true})),
+        Some(&cookie),
+    )
+    .await;
+    assert!(status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED);
+    call(
+        &t,
+        "PATCH",
+        &format!("/api/recipes/{id}/share"),
         Some(json!({"includeNotes": true})),
         Some(&cookie),
     )
@@ -3329,8 +3339,10 @@ async fn saving_another_crumbs_share_imports_its_export() {
     let (_, saved) = b
         .json("GET", &format!("/api/recipes/{}", first["id"]), None)
         .await;
-    // Lossless: sections, notes and the original link, not the share page
-    assert_eq!(saved["url"], "https://food.test/lemon-cake");
+    // Lossless: sections, notes and the original link. Kept under the share link (the
+    // dedupe key), with the export's link as where it came from
+    assert_eq!(saved["url"], links[0].as_str());
+    assert_eq!(saved["originalUrl"], "https://food.test/lemon-cake");
     assert_eq!(saved["notes"], "Grandma's secret: extra zest.");
     assert_eq!(saved["ingredients"][0]["name"], "Cake");
     assert_eq!(saved["instructions"][1]["name"], "Finish");
@@ -3352,6 +3364,44 @@ async fn saving_another_crumbs_share_imports_its_export() {
         (again["id"].clone(), again["isNew"].clone()),
         (first["id"].clone(), json!(false))
     );
+    // The export's link claims nothing: saving that URL itself is a recipe of its own
+    let (status, genuine) = b
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({
+                "title": "Lemon Cake (the site's)",
+                "url": "https://food.test/lemon-cake",
+                "ingredients": [{"items": ["flour"]}],
+                "instructions": [{"items": ["Bake."]}]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{genuine}");
+    assert_ne!(genuine["id"], first["id"]);
+    // Shared on from B: the original link travels, not A's share link
+    let (_, s) = b
+        .json("POST", &format!("/api/recipes/{}/share", first["id"]), None)
+        .await;
+    let (_, _, export) = b
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s["url"].as_str().unwrap())
+        )))
+        .await;
+    let doc: Value = serde_json::from_str(&export).unwrap();
+    assert_eq!(doc["recipes"][0]["url"], "https://food.test/lemon-cake");
+    assert!(!export.contains(links[0].as_str()));
+    // Backups keep both
+    let (_, _, backup) = b.send(get("/api/export")).await;
+    let backup: Value = serde_json::from_str(&backup).unwrap();
+    let kept = backup["recipes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["url"] == links[0].as_str())
+        .unwrap();
+    assert_eq!(kept["originalUrl"], "https://food.test/lemon-cake");
 
     // No original link: kept under the share link, so it dedupes on that
     let (_, bread) = b
@@ -3366,6 +3416,7 @@ async fn saving_another_crumbs_share_imports_its_export() {
         .json("GET", &format!("/api/recipes/{}", bread["id"]), None)
         .await;
     assert_eq!(saved["url"], links[1].as_str());
+    assert!(saved["originalUrl"].is_null());
     let (_, again) = b
         .json(
             "POST",
@@ -3375,7 +3426,169 @@ async fn saving_another_crumbs_share_imports_its_export() {
         .await;
     assert_eq!(again["isNew"], false);
     let (_, list) = b.json("GET", "/api/recipes", None).await;
-    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list.as_array().unwrap().len(), 3);
+}
+
+/// Serves `routes` on a real local port; returns its origin (`http://127.0.0.1:port`).
+async fn serve(routes: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+    origin
+}
+
+/// A page that says it's a Crumb share, with a recipe in its JSON-LD to fall back on.
+fn fake_share_page(export_href: &str) -> String {
+    format!(
+        r#"<html><head><title>Page Pie</title>
+        <link rel="alternate" type="application/vnd.crumb+json" href="{export_href}">
+        <script type="application/ld+json">{{"@context":"https://schema.org","@type":"Recipe",
+        "name":"Page Pie","recipeIngredient":["1 pie"],"recipeInstructions":["Eat it."]}}</script>
+        </head><body></body></html>"#
+    )
+}
+
+fn fake_export(title: &str, url: &str, image: &str) -> String {
+    json!({"format": "crumb", "version": 1, "recipes": [{
+        "title": title, "url": url, "image": image,
+        "ingredients": [{"name": null, "items": ["1 egg"]}],
+        "instructions": [{"name": null, "items": ["Cook it."]}]
+    }]})
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_made_up_share_export_cant_plant_a_script_link_or_claim_a_url() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let evil = fake_export(
+        "Evil Pie",
+        "javascript://evil.test/%0Aalert(document.cookie)",
+        "javascript:alert(1)",
+    );
+    let own_host = fake_export(
+        "Self Pie",
+        "http://127.0.0.1/popular-recipe",
+        "https://img.test/p.jpg",
+    );
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/evil",
+                route(|| async { Html(fake_share_page("/s/evil/crumb.json")) }),
+            )
+            .route("/s/evil/crumb.json", route(move || async move { evil }))
+            .route(
+                "/s/own",
+                route(|| async { Html(fake_share_page("/s/own/crumb.json")) }),
+            )
+            .route("/s/own/crumb.json", route(move || async move { own_host })),
+    )
+    .await;
+    let b = TestApp::new(None);
+
+    // A javascript: "source" is dropped; the recipe is kept under the share link
+    let link = format!("{origin}/s/evil");
+    let (status, saved) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(saved["title"], "Evil Pie", "{saved}");
+    assert_eq!(saved["url"], link.as_str(), "{saved}");
+    assert!(saved["originalUrl"].is_null());
+    assert!(saved["image"].is_null());
+    assert!(!saved.to_string().contains("javascript"));
+
+    // A "source" on the share page's own host isn't taken as the original either
+    let (_, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/own")})),
+        )
+        .await;
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(saved["title"], "Self Pie");
+    assert!(saved["originalUrl"].is_null());
+}
+
+#[tokio::test]
+async fn crumb_exports_arent_fetched_from_another_origin() {
+    use axum::response::{Html, Redirect};
+    use axum::routing::get as route;
+    // Another port on the same host is another origin
+    let elsewhere = serve(axum::Router::new().route(
+        "/x.json",
+        route(|| async {
+            fake_export("Hijacked", "https://food.test/h", "https://img.test/h.jpg")
+        }),
+    ))
+    .await;
+    let target = format!("{elsewhere}/x.json");
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/hop",
+                route(|| async { Html(fake_share_page("/s/hop/crumb.json")) }),
+            )
+            .route(
+                "/s/hop/crumb.json",
+                route(move || async move { Redirect::temporary(&target) }),
+            ),
+    )
+    .await;
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/hop")})),
+        )
+        .await;
+    // The redirect isn't followed; the page itself is scraped instead
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["title"], "Page Pie");
+}
+
+#[tokio::test]
+async fn a_stored_script_link_is_never_rendered() {
+    let t = TestApp::new(None);
+    let (_, r) = t
+        .json("POST", "/api/recipes", Some(shared_recipe("Old Row")))
+        .await;
+    // An older row, from before links were checked
+    t.state
+        .db
+        .lock()
+        .execute(
+            "UPDATE recipes SET url = 'javascript://x.test/%0Aalert(1)', original_url = 'data:text/html,hi' WHERE id = ?1",
+            [r["id"].as_i64().unwrap()],
+        )
+        .unwrap();
+    let (_, s) = t
+        .json("POST", &format!("/api/recipes/{}/share", r["id"]), None)
+        .await;
+    let (status, _, html) = t.send(get(&share_path(s["url"].as_str().unwrap()))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !html.contains("javascript:") && !html.contains("data:text"),
+        "{html}"
+    );
+    assert!(!html.contains("Original recipe"));
+    // And it can't be written that way through the API
+    let (status, _) = t
+        .json(
+            "PATCH",
+            &format!("/api/recipes/{}", r["id"]),
+            Some(json!({"url": "javascript:alert(1)"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[test]
@@ -3397,6 +3610,29 @@ fn crumb_exports_are_only_taken_from_the_same_host() {
     assert_eq!(
         crumb_alternate(&page("file:///etc/passwd"), "https://a.test/s/abc"),
         None
+    );
+    // Same host, another scheme or port: another origin
+    assert_eq!(
+        crumb_alternate(
+            &page("http://a.test/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        ),
+        None
+    );
+    assert_eq!(
+        crumb_alternate(
+            &page("https://a.test:8443/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        ),
+        None
+    );
+    assert_eq!(
+        crumb_alternate(
+            &page("https://a.test:443/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        )
+        .as_deref(),
+        Some("https://a.test/s/abc/crumb.json")
     );
     assert_eq!(
         crumb_alternate("<html></html>", "https://a.test/s/abc"),

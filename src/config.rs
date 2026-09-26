@@ -148,8 +148,8 @@ pub struct Config {
     pub typesafe: Option<TypesafeConfig>,
     pub site_url: Option<String>,
     pub railway_domain: Option<String>,
-    /// Behind Railway's proxy (`RAILWAY_ENVIRONMENT` is set): the client's address is the
-    /// first `X-Forwarded-For` hop. Otherwise forwarded headers are ignored.
+    /// Behind Railway's proxy (`RAILWAY_ENVIRONMENT` is set): the client's address is
+    /// `X-Real-IP`, else the last `X-Forwarded-For` hop. Otherwise forwarded headers are ignored.
     pub trust_proxy_headers: bool,
     pub web_dist: PathBuf,
     /// Where resized recipe photos are kept (`img-cache/` next to the database).
