@@ -15,8 +15,27 @@ pub enum CoreError {
     BadRecipe(String),
 }
 
+/// A recipe from an app's JSON. Apps may leave out what they never show (the timestamps, a
+/// "manual" source, blank lists), so those get neutral defaults instead of failing the call.
 fn recipe(json: &str) -> Result<model::Recipe, CoreError> {
-    serde_json::from_str(json).map_err(|e| CoreError::BadRecipe(e.to_string()))
+    let bad = |e: serde_json::Error| CoreError::BadRecipe(e.to_string());
+    let mut value: serde_json::Value = serde_json::from_str(json).map_err(bad)?;
+    if let Some(fields) = value.as_object_mut() {
+        let defaults = [
+            ("id", serde_json::json!(0)),
+            ("source", serde_json::json!("manual")),
+            ("ingredients", serde_json::json!([])),
+            ("instructions", serde_json::json!([])),
+            ("createdAt", serde_json::json!("1970-01-01T00:00:00Z")),
+            ("updatedAt", serde_json::json!("1970-01-01T00:00:00Z")),
+        ];
+        for (key, default) in defaults {
+            if fields.get(key).is_none_or(serde_json::Value::is_null) {
+                fields.insert(key.into(), default);
+            }
+        }
+    }
+    serde_json::from_value(value).map_err(bad)
 }
 
 // ─── Ingredients ───────────────────────────────────────────────────────────
@@ -473,6 +492,16 @@ pub fn checks_status_text(counts: ChecksCounts, run: Option<u32>) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn cook_steps_accept_a_recipe_without_timestamps() {
+        let json =
+            r#"{"title":"Toast","instructions":[{"items":["Toast the bread.","Butter it."]}]}"#;
+        let steps = cook_steps(json.into()).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[1].text, "Butter it.");
+    }
+
     use super::*;
 
     #[test]
