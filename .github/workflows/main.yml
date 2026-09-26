@@ -190,6 +190,20 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  # The iOS app rides the same version too: a Release build of every master push, uploaded to
+  # TestFlight when the App Store Connect secrets exist (unsigned otherwise), as a workflow
+  # artifact. Like the Android and desktop builds it never blocks deploy-dev.
+  ios-build:
+    name: iOS release build
+    needs: version
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      upload: true
+    secrets: inherit
+
   # The desktop executable rides the same version as the server but ships on its own: it is
   # only built here (nothing is attached to a release yet) and it must never block or change
   # deploy-dev, which does not depend on this job. See docs/RELEASING.md.

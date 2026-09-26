@@ -314,3 +314,18 @@ jobs:
         run: android/scripts/build-release-apk.sh "$VERSION" android-dist
       - name: Upload the release assets
         run: gh release upload "$TAG" android-dist/crumb-android-*.apk android-dist/crumb-android-*.apk.sha256 --clobber
+
+  # The iOS build of the same commit, attached to the same release (signed when the App Store
+  # Connect secrets exist). TestFlight already has it from main.yml; submitting for App Store
+  # review stays a manual step in App Store Connect.
+  ios-release:
+    name: iOS release assets
+    needs: promote
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      version: ${{ needs.promote.outputs.version }}
+      ref: ${{ needs.promote.outputs.sha }}
+      release-tag: ${{ needs.promote.outputs.tag }}
+    secrets: inherit
