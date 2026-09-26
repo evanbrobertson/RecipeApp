@@ -5,6 +5,7 @@ import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.RecipeCache
 import app.crumb.android.data.RecipeRepository
 import app.crumb.android.data.SessionStore
+import app.crumb.android.ui.theme.ThemeStore
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit
 class AppContainer(app: Application) {
     val session = SessionStore(app)
     val cache = RecipeCache(File(app.filesDir, "recipes"))
+    val theme = ThemeStore(app)
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)

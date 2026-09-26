@@ -185,6 +185,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
+    implementation(libs.lucide)
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)

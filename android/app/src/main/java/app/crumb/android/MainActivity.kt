@@ -2,7 +2,13 @@ package app.crumb.android
 
 import android.content.Intent
 import android.os.Bundle
+import android.graphics.Color
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.crumb.android.ui.theme.rememberDark
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import app.crumb.android.ui.CrumbApp
@@ -18,8 +24,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Only a fresh launch; after recreation the Add screen already has the draft
         if (savedInstanceState == null) receive(intent)
+        val themeStore = (application as CrumbApplication).container.theme
         setContent {
-            CrumbTheme {
+            val settings by themeStore.settings.collectAsStateWithLifecycle(initialValue = null)
+            // Wait for the saved theme so a dark kitchen never flashes light on launch
+            val current = settings ?: return@setContent
+            val dark = rememberDark(current)
+            DisposableEffect(dark) {
+                val bars = if (dark) {
+                    SystemBarStyle.dark(Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                onDispose {}
+            }
+            CrumbTheme(dark = dark) {
                 CrumbApp(sharedText, onSharedUsed = { sharedText.value = null })
             }
         }

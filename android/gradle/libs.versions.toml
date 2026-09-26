@@ -13,6 +13,7 @@ coil = "3.6.3"
 datastore = "1.2.1"
 junit = "4.13.2"
 jna = "5.17.0"
+lucide = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,7 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 junit = { module = "junit:junit", version.ref = "junit" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+lucide = { module = "com.composables:icons-lucide", version.ref = "lucide" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

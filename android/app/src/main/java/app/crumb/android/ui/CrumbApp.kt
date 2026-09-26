@@ -1,33 +1,39 @@
 package app.crumb.android.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AddCircleOutline
-import androidx.compose.material.icons.outlined.CollectionsBookmark
-import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -38,35 +44,45 @@ import androidx.navigation.toRoute
 import app.crumb.android.ui.add.AddScreen
 import app.crumb.android.ui.books.BookScreen
 import app.crumb.android.ui.books.BooksScreen
+import app.crumb.android.ui.components.ControlShape
+import app.crumb.android.ui.home.HomeScreen
+import app.crumb.android.ui.suggestions.SuggestionsScreen
+import com.composables.icons.lucide.BookOpenText
+import com.composables.icons.lucide.Ellipsis
+import com.composables.icons.lucide.House
+import com.composables.icons.lucide.LibraryBig
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Sparkles
 import app.crumb.android.ui.cook.CookScreen
 import app.crumb.android.ui.more.MoreScreen
 import app.crumb.android.ui.recipe.RecipeScreen
 import app.crumb.android.ui.recipes.RecipesScreen
 import app.crumb.android.ui.signin.SignInScreen
 import app.crumb.android.ui.theme.Crumb
-import app.crumb.android.ui.timers.TimersScreen
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlin.reflect.KClass
 
+@Serializable data object HomeRoute
 @Serializable data object RecipesRoute
-@Serializable data object BooksRoute
-@Serializable data object AddRoute
-@Serializable data object TimersRoute
+@Serializable data object ShelfRoute
+@Serializable data object SuggestionsRoute
 @Serializable data object MoreRoute
+@Serializable data object AddRoute
 @Serializable data class RecipeRoute(val id: Long)
 @Serializable data class CookRoute(val id: Long)
 @Serializable data class BookRoute(val id: Long)
 
 private data class Tab(val route: Any, val type: KClass<*>, val label: String, val icon: ImageVector)
 
+/** The web's phone tab bar (Layout.astro): Suggestions is labelled "Review" there too. */
 private val Tabs = listOf(
-    Tab(RecipesRoute, RecipesRoute::class, "Recipes", Icons.AutoMirrored.Outlined.MenuBook),
-    Tab(BooksRoute, BooksRoute::class, "Books", Icons.Outlined.CollectionsBookmark),
-    Tab(AddRoute, AddRoute::class, "Add", Icons.Outlined.AddCircleOutline),
-    Tab(TimersRoute, TimersRoute::class, "Timers", Icons.Outlined.Timer),
-    Tab(MoreRoute, MoreRoute::class, "More", Icons.Outlined.Menu),
+    Tab(HomeRoute, HomeRoute::class, "Home", Lucide.House),
+    Tab(RecipesRoute, RecipesRoute::class, "Recipes", Lucide.BookOpenText),
+    Tab(ShelfRoute, ShelfRoute::class, "Shelf", Lucide.LibraryBig),
+    Tab(SuggestionsRoute, SuggestionsRoute::class, "Review", Lucide.Sparkles),
+    Tab(MoreRoute, MoreRoute::class, "More", Lucide.Ellipsis),
 )
 
 /**
@@ -99,7 +115,7 @@ private fun SignedIn(sharedText: StateFlow<String?>, onSharedUsed: () -> Unit) {
     val signedOut: () -> Unit = { scope.launch { container.session.signOut() } }
 
     LaunchedEffect(shared) {
-        if (shared != null) nav.switchTab(AddRoute)
+        if (shared != null) nav.navigate(AddRoute) { launchSingleTop = true }
     }
 
     val entry by nav.currentBackStackEntryAsState()
@@ -108,13 +124,15 @@ private fun SignedIn(sharedText: StateFlow<String?>, onSharedUsed: () -> Unit) {
 
     Scaffold(
         containerColor = Crumb.colors.canvas,
-        bottomBar = { if (showTabs) TabBar(nav, destination) },
+        bottomBar = { if (showTabs) TabBar(nav) },
     ) { padding ->
-        NavHost(nav, startDestination = RecipesRoute, modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+        NavHost(nav, startDestination = HomeRoute, modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+            composable<HomeRoute> { HomeScreen() }
             composable<RecipesRoute> {
                 RecipesScreen(onOpen = { nav.navigate(RecipeRoute(it)) }, onSignedOut = signedOut)
             }
-            composable<BooksRoute> {
+            composable<SuggestionsRoute> { SuggestionsScreen() }
+            composable<ShelfRoute> {
                 BooksScreen(onOpen = { nav.navigate(BookRoute(it)) }, onSignedOut = signedOut)
             }
             composable<AddRoute> {
@@ -126,7 +144,6 @@ private fun SignedIn(sharedText: StateFlow<String?>, onSharedUsed: () -> Unit) {
                     },
                 )
             }
-            composable<TimersRoute> { TimersScreen() }
             composable<MoreRoute> { MoreScreen() }
             composable<RecipeRoute> { backStack ->
                 val id = backStack.toRoute<RecipeRoute>().id
@@ -160,30 +177,52 @@ private fun NavHostController.switchTab(route: Any) {
     }
 }
 
+/**
+ * The tab that owns what's on screen: the topmost tab root in the back stack. A recipe
+ * opened from Recipes keeps Recipes lit, and so does coming back to it from More (the tab's
+ * saved stack is restored with the recipe on top, so the destination alone isn't enough).
+ */
+private fun selectedTab(stack: List<NavBackStackEntry>): Tab? =
+    stack.asReversed().firstNotNullOfOrNull { entry ->
+        Tabs.firstOrNull { tab -> entry.destination.hasRoute(tab.type) }
+    }
+
 @Composable
-private fun TabBar(nav: NavHostController, destination: androidx.navigation.NavDestination?) {
+private fun TabBar(nav: NavHostController) {
     val colors = Crumb.colors
-    // A recipe or cookbook keeps the tab it was opened from lit
-    var lastTab by rememberSaveable { mutableStateOf(Tabs.first().label) }
-    Tabs.firstOrNull { tab -> destination?.hierarchy?.any { it.hasRoute(tab.type) } == true }
-        ?.let { lastTab = it.label }
-    NavigationBar(containerColor = colors.nav, modifier = Modifier.testTag("tabs")) {
+    val stack by nav.currentBackStack.collectAsStateWithLifecycle()
+    val selected = selectedTab(stack)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.nav)
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)
+            .testTag("tabs"),
+    ) {
         Tabs.forEach { tab ->
-            val selected = tab.label == lastTab
-            NavigationBarItem(
-                selected = selected,
-                onClick = { nav.switchTab(tab.route) },
-                icon = { Icon(tab.icon, contentDescription = null) },
-                label = { Text(tab.label) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = colors.onButter,
-                    selectedTextColor = colors.butter,
-                    indicatorColor = colors.butter,
-                    unselectedIconColor = colors.navInk,
-                    unselectedTextColor = colors.navInk,
-                ),
-                modifier = Modifier.testTag("tab-${tab.label.lowercase()}"),
-            )
+            val active = tab == selected
+            val tint = if (active) colors.butter else colors.navInk
+            Column(
+                Modifier
+                    .weight(1f)
+                    .height(52.dp)
+                    .clip(ControlShape)
+                    .selectable(active, role = Role.Tab) { nav.switchTab(tab.route) }
+                    .testTag("tab-${tab.label.lowercase()}"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(tab.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    tab.label,
+                    color = tint,
+                    fontSize = 13.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

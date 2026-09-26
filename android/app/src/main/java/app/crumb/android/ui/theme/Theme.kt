@@ -9,9 +9,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -40,6 +46,17 @@ data class CrumbColors(
     val nav: Color,
     val navInk: Color,
     val error: Color,
+    /** Tint for pressed/selected fills (web --bg-accented). */
+    val accented: Color,
+    val inkDimmed: Color,
+    val butterHover: Color,
+    /** The glossy backsplash: base fill, grout lines and the gloss highlight's alpha. */
+    val tileBase: Color,
+    val tileGrout: Color,
+    val tileGloss: Float,
+    val shelfWood: Color,
+    val shelfWoodDark: Color,
+    val dark: Boolean,
 )
 
 val LightColors = CrumbColors(
@@ -59,6 +76,15 @@ val LightColors = CrumbColors(
     nav = Color(0xFF1C2B22),
     navInk = Color(0xFFB7C4BB),
     error = Color(0xFFA8432C),
+    accented = Color(0xFFD6E2D5),
+    inkDimmed = Color(0xFF5F6B63),
+    butterHover = Color(0xFFEDCF6F),
+    tileBase = Color(0xFF2F6B4F),
+    tileGrout = Color(0xFF265A42),
+    tileGloss = 0.1f,
+    shelfWood = Color(0xFF2F6B4F),
+    shelfWoodDark = Color(0xFF265A42),
+    dark = false,
 )
 
 val DarkColors = CrumbColors(
@@ -78,6 +104,15 @@ val DarkColors = CrumbColors(
     nav = Color(0xFF0D130F),
     navInk = Color(0xFF8E9C92),
     error = Color(0xFFE59A83),
+    accented = Color(0xFF2C3D33),
+    inkDimmed = Color(0xFF9BA69D),
+    butterHover = Color(0xFFF5DF9C),
+    tileBase = Color(0xFF1F3D2E),
+    tileGrout = Color(0xFF17301F),
+    tileGloss = 0.06f,
+    shelfWood = Color(0xFF3B7A5A),
+    shelfWoodDark = Color(0xFF2D5F45),
+    dark = true,
 )
 
 val LocalCrumbColors = staticCompositionLocalOf { LightColors }
@@ -124,6 +159,34 @@ val CrumbShapes = Shapes(
     large = RoundedCornerShape(16.dp),
     extraLarge = RoundedCornerShape(16.dp),
 )
+
+/**
+ * Light or dark for [settings], as the web's theme-boot.js decides it. In "Sunrise & sunset"
+ * the answer is re-checked at the next sunrise or sunset (and at least hourly).
+ */
+@Composable
+fun rememberDark(settings: ThemeSettings): Boolean {
+    val system = isSystemInDarkTheme()
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    return when (settings.mode) {
+        ThemeMode.Light -> false
+        ThemeMode.Dark -> true
+        ThemeMode.System -> system
+        ThemeMode.Sun -> {
+            // Back from the background: a timer may have been missed (the web's visibilitychange)
+            LifecycleResumeEffect(Unit) {
+                now = System.currentTimeMillis()
+                onPauseOrDispose {}
+            }
+            val sun = SunClock.sun(now, settings.location ?: SunClock.estimate())
+            LaunchedEffect(sun.next) {
+                kotlinx.coroutines.delay((sun.next - System.currentTimeMillis() + 1000).coerceIn(60_000, 3_600_000))
+                now = System.currentTimeMillis()
+            }
+            sun.dark
+        }
+    }
+}
 
 @Composable
 fun CrumbTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
