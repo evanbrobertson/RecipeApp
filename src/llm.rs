@@ -56,7 +56,7 @@ fn schema() -> Value {
         "cookTime": nullable(None),
         "totalTime": nullable(None),
         "recipeYield": nullable(Some("e.g. \"4 servings\"")),
-        "recipeCategory": nullable(Some("e.g. \"Dessert\", \"Main course\"")),
+        "recipeCategory": nullable(Some("One of: Breakfast, Main, Side, Soup, Salad, Baking, Dessert, Snack, Sauce, Drink, Other")),
         "recipeCuisine": nullable(None),
         "ingredients": {"type": "array", "items": section.clone()},
         "instructions": {"type": "array", "items": section},

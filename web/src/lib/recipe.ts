@@ -87,7 +87,7 @@ export interface ConnectorInfo {
 /** One line Wee Chef looked at twice: fixed on import, or left for the cook to review. */
 export interface CheckFlag {
   id: number
-  /** "recipe" for the one-off clean-up of stray symbols, codes and repeats. */
+  /** "recipe" for the one-off clean-up of stray symbols, codes and repeats, and the category. */
   field: "ingredients" | "instructions" | "recipe"
   /** The line as it was when checked (flags follow the text, not the position). */
   itemText: string
@@ -100,12 +100,16 @@ export interface CheckFlag {
     | "step"
     | "ingredient"
     | "tidy"
+    | "category"
   state: "fixed" | "review"
   detail: {
     p?: number
-    fix?: "heading" | "removed" | "notes" | "joined" | "tidy"
+    fix?: "heading" | "removed" | "notes" | "joined" | "tidy" | "category"
     /** For "tidy": how many small things were cleaned up. */
     count?: number
+    /** For "category": the category now (null: cleared) and the one it replaced. */
+    category?: string | null
+    was?: string | null
     heading?: string
     with?: string
   } | null

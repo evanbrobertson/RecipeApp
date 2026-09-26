@@ -15,6 +15,7 @@
   import RecipeCard from "../components/RecipeCard.svelte"
   import { api, errorMessage } from "../lib/api"
   import { bookPalette } from "../lib/books"
+  import { categoriesIn } from "../lib/categories"
   import { pageState } from "../lib/page.svelte"
   import type { Cookbook, RecipeSummary } from "../lib/recipe"
   import { forgetViewed } from "../lib/storage"
@@ -72,11 +73,8 @@
   }
 
   let category = $state("all")
-  const categories = $derived(
-    [...new Set(recipes.map((r) => r.recipeCategory).filter((c): c is string => !!c))].sort(
-      (a, b) => a.localeCompare(b),
-    ),
-  )
+  // Only categories with a recipe, in the list's order; uncategorised ones are in Everything
+  const categories = $derived(categoriesIn(recipes))
   const visible = $derived(
     category === "all" ? recipes : recipes.filter((r) => r.recipeCategory === category),
   )
