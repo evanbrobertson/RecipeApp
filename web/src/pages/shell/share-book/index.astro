@@ -1,0 +1,254 @@
+---
+/**
+ * A shared cookbook, served by the Rust server at /s/:token (src/share.rs), never directly.
+ *
+ * The server fills <!--share:book--> with the book's spine, name and recipe count, and
+ * <!--share:recipes--> with its recipe cards (each linking to /s/:token/:recipeId), and adds
+ * the title, link-preview tags, the Crumb export link and #page-data. Its own shell, like the
+ * recipe's: no nav, timers or speculation rules, and a strict CSP that allows the inline
+ * scripts here by hash.
+ */
+import "../../../styles/app.css"
+import nunito from "../../../assets/fonts/nunito-sans.woff2?url"
+import dmSerif from "../../../assets/fonts/dm-serif-display.woff2?url"
+import themeBoot from "../../../lib/theme-boot.js?raw"
+import { BOOK_COLORS, BOOK_PALETTE } from "../../../lib/books"
+import ShareActions from "../../../islands/ShareActions.svelte"
+
+// The spine's cloth, fore-edge and foil per cover colour, from the same palette as the shelf
+const spines = BOOK_COLORS.map((c) => {
+  const p = BOOK_PALETTE[c]
+  return `.share-spine[data-color="${c}"]{background-color:${p.cloth};color:${p.foil};--shade:${p.shade}}`
+}).join("")
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Shared cookbook · Crumb</title>
+    <meta name="robots" content="noindex, noimageindex" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f5f1e6" data-light="#f5f1e6" data-dark="#141c17" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href={nunito} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={dmSerif} as="font" type="font/woff2" crossorigin />
+    <style
+      set:html={`
+      @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
+      @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
+      ${spines}
+    `}
+    />
+    <script is:inline set:html={themeBoot} />
+  </head>
+  <body>
+    <script type="application/json" id="page-data">null</script>
+    <div class="share-wrap">
+      <p class="share-mark page-title">Crumb</p>
+      <main>
+        <section class="share-book">
+          <!--share:book-->
+          <div class="share-book-actions">
+            <ShareActions client:only="svelte">
+              <div slot="fallback" class="share-actions-skeleton" aria-hidden="true"></div>
+            </ShareActions>
+          </div>
+        </section>
+        <section class="share-book-recipes" aria-label="Recipes">
+          <!--share:recipes-->
+        </section>
+      </main>
+      <footer class="share-foot">
+        <p class="meta">Shared from Crumb, a private recipe box. Recipes added to this cookbook show up here.</p>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  .share-wrap {
+    max-width: 75rem;
+    margin-inline: auto;
+    padding: max(env(safe-area-inset-top), 1.25rem) 1rem 4rem;
+  }
+  @media (min-width: 768px) {
+    .share-wrap {
+      padding-inline: 2rem;
+    }
+  }
+  .share-mark {
+    margin-bottom: 1.25rem;
+    font-size: 1.5rem;
+    color: var(--primary);
+  }
+  .share-book > * + * {
+    margin-top: 1.25rem;
+  }
+  .share-book-head {
+    display: flex;
+    align-items: flex-end;
+    gap: 1rem;
+  }
+  .share-book-spine {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* Cloth with a darker fore-edge, foil bands near the top and bottom, and a faint inset
+     line so pale cloths (cream) still read against the page (as on the cookbook page) */
+  .share-spine {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 8rem;
+    overflow: hidden;
+    border-radius: 3px 3px 0 0;
+    background-image: linear-gradient(
+      90deg,
+      transparent 78%,
+      color-mix(in srgb, var(--shade) 55%, transparent)
+    );
+    box-shadow: inset 0 0 0 1px rgb(28 43 34 / 0.22);
+  }
+  .dark .share-spine {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  }
+  .share-spine::before,
+  .share-spine::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    height: 2px;
+    background: currentColor;
+    opacity: 0.85;
+  }
+  .share-spine::before {
+    top: 10px;
+  }
+  .share-spine::after {
+    bottom: 10px;
+  }
+  .share-spine span {
+    max-height: calc(100% - 1.75rem);
+    overflow: hidden;
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 0.875rem;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+  .share-plank {
+    height: 0.5rem;
+    margin-inline: -0.375rem;
+    border-radius: 999px;
+    background: var(--tile);
+  }
+  .share-book-name {
+    min-width: 0;
+    padding-bottom: 0.5rem;
+  }
+  .share-book-name .kicker + .share-title {
+    margin-top: 0.375rem;
+  }
+  .share-book-name .meta {
+    margin-top: 0.375rem;
+  }
+  .share-title {
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  @media (min-width: 768px) {
+    .share-title {
+      font-size: 2.5rem;
+    }
+  }
+  .share-desc {
+    max-width: 65ch;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+  .share-actions-skeleton {
+    height: 3.5rem;
+  }
+  .share-book-recipes {
+    margin-top: 2.5rem;
+  }
+  .share-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.25rem 0.75rem;
+  }
+  @media (min-width: 640px) {
+    .share-cards {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.25rem 1rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .share-cards {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1280px) {
+    .share-cards {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  .share-card {
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-ctl);
+  }
+  .share-card:focus-visible {
+    outline: 2px solid var(--tile);
+    outline-offset: 3px;
+  }
+  .share-card-photo {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--radius-ctl);
+    background-color: var(--tint);
+  }
+  .share-card-photo .share-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  .share-card-title {
+    display: -webkit-box;
+    margin-top: 0.625rem;
+    overflow: hidden;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.25;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .share-card:hover .share-card-title {
+    text-decoration: underline;
+  }
+  .share-card-meta {
+    margin-top: 0.125rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .share-empty {
+    padding: 1.5rem;
+  }
+  .share-foot {
+    margin-top: 3rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+  }
+</style>

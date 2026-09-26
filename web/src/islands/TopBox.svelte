@@ -94,6 +94,8 @@
   import { onMount, tick } from "svelte"
   import { api, errorMessage } from "../lib/api"
   import { autosize } from "../lib/autosize"
+  import { bookImportedTitle } from "../lib/format"
+  import type { BookImported } from "../lib/recipe"
   import { importPhotos, isPhoto, MAX_PHOTOS, shrink, visionAvailable } from "../lib/photos"
   import { flash, toast } from "../lib/toast"
 
@@ -373,10 +375,19 @@
   async function importBody(body: { url: string } | { text: string }, what: string) {
     saving = true
     try {
-      const res = await api<{ id: number; isNew: boolean }>("/api/recipes/import", {
-        method: "POST",
-        body,
-      })
+      const res = await api<{ id: number; isNew: boolean; cookbook?: BookImported }>(
+        "/api/recipes/import",
+        { method: "POST", body },
+      )
+      // Another Crumb's shared cookbook: every recipe in it, into a cookbook of that name
+      if (res.cookbook) {
+        flash({
+          title: bookImportedTitle(res.cookbook),
+          tone: res.cookbook.added ? "success" : undefined,
+        })
+        location.href = `/cookbooks/${res.cookbook.id}`
+        return
+      }
       if (!res.isNew) flash({ title: "Already in your recipes" })
       location.href = `/recipes/${res.id}`
     } catch (err) {

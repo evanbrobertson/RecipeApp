@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * A share page's actions: save the recipe into your own Crumb (its Add page takes
-   * `?url=`, and a Crumb reads another Crumb's share losslessly), download the Crumb file,
-   * or print.
+   * A share page's actions: save the recipe (or the whole shared cookbook) into your own
+   * Crumb (its Add page takes `?url=`, and a Crumb reads another Crumb's share losslessly),
+   * download the Crumb file, or print a recipe.
    */
   import Download from "@lucide/svelte/icons/download"
   import Plus from "@lucide/svelte/icons/plus"
@@ -11,7 +11,7 @@
   import { inlineData } from "../lib/api"
 
   interface Data {
-    share: { title: string; url: string; exportUrl: string }
+    share: { title: string; url: string; exportUrl: string; kind?: "recipe" | "cookbook" }
   }
 
   const share = inlineData<Data>()?.share ?? {
@@ -19,6 +19,7 @@
     url: location.origin + location.pathname,
     exportUrl: `${location.pathname}/crumb.json`,
   }
+  const book = share.kind === "cookbook"
   const KEY = "crumb:my-crumb"
 
   function remembered(): string {
@@ -80,16 +81,20 @@
     <a class="btn btn-soft" href={share.exportUrl} download data-no-prerender>
       <Download /> Download for Crumb (.json)
     </a>
-    <button type="button" class="btn btn-soft" onclick={() => window.print()}>
-      <Printer /> Print
-    </button>
+    {#if !book}
+      <button type="button" class="btn btn-soft" onclick={() => window.print()}>
+        <Printer /> Print
+      </button>
+    {/if}
   </div>
 </div>
 
 <Modal
   bind:open
   title="Save to my Crumb"
-  description="Your Crumb opens with this recipe ready to add."
+  description={book
+    ? "Your Crumb opens with this cookbook ready to add, every recipe in it."
+    : "Your Crumb opens with this recipe ready to add."}
 >
   <form id="save-to-crumb" onsubmit={save} novalidate>
     <label class="label" for="crumb-address">Your Crumb address</label>

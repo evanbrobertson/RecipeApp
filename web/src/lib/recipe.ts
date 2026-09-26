@@ -55,6 +55,26 @@ export interface ShareLink {
   createdAt: string
 }
 
+/** A live share link, as More lists them (`GET /api/shares`). */
+export interface SharedLink {
+  kind: "recipe" | "cookbook"
+  /** The recipe's or cookbook's id (the share routes take it, never the token). */
+  id: number
+  title: string
+  url: string
+  includeNotes: boolean
+  createdAt: string
+  lastOpenedAt: string | null
+}
+
+/** What saving another Crumb's shared cookbook did (`POST /api/recipes/import`). */
+export interface BookImported {
+  id: number
+  name: string
+  added: number
+  duplicates: number
+}
+
 export interface Cookbook {
   id: number
   name: string

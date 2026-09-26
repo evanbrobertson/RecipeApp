@@ -78,3 +78,20 @@ export function recipeToText(r: FormattableRecipe, link?: string | null): string
   if (link) out.push("", link)
   return out.join("\n")
 }
+
+/** A cookbook as plain text: its name, its recipes' titles and the link. */
+export function bookToText(name: string, titles: string[], link?: string | null): string {
+  const out: string[] = [name]
+  if (titles.length) out.push("", ...titles.map((t) => `• ${t}`))
+  if (link) out.push("", link)
+  return out.join("\n")
+}
+
+const count = (n: number) => `${n} recipe${n === 1 ? "" : "s"}`
+
+/** The toast after saving another Crumb's shared cookbook: "Added 12 recipes to Weeknight dinners". */
+export function bookImportedTitle(b: { name: string; added: number; duplicates: number }): string {
+  if (b.added) return `Added ${count(b.added)} to ${b.name}`
+  if (b.duplicates) return `Already in your recipes, now in ${b.name}`
+  return `Added ${b.name}, an empty cookbook`
+}

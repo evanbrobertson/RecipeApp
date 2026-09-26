@@ -304,7 +304,15 @@ async fn connector_page(
     req: Request,
 ) -> Response {
     let name = req.uri().path().trim_matches('/').to_string();
-    let data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    let mut data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    // More lists the share links that are live
+    if name == "more" {
+        let origin = state.config.public_origin(&headers);
+        match crate::share::list(&state.db.lock(), &origin) {
+            Ok(shares) => data["shares"] = json!(shares),
+            Err(err) => tracing::warn!("[share] couldn't list shares: {err}"),
+        }
+    }
     render(&state, &format!("{name}/index.html"), data)
 }
 
