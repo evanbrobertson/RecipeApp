@@ -15,9 +15,10 @@ class SunClockTest {
 
     @Test fun londonMidsummerMatchesPublishedTimes() {
         // Published: sunrise 04:43, sunset 21:21 BST (03:43 / 20:21 UTC)
-        val (rise, set) = SunClock.sunTimes(at("2026-06-21T12:00:00Z"), london.lat, london.lng)!!
-        assertEquals(at("2026-06-21T03:43:00Z").toDouble(), rise.toDouble(), 120_000.0)
-        assertEquals(at("2026-06-21T20:21:00Z").toDouble(), set.toDouble(), 120_000.0)
+        val noon = SunClock.sun(at("2026-06-21T12:00:00Z"), london)
+        assertEquals(at("2026-06-21T20:21:00Z").toDouble(), noon.next.toDouble(), 120_000.0)
+        val night = SunClock.sun(at("2026-06-21T01:00:00Z"), london)
+        assertEquals(at("2026-06-21T03:43:00Z").toDouble(), night.next.toDouble(), 120_000.0)
     }
 
     @Test fun darkAfterSunsetUntilTomorrowsSunrise() {

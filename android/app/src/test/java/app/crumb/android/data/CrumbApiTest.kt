@@ -133,9 +133,9 @@ class CrumbApiTest {
 
     @Test
     fun errorMessagesDropTheFieldPrefix() {
-        assertEquals("Please enter a valid URL", CrumbApi.errorMessage(400, ApiErrorBody(400, "Bad Request", "Please enter a valid URL")))
-        assertEquals("Password is required", CrumbApi.errorMessage(400, ApiErrorBody(message = "password: Password is required")))
-        assertEquals("Please sign in again.", CrumbApi.errorMessage(401, null))
+        assertEquals("Please enter a valid URL", CrumbApi.errorMessage(400, """{"statusCode":400,"statusMessage":"Bad Request","message":"Please enter a valid URL"}"""))
+        assertEquals("Password is required", CrumbApi.errorMessage(400, """{"message":"password: Password is required"}"""))
+        assertEquals("Please sign in again.", CrumbApi.errorMessage(401, ""))
     }
 
     @Test

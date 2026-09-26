@@ -90,14 +90,6 @@ data class ImportResult(
     val cookbook: ImportedCookbook? = null,
 )
 
-/** Every server error: `{statusCode, statusMessage, message}`. */
-@Serializable
-data class ApiErrorBody(
-    val statusCode: Int? = null,
-    val statusMessage: String? = null,
-    val message: String? = null,
-)
-
 /**
  * `POST /api/recipes` and `PATCH /api/recipes/{id}`: every settable field, camelCase.
  * Nutrition values are strings; lists default to empty.

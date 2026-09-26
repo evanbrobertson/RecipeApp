@@ -359,8 +359,7 @@ class CrumbApi(
         }
         if (!response.isSuccessful) {
             val text = response.use { runCatching { it.body.string() }.getOrDefault("") }
-            val parsed = runCatching { CrumbJson.decodeFromString(ApiErrorBody.serializer(), text) }.getOrNull()
-            throw ApiException(response.code, errorMessage(response.code, parsed))
+            throw ApiException(response.code, errorMessage(response.code, text))
         }
         return response
     }
@@ -372,37 +371,16 @@ class CrumbApi(
         private val OCTET = "application/octet-stream".toMediaType()
 
         /** The value of a `crumb_session=…` Set-Cookie header, unless it clears the cookie. */
-        fun sessionCookie(header: String): String? {
-            val pair = header.substringBefore(';').trim()
-            if (!pair.startsWith("$COOKIE=")) return null
-            return pair.removePrefix("$COOKIE=").takeIf { it.isNotEmpty() }
-        }
+        fun sessionCookie(header: String): String? = app.crumb.core.sessionCookie(header)
 
-        /** Server messages are field-prefixed ("password: Password is required"). */
-        fun errorMessage(status: Int, body: ApiErrorBody?): String {
-            val raw = body?.message ?: body?.statusMessage
-            val cleaned = raw?.substringAfter(": ", raw)?.takeIf { it.isNotBlank() }
-            return cleaned ?: when (status) {
-                401 -> "Please sign in again."
-                404 -> "That isn't in your recipe box any more."
-                in 500..599 -> "Your Crumb server had a problem. Try again in a moment."
-                else -> "Something went wrong ($status)."
-            }
-        }
+        /** The server's `{message}` without its "field: " prefix, or a default for [status]. */
+        fun errorMessage(status: Int, body: String): String = app.crumb.core.errorMessage(status.toUShort(), body)
 
         /**
          * What someone typed as their server ("crumb.example.com", "http://192.168.1.5:3000")
          * as a base URL ending in "/", or null if it isn't a web address. Defaults to HTTPS.
          */
-        fun serverUrl(input: String): HttpUrl? {
-            val trimmed = input.trim().trimEnd('/')
-            if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return null
-            val withScheme = if ("://" in trimmed) trimmed else "https://$trimmed"
-            val url = withScheme.toHttpUrlOrNull() ?: return null
-            if (!url.host.contains('.') && url.host != "localhost") return null
-            val path = url.encodedPath.trimEnd('/') + "/"
-            return url.newBuilder().encodedPath(path).query(null).fragment(null).build()
-        }
+        fun serverUrl(input: String): HttpUrl? = app.crumb.core.serverUrl(input)?.toHttpUrlOrNull()
     }
 }
 

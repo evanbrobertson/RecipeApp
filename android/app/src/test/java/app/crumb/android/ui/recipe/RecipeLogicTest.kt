@@ -28,14 +28,11 @@ class RecipeLogicTest {
     }
 
     @Test
-    fun pluralAndQuote() {
+    fun plural() {
         assertEquals("1 line", plural(1, "line"))
         assertEquals("2 lines", plural(2, "line"))
         assertEquals("1 thing", plural(1, "thing"))
         assertEquals("3 things", plural(3, "thing"))
-        assertEquals("“Sauce:”", quote("Sauce:"))
-        assertEquals("“${"a".repeat(47)}…”", quote("a".repeat(60)))
-        assertEquals("“Sauce:”", quote("  Sauce:  "))
     }
 
     @Test

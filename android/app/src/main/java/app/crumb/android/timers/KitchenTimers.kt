@@ -50,14 +50,8 @@ data class KitchenTimer(
     fun done(now: Long) = now >= endsAt
 }
 
-/** "M:SS", or "H:MM:SS" from an hour up (formatClock in timers.svelte.ts). */
-fun formatClock(seconds: Long): String {
-    val s = seconds.coerceAtLeast(0)
-    val h = s / 3600
-    val m = (s % 3600) / 60
-    val sec = s % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
-}
+/** "M:SS", or "H:MM:SS" from an hour up (crumb-core's port of formatClock in timers.svelte.ts). */
+fun formatClock(seconds: Long): String = app.crumb.core.formatClock(seconds.toDouble())
 
 private val Context.timerData: DataStore<Preferences> by preferencesDataStore(name = "timers")
 
