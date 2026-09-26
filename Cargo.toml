@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/crumb-core", "crates/crumb-client"]
+members = ["crates/crumb-core", "crates/crumb-client", "desktop/linux"]
 resolver = "3"
 
 [package]

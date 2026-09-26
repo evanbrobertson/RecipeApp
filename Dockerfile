@@ -26,8 +26,13 @@ RUN apt-get update \
 # Build dependencies against stub sources first, so code-only changes reuse this layer
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crumb-core/Cargo.toml crates/crumb-core/Cargo.toml
-RUN mkdir -p src crates/crumb-core/src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs crates/crumb-core/src/lib.rs \
-    && cargo build --release --locked && rm -rf src crates/crumb-core/src
+COPY crates/crumb-client/Cargo.toml crates/crumb-client/Cargo.toml
+# The desktop app is a workspace member but isn't built here; stubs let Cargo load the workspace
+COPY desktop/linux/Cargo.toml desktop/linux/Cargo.toml
+RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src desktop/linux/src \
+    && echo 'fn main() {}' | tee src/main.rs desktop/linux/src/main.rs >/dev/null \
+    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs desktop/linux/src/lib.rs \
+    && cargo build --release --locked && rm -rf src crates
 COPY src ./src
 COPY crates ./crates
 RUN find src crates -name '*.rs' -exec touch {} + && cargo build --release --locked

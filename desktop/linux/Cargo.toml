@@ -1,0 +1,30 @@
+[package]
+name = "crumb-desktop-linux"
+version = "0.1.0"
+edition = "2024"
+description = "Crumb's native Linux desktop app: Qt6/QML over cxx-qt."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "crumb-desktop"
+path = "src/main.rs"
+
+[dependencies]
+crumb-client = { path = "../../crates/crumb-client" }
+crumb-core = { path = "../../crates/crumb-core" }
+cxx = "1"
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["full"] }
+keyring = { version = "3.6.3", features = ["crypto-rust", "sync-secret-service"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
+
+[dev-dependencies]
+axum = "0.8"
+crumb = { path = "../.." }
+tempfile = "3"
