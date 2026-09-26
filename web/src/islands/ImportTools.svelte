@@ -7,6 +7,8 @@
   import FileUp from "@lucide/svelte/icons/file-up"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { api, errorMessage } from "../lib/api"
+  import { bookImportedTitle } from "../lib/format"
+  import type { BookImported } from "../lib/recipe"
   import { importPhotos, isPhoto, MAX_PHOTOS, shrink } from "../lib/photos"
   import { autosize } from "../lib/autosize"
   import { toast } from "../lib/toast"
@@ -18,6 +20,8 @@
     state: LinkState
     id?: number
     title?: string
+    /** Another Crumb's shared cookbook: where its recipes went. */
+    href?: string
     message?: string
   }
 
@@ -42,11 +46,27 @@
         const job = jobs[cursor++]!
         job.state = "working"
         try {
-          const res = await api<{ id: number; title: string; isNew: boolean }>(
-            "/api/recipes/import",
-            { method: "POST", body: { url: job.url } },
-          )
-          Object.assign(job, { state: res.isNew ? "saved" : "duplicate", id: res.id, title: res.title })
+          const res = await api<{
+            id: number
+            title: string
+            isNew: boolean
+            cookbook?: BookImported
+          }>("/api/recipes/import", { method: "POST", body: { url: job.url } })
+          if (res.cookbook) {
+            Object.assign(job, {
+              state: res.cookbook.added ? "saved" : "duplicate",
+              id: res.cookbook.id,
+              title: bookImportedTitle(res.cookbook),
+              href: `/cookbooks/${res.cookbook.id}`,
+            })
+          } else {
+            Object.assign(job, {
+              state: res.isNew ? "saved" : "duplicate",
+              id: res.id,
+              title: res.title,
+              href: `/recipes/${res.id}`,
+            })
+          }
         } catch (e) {
           Object.assign(job, { state: "failed", message: errorMessage(e) })
         }
@@ -72,6 +92,7 @@
     state: "working" | "done" | "failed"
     created: { id: number; title: string }[]
     duplicates: number
+    skipped?: number
     message?: string
     /** Open the editor: the recipe was read by OCR and needs checking. */
     edit?: boolean
@@ -80,6 +101,7 @@
     file: string
     created: { id: number; title: string }[]
     duplicates: number
+    skipped?: number
     error?: string
   }
 
@@ -128,7 +150,13 @@
         const [result] = await api<ImportSummary[]>("/api/import/files", { method: "POST", form })
         if (!result || result.error)
           Object.assign(job, { state: "failed", message: result?.error ?? "Nothing imported" })
-        else Object.assign(job, { state: "done", created: result.created, duplicates: result.duplicates })
+        else
+          Object.assign(job, {
+            state: "done",
+            created: result.created,
+            duplicates: result.duplicates,
+            skipped: result.skipped,
+          })
       } catch (e) {
         Object.assign(job, { state: "failed", message: errorMessage(e) })
       }
@@ -179,12 +207,14 @@
           />
           <div class="min-w-0 flex-1">
             {#if job.id}
-              <a href={`/recipes/${job.id}`} class="block text-[15px] font-bold hover:underline"
+              <a href={job.href} class="block text-[15px] font-bold hover:underline"
                 >{job.title}</a
               >
             {/if}
             <p class={["text-ink-muted truncate", job.id && "meta font-normal"]}>{job.url}</p>
-            {#if job.state === "duplicate"}<p class="meta">Already saved</p>{/if}
+            {#if job.state === "duplicate" && !job.href?.startsWith("/cookbooks/")}
+              <p class="meta">Already saved</p>
+            {/if}
             {#if job.message}<p class="text-error text-[13px]">{job.message}</p>{/if}
           </div>
         </li>
@@ -247,7 +277,7 @@
             <span class="truncate text-[15px] font-bold">{job.name}</span>
             {#if job.state === "done"}
               <span class="text-ink-muted ml-auto shrink-0">
-                {job.created.length} added{#if job.duplicates}, {job.duplicates} already saved{/if}
+                {job.created.length} added{#if job.duplicates}, {job.duplicates} already saved{/if}{#if job.skipped}, {job.skipped} skipped{/if}
               </span>
             {/if}
           </div>

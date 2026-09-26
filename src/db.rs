@@ -82,7 +82,8 @@ fn bootstrap_sql() -> String {
     name text NOT NULL,
     description text,
     color text,
-    created_at integer NOT NULL
+    created_at integer NOT NULL,
+    source_share_url text
   );
 
   CREATE TABLE IF NOT EXISTS cookbook_recipes (
@@ -256,6 +257,14 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
         .any(|c| c.name == "color")
     {
         conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN color text")?;
+    }
+    // The shared book (its link) a cookbook was saved from, so saving that link again adds to
+    // the same cookbook and never to one of the box's own that happens to share its name
+    if !columns(conn, "cookbooks")?
+        .iter()
+        .any(|c| c.name == "source_share_url")
+    {
+        conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN source_share_url text")?;
     }
     // Wee Chef's checks: what a fix wrote (for Undo), why a recipe was queued, and the
     // recipe's updated_at when a check last left it (so later edits are re-checked)

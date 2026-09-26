@@ -60,6 +60,7 @@ pub fn routes() -> Router<AppState> {
             routing::get(recipe_checks).post(check_recipe),
         )
         .route("/api/recipes/{id}/export", routing::get(export_recipe))
+        .route("/api/cookbooks/{id}/export", routing::get(export_cookbook))
         .route("/api/recipes/{id}/checks/undo", routing::post(undo_checks))
         .route(
             "/api/recipes/{id}/flags/{flag}/dismiss",
@@ -276,6 +277,36 @@ async fn export_recipe(
     Ok(res)
 }
 
+/// A cookbook as a file in the backup format (its recipes, in this book only), which
+/// another Crumb's Import reads back into a cookbook of the same name.
+async fn export_cookbook(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Response> {
+    let id = id_param(&id, "id")?;
+    let (body, name) = {
+        let conn = state.db.lock();
+        let book = recipes::require_cookbook(&conn, id)?;
+        let list = recipes::cookbook_recipes(&conn, id, None)?;
+        let doc = recipes::export_book(&book, &list, recipes::BookExport::Owner);
+        (
+            serde_json::to_string_pretty(&doc).map_err(AppError::internal)?,
+            book.name,
+        )
+    };
+    let mut res = body.into_response();
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if let Some(v) = attachment(&name, "json") {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    Ok(res)
+}
+
 // Multipart upload of export files (JTR PDFs, Paprika, JSON, HTML, text, zip)
 async fn import_files(
     State(state): State<AppState>,
@@ -353,7 +384,10 @@ async fn import_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<
             .as_str()
             .filter(|u| crate::model::is_valid_url(u))
             .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
-        recipes::import_from_url(&state, url).await?
+        match recipes::import_link(&state, url).await? {
+            recipes::Imported::Recipe(recipe, is_new) => (*recipe, is_new),
+            recipes::Imported::Book(book) => return Ok(Json(book_imported(&book))),
+        }
     } else if let Some(text) = body.get("text") {
         let text = text
             .as_str()
@@ -374,6 +408,25 @@ async fn import_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<
     Ok(Json(
         json!({"id": recipe.id, "title": recipe.title, "isNew": is_new}),
     ))
+}
+
+/// A shared cookbook saved from another Crumb, as the Add page shows it: "Added 12 recipes
+/// to Weeknight dinners", then the cookbook. `id`/`title`/`isNew` are the first new recipe
+/// (or the book), for callers that only know recipes.
+fn book_imported(book: &recipes::BookImport) -> Value {
+    let added = book.created.len();
+    json!({
+        "id": book.created.first().map_or(book.id, |r| r.id),
+        "title": book.name,
+        "isNew": added > 0,
+        "cookbook": {
+            "id": book.id,
+            "name": book.name,
+            "added": added,
+            "duplicates": book.duplicates,
+            "skipped": book.skipped,
+        },
+    })
 }
 
 /// A multipart error as the status axum gives it (413 past the body limit).

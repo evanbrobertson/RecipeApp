@@ -3,6 +3,7 @@
   import BookOpen from "@lucide/svelte/icons/book-open"
   import FileQuestion from "@lucide/svelte/icons/file-question"
   import Pencil from "@lucide/svelte/icons/pencil"
+  import Share from "@lucide/svelte/icons/share"
   import Trash2 from "@lucide/svelte/icons/trash-2"
   import X from "@lucide/svelte/icons/x"
   import BookColorPicker from "../components/BookColorPicker.svelte"
@@ -11,15 +12,20 @@
   import Menu, { type MenuItem } from "../components/Menu.svelte"
   import Modal from "../components/Modal.svelte"
   import RecipeCard from "../components/RecipeCard.svelte"
+  import ShareSheet from "../components/ShareSheet.svelte"
   import { api, errorMessage, pathId } from "../lib/api"
   import { autosize } from "../lib/autosize"
   import { bookColor, bookPalette } from "../lib/books"
   import { pageState } from "../lib/page.svelte"
-  import type { CookbookDetail } from "../lib/recipe"
+  import type { CookbookDetail, ShareLink } from "../lib/recipe"
   import { flash, toast } from "../lib/toast"
 
   const id = pathId()
-  const page = pageState<{ cookbook: CookbookDetail }>(async () => ({
+  const page = pageState<{
+    cookbook: CookbookDetail
+    /** Its share link, if it has one. */
+    share?: ShareLink | null
+  }>(async () => ({
     cookbook: await api<CookbookDetail>(`/api/cookbooks/${id}`),
   }))
   const cookbook = $derived(page.data?.cookbook)
@@ -30,6 +36,8 @@
   let editing = $state(false)
   let form = $state({ name: "", description: "", color: "tile" })
   let showDelete = $state(false)
+  // Share, send and download live in the share sheet; the ⋯ menu keeps the rest
+  let showShare = $state(false)
 
   function startEdit() {
     if (!cookbook) return
@@ -154,7 +162,19 @@
             </p>
           </div>
         </div>
-        <div class="flex-none pb-1.5"><Menu groups={menu} /></div>
+        <div class="flex flex-none gap-2 pb-1.5">
+          <button
+            type="button"
+            class="btn btn-outline btn-icon"
+            aria-label="Share"
+            title="Share"
+            aria-haspopup="dialog"
+            onclick={() => (showShare = true)}
+          >
+            <Share />
+          </button>
+          <Menu groups={menu} />
+        </div>
       </div>
       {#if cookbook.description}
         <p class="text-ink-muted mt-4 max-w-2xl">{cookbook.description}</p>
@@ -195,7 +215,17 @@
   {/if}
 {/if}
 
-<Modal bind:open={showDelete} title="Delete this cookbook?" description="Recipes in it are kept.">
+{#if page.data && cookbook}
+  <ShareSheet bind:open={showShare} {cookbook} bind:share={page.data.share} />
+{/if}
+
+<Modal
+  bind:open={showDelete}
+  title="Delete this cookbook?"
+  description={page.data?.share
+    ? "Recipes in it are kept. Its share link stops working."
+    : "Recipes in it are kept."}
+>
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (showDelete = false)}>Cancel</button>
     <button type="button" class="btn btn-danger" onclick={deleteCookbook}>Delete</button>

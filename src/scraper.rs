@@ -186,11 +186,16 @@ pub struct Scraped {
 }
 
 impl Scraped {
+    /// The recipe on the page. Another Crumb's shared cookbook has none of its own, only
+    /// its export: then the recipe is empty (no title) and `crumb` says where to look.
     fn from_page(html: &str, url: &str) -> Option<Self> {
-        Some(Self {
-            recipe: parse_recipe_html(html, url)?,
-            crumb: crumb_alternate(html, url),
-        })
+        let crumb = crumb_alternate(html, url);
+        let recipe = match parse_recipe_html(html, url) {
+            Some(recipe) => recipe,
+            None if crumb.is_some() => RecipeFields::default(),
+            None => return None,
+        };
+        Some(Self { recipe, crumb })
     }
 }
 
@@ -296,7 +301,11 @@ where
 
 /// Scrapes a recipe page (see [`scrape_with`] for the order it tries).
 pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeFields> {
-    Ok(scrape_page(state, url).await?.recipe)
+    let recipe = scrape_page(state, url).await?.recipe;
+    if recipe.title.trim().is_empty() {
+        return Err(AppError::new(422, "Couldn't find a recipe on that page."));
+    }
+    Ok(recipe)
 }
 
 /// [`scrape_recipe`], also saying whether the page offers a Crumb export.

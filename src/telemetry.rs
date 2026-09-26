@@ -57,9 +57,11 @@ pub fn scrub_text(s: &str) -> String {
     }
 }
 
-/// A path with any share token hidden: `/s/{token}/og.jpg` → `/s/[token]/og.jpg`. The
-/// token is the share, so it never goes into a span, an event or a log line. `/api/shares/…`
-/// is hidden too, though nothing routes there now (the API names shares by recipe id).
+/// A path with any share token hidden: `/s/{token}/og.jpg` → `/s/[token]/og.jpg`, and
+/// `/s/{token}/{recipeId}/img/320` → `/s/[token]/{recipeId}/img/320` (a shared cookbook's
+/// recipe). The token is the share, so it never goes into a span, an event or a log line.
+/// `/api/shares/…` is hidden too, though nothing routes there (the API names shares by
+/// recipe or cookbook id, and `/api/shares` itself only lists them).
 pub fn redact_path(path: &str) -> std::borrow::Cow<'_, str> {
     static SHARE: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"(^|/)(s|shares)/[^/?#\s]+").unwrap());
@@ -537,6 +539,20 @@ mod tests {
         assert_eq!(redact_path("/s/tok"), "/s/[token]");
         assert_eq!(redact_path("/api/shares/tok"), "/api/shares/[token]");
         assert_eq!(redact_path("/api/recipes/1/share"), "/api/recipes/1/share");
+        // A shared cookbook's recipes keep their id, never the token
+        assert_eq!(
+            redact_path("/s/AbC-123_xyzAbC-123_xyz/42/img/320"),
+            "/s/[token]/42/img/320"
+        );
+        assert_eq!(
+            redact_path("/s/tok/42/crumb.json"),
+            "/s/[token]/42/crumb.json"
+        );
+        assert_eq!(redact_path("/api/shares"), "/api/shares");
+        assert_eq!(
+            redact_path("/api/cookbooks/3/share"),
+            "/api/cookbooks/3/share"
+        );
         assert_eq!(redact_path("/sx/tok"), "/sx/tok");
         assert_eq!(redact_path("/recipes/1"), "/recipes/1");
         assert_eq!(

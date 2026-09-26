@@ -284,11 +284,15 @@ async fn cookbook(State(state): State<AppState>, Path(id): Path<String>, req: Re
     let Some(id) = numeric(&id) else {
         return static_files(State(state), req).await;
     };
+    let origin = state.config.public_origin(req.headers());
     let data = (|| {
         let conn = state.db.lock();
         Ok(json!({
             "cookbook": recipes::to_value(&recipes::get_cookbook(&conn, id)?),
             "recipes": recipes::to_value(&recipes::list_recipes(&conn, None, None, None)?),
+            // The share sheet's link, if there is one
+            "share": crate::share::for_cookbook(&conn, id)?
+                .map(|s| crate::share::to_json(&s, &origin)),
         }))
     })();
     page(&state, "shell/cookbook/index.html", data)
@@ -300,7 +304,15 @@ async fn connector_page(
     req: Request,
 ) -> Response {
     let name = req.uri().path().trim_matches('/').to_string();
-    let data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    let mut data = json!({"connector": crate::api::connector_info(&state, &headers)});
+    // More lists the share links that are live
+    if name == "more" {
+        let origin = state.config.public_origin(&headers);
+        match crate::share::list(&state.db.lock(), &origin) {
+            Ok(shares) => data["shares"] = json!(shares),
+            Err(err) => tracing::warn!("[share] couldn't list shares: {err}"),
+        }
+    }
     render(&state, &format!("{name}/index.html"), data)
 }
 

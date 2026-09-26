@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * Share, send and download one recipe: its share link (made on request, with the notes
-   * on or off, stopped for good with "Stop sharing"), plain text, email, print, and files.
+   * Share, send and download one recipe or one cookbook: its share link (made on request,
+   * with the notes on or off, stopped for good with "Stop sharing"), plain text, email, print
+   * (recipes), and files. A cookbook's link is live: recipes added later show up on it.
    */
   import Copy from "@lucide/svelte/icons/copy"
   import FileBraces from "@lucide/svelte/icons/file-braces"
@@ -12,17 +13,29 @@
   import Share from "@lucide/svelte/icons/share"
   import Modal from "./Modal.svelte"
   import { api, errorMessage } from "../lib/api"
-  import { recipeToText } from "../lib/format"
-  import type { Recipe, ShareLink } from "../lib/recipe"
+  import { bookToText, recipeToText } from "../lib/format"
+  import type { CookbookDetail, Recipe, ShareLink } from "../lib/recipe"
   import { toast } from "../lib/toast"
 
   interface Props {
     open: boolean
-    recipe: Recipe
+    /** What's shared: a recipe, or else a cookbook. */
+    recipe?: Recipe
+    cookbook?: CookbookDetail
     /** Null (or missing) until a link is made. */
     share?: ShareLink | null
   }
-  let { open = $bindable(), recipe, share = $bindable() }: Props = $props()
+  let { open = $bindable(), recipe, cookbook, share = $bindable() }: Props = $props()
+
+  const book = $derived(!recipe)
+  const title = $derived(recipe?.title ?? cookbook?.name ?? "")
+  const endpoint = $derived(
+    recipe ? `/api/recipes/${recipe.id}/share` : `/api/cookbooks/${cookbook?.id}/share`,
+  )
+  const notesHint = $derived.by(() => {
+    if (recipe) return recipe.notes ? "Shown on the shared page" : "This recipe has no notes yet"
+    return "Shown on each recipe's page"
+  })
 
   const canShare = "share" in navigator
   let busy = $state(false)
@@ -34,7 +47,7 @@
   async function create() {
     busy = true
     try {
-      share = await api<ShareLink>(`/api/recipes/${recipe.id}/share`, { method: "POST" })
+      share = await api<ShareLink>(endpoint, { method: "POST" })
     } catch (e) {
       toast({ title: "Couldn't make a link", description: errorMessage(e), tone: "error" })
     } finally {
@@ -53,7 +66,7 @@
 
   function shareNative() {
     if (!share) return
-    void navigator.share({ title: recipe.title, url: share.url }).catch(() => {})
+    void navigator.share({ title, url: share.url }).catch(() => {})
   }
 
   async function setNotes(include: boolean) {
@@ -61,7 +74,7 @@
     const before = share
     share = { ...share, includeNotes: include }
     try {
-      share = await api<ShareLink>(`/api/recipes/${recipe.id}/share`, {
+      share = await api<ShareLink>(endpoint, {
         method: "PATCH",
         body: { includeNotes: include },
       })
@@ -74,7 +87,7 @@
   async function stop() {
     busy = true
     try {
-      await api(`/api/recipes/${recipe.id}/share`, { method: "DELETE" })
+      await api(endpoint, { method: "DELETE" })
       share = null
       confirmStop = false
       toast({ title: "Stopped sharing", description: "The link no longer works." })
@@ -93,9 +106,15 @@
 
   const mailto = $derived(
     share
-      ? `mailto:?subject=${encodeURIComponent(recipe.title)}&body=${encodeURIComponent(share.url)}`
+      ? `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(share.url)}`
       : "",
   )
+
+  function copyText() {
+    if (recipe) return copy(recipeToText(recipe, share?.url), "Recipe copied")
+    const titles = cookbook?.recipes.map((r) => r.title) ?? []
+    return copy(bookToText(title, titles, share?.url), "Cookbook copied")
+  }
 </script>
 
 <Modal bind:open title="Share" sheet>
@@ -104,8 +123,13 @@
       <h3 id="share-link-title" class="group-title">Share a link</h3>
       {#if !share}
         <p class="text-ink-muted text-[15px]">
-          Anyone with the link can see this recipe, not the rest of your box.
+          {book
+            ? "Anyone with the link sees this book and every recipe in it, including ones you add later."
+            : "Anyone with the link can see this recipe, not the rest of your box."}
         </p>
+        {#if book}
+          <p class="meta mt-1">Links to single recipes in this book open the whole book.</p>
+        {/if}
         <button type="button" class="btn btn-soft mt-3" disabled={busy} onclick={create}>
           <Link /> Create link
         </button>
@@ -118,6 +142,9 @@
           value={share.url}
           onfocus={(e) => e.currentTarget.select()}
         />
+        {#if book}
+          <p class="meta mt-2">Links to single recipes in this book open the whole book.</p>
+        {/if}
         <div class="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
@@ -141,9 +168,7 @@
         >
           <span>
             <span class="block font-bold">Include my notes</span>
-            <span class="text-ink-muted block text-sm">
-              {recipe.notes ? "Shown on the shared page" : "This recipe has no notes yet"}
-            </span>
+            <span class="text-ink-muted block text-sm">{notesHint}</span>
           </span>
           <span class={["switch", share.includeNotes && "on"]} aria-hidden="true"></span>
         </button>
@@ -180,7 +205,7 @@
         <button
           type="button"
           class="list-row settings-row w-full text-left"
-          onclick={() => copy(recipeToText(recipe, share?.url), "Recipe copied")}
+          onclick={copyText}
         >
           <Copy class="settings-icon" />
           <span class="min-w-0 flex-1 font-bold">Copy as text</span>
@@ -191,35 +216,41 @@
             <span class="min-w-0 flex-1 font-bold">Email</span>
           </a>
         {/if}
-        <button type="button" class="list-row settings-row w-full text-left" onclick={print}>
-          <Printer class="settings-icon" />
-          <span class="min-w-0 flex-1 font-bold">Print or save as PDF</span>
-        </button>
+        {#if recipe}
+          <button type="button" class="list-row settings-row w-full text-left" onclick={print}>
+            <Printer class="settings-icon" />
+            <span class="min-w-0 flex-1 font-bold">Print or save as PDF</span>
+          </button>
+        {/if}
       </div>
     </section>
 
     <section aria-labelledby="share-download-title">
       <h3 id="share-download-title" class="group-title">Download</h3>
       <div class="list-card">
-        <!-- Plain download links: the server names the file after the recipe -->
+        <!-- Plain download links: the server names the file after the recipe or book -->
         <a
           class="list-row settings-row"
-          href={`/api/recipes/${recipe.id}/export?format=json`}
+          href={recipe
+            ? `/api/recipes/${recipe.id}/export?format=json`
+            : `/api/cookbooks/${cookbook?.id}/export`}
           download
           data-no-prerender
         >
           <FileBraces class="settings-icon" />
           <span class="min-w-0 flex-1 font-bold">For another Crumb (.json)</span>
         </a>
-        <a
-          class="list-row settings-row"
-          href={`/api/recipes/${recipe.id}/export?format=md`}
-          download
-          data-no-prerender
-        >
-          <FileText class="settings-icon" />
-          <span class="min-w-0 flex-1 font-bold">Markdown (.md)</span>
-        </a>
+        {#if recipe}
+          <a
+            class="list-row settings-row"
+            href={`/api/recipes/${recipe.id}/export?format=md`}
+            download
+            data-no-prerender
+          >
+            <FileText class="settings-icon" />
+            <span class="min-w-0 flex-1 font-bold">Markdown (.md)</span>
+          </a>
+        {/if}
       </div>
     </section>
   </div>

@@ -1,26 +1,74 @@
 <script lang="ts">
+  import BookOpen from "@lucide/svelte/icons/book-open"
   import Check from "@lucide/svelte/icons/check"
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
   import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import ChefHat from "@lucide/svelte/icons/chef-hat"
+  import Copy from "@lucide/svelte/icons/copy"
+  import CookingPot from "@lucide/svelte/icons/cooking-pot"
   import Globe from "@lucide/svelte/icons/globe"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import LocateFixed from "@lucide/svelte/icons/locate-fixed"
+  import LinkOff from "@lucide/svelte/icons/unlink"
   import LogOut from "@lucide/svelte/icons/log-out"
   import MonitorSmartphone from "@lucide/svelte/icons/monitor-smartphone"
   import Moon from "@lucide/svelte/icons/moon"
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
-  import { api } from "../lib/api"
+  import { api, errorMessage } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
-  import type { ConnectorInfo } from "../lib/recipe"
+  import type { ConnectorInfo, SharedLink } from "../lib/recipe"
   import type { ThemeMode } from "../lib/theme"
   import { toast } from "../lib/toast"
 
-  const page = pageState<{ connector: ConnectorInfo }>(async () => ({
+  const page = pageState<{ connector: ConnectorInfo; shares?: SharedLink[] }>(async () => ({
     connector: await api<ConnectorInfo>("/api/connector"),
+    shares: await api<SharedLink[]>("/api/shares").catch(() => []),
   }))
   const info = $derived(page.data?.connector)
+
+  // ─── Shared links: every live one, with Copy and Stop sharing ───
+  let shares = $state<SharedLink[] | undefined>(page.data?.shares)
+  $effect(() => {
+    if (!shares && page.data?.shares) shares = page.data.shares
+  })
+  /** The row asking "Stop sharing?", by its link. */
+  let confirming = $state<string | null>(null)
+  let stopping = $state(false)
+
+  const day = (iso: string) =>
+    new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })
+
+  function shareMeta(s: SharedLink) {
+    const parts = [s.kind === "cookbook" ? "Cookbook" : "Recipe", `shared ${day(s.createdAt)}`]
+    parts.push(s.lastOpenedAt ? `last opened ${day(s.lastOpenedAt)}` : "not opened yet")
+    return parts.join(" · ")
+  }
+
+  async function copyLink(s: SharedLink) {
+    try {
+      await navigator.clipboard.writeText(s.url)
+      toast({ title: "Link copied" })
+    } catch {
+      toast({ title: "Couldn't copy", tone: "error" })
+    }
+  }
+
+  async function stopSharing(s: SharedLink) {
+    stopping = true
+    try {
+      // By the recipe's or cookbook's id: the token never goes into a request URL
+      const path = s.kind === "cookbook" ? "cookbooks" : "recipes"
+      await api(`/api/${path}/${s.id}/share`, { method: "DELETE" })
+      shares = shares?.filter((x) => x.url !== s.url)
+      confirming = null
+      toast({ title: "Stopped sharing", description: "The link no longer works." })
+    } catch (e) {
+      toast({ title: "Couldn't stop sharing", description: errorMessage(e), tone: "error" })
+    } finally {
+      stopping = false
+    }
+  }
 
   // ─── Theme (the logic lives in lib/theme-boot.js, inlined in the head) ───
   const theme = window.crumbTheme
@@ -207,6 +255,64 @@
     {/if}
   </div>
 </section>
+
+{#if shares?.length}
+  <section>
+    <h2 class="settings-heading" id="shares-title">Shared links</h2>
+    <ul class="list-card" aria-labelledby="shares-title">
+      {#each shares as s (s.url)}
+        {@const Kind = s.kind === "cookbook" ? BookOpen : CookingPot}
+        <li class="list-row settings-row flex-wrap">
+          <Kind class="settings-icon" />
+          <span class="min-w-0 flex-1">
+            <a
+              class="block truncate font-bold hover:underline"
+              href={s.kind === "cookbook" ? `/cookbooks/${s.id}` : `/recipes/${s.id}`}>{s.title}</a
+            >
+            <span class="text-ink-muted block text-sm">{shareMeta(s)}</span>
+          </span>
+          {#if confirming === s.url}
+            <span class="flex w-full flex-wrap items-center justify-end gap-2 pl-[2.125rem]">
+              <span class="text-ink-muted mr-auto text-sm">The link stops working for everyone.</span>
+              <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+                Keep
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                disabled={stopping}
+                onclick={() => stopSharing(s)}
+              >
+                Stop sharing
+              </button>
+            </span>
+          {:else}
+            <span class="flex flex-none gap-1">
+              <button
+                type="button"
+                class="btn btn-ghost btn-icon"
+                aria-label={`Copy the link to ${s.title}`}
+                title="Copy link"
+                onclick={() => copyLink(s)}
+              >
+                <Copy />
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-icon"
+                aria-label={`Stop sharing ${s.title}`}
+                title="Stop sharing"
+                onclick={() => (confirming = s.url)}
+              >
+                <LinkOff />
+              </button>
+            </span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
 
 {#if info}
   <section>
