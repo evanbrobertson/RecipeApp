@@ -6,14 +6,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -34,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -55,6 +59,7 @@ import app.crumb.android.timers.TimerDock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import app.crumb.android.ui.home.HomeScreen
+import app.crumb.android.ui.suggestions.ReviewCount
 import app.crumb.android.ui.suggestions.SuggestionsScreen
 import com.composables.icons.lucide.BookOpenText
 import com.composables.icons.lucide.Ellipsis
@@ -71,6 +76,7 @@ import app.crumb.android.ui.recipe.RecipeScreen
 import app.crumb.android.ui.recipes.RecipesScreen
 import app.crumb.android.ui.signin.SignInScreen
 import app.crumb.android.ui.theme.Crumb
+import app.crumb.android.ui.theme.NunitoSans
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -236,6 +242,15 @@ private fun rememberSelectedTab(nav: NavHostController): Tab? {
 private fun TabBar(nav: NavHostController) {
     val colors = Crumb.colors
     val selected = rememberSelectedTab(nav)
+    val container = AppContainerProvider
+    val scope = rememberCoroutineScope()
+    val reviewCount by ReviewCount.count.collectAsStateWithLifecycle()
+    // The web sets the badge from the page's Server-Timing hint on every load; here it's
+    // refreshed when the app starts and whenever it comes back to the front.
+    LifecycleResumeEffect(Unit) {
+        scope.launch { ReviewCount.refresh(container.api) }
+        onPauseOrDispose {}
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -247,6 +262,7 @@ private fun TabBar(nav: NavHostController) {
         Tabs.forEach { tab ->
             val active = tab == selected
             val tint = if (active) colors.butter else colors.navInk
+            val badge = if (tab.route == SuggestionsRoute) ReviewCount.label(reviewCount) else null
             Column(
                 Modifier
                     .weight(1f)
@@ -257,7 +273,12 @@ private fun TabBar(nav: NavHostController) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Icon(tab.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                Box {
+                    Icon(tab.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                    if (badge != null) {
+                        ReviewBadge(badge, Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-4).dp))
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     tab.label,
@@ -268,6 +289,30 @@ private fun TabBar(nav: NavHostController) {
                 )
             }
         }
+    }
+}
+
+/** The web's `.review-badge`: a butter pill at the icon's top-right, "99+" past 99. */
+@Composable
+private fun ReviewBadge(text: String, modifier: Modifier = Modifier) {
+    val c = Crumb.colors
+    Box(
+        modifier
+            .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
+            .clip(RoundedCornerShape(50))
+            .background(c.butter)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            color = c.onButter,
+            fontFamily = NunitoSans,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+        )
     }
 }
 
