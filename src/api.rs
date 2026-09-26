@@ -70,7 +70,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/checks/review", routing::get(checks_review))
         .route(
             "/api/recipes/{id}/cooked",
-            routing::post(recipe_cooked).delete(undo_cooked),
+            routing::get(cook_stats)
+                .post(recipe_cooked)
+                .delete(undo_cooked),
         )
         .route(
             "/api/cookbooks",
@@ -602,6 +604,16 @@ async fn recipe_viewed(
     let id = id_param(&id, "id")?;
     recipes::log_event(&state.db.lock(), id, EventKind::Viewed, now_secs())?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn cook_stats(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let conn = state.db.lock();
+    recipes::get_recipe(&conn, id)?.ok_or_else(|| AppError::not_found("Recipe not found"))?;
+    Ok(Json(recipes::to_value(&recipes::cook_stats(&conn, id)?)))
 }
 
 async fn recipe_cooked(

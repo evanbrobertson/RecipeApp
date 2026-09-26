@@ -875,6 +875,13 @@ async fn cook_log_and_views() {
 
     let (_, _, html) = t.send(get(&format!("/recipes/{id}"))).await;
     assert!(html.contains(r#""cookStats":{"count":1"#), "{html}");
+    let (status, stats) = t
+        .json("GET", &format!("/api/recipes/{id}/cooked"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["count"], 1);
+    let (status, _) = t.json("GET", "/api/recipes/999/cooked", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (_, stats) = t
         .json("DELETE", &format!("/api/recipes/{id}/cooked"), None)
