@@ -324,7 +324,7 @@ impl Ctx<'_> {
             "save_recipe" => {
                 let fields = match RecipeFields::from_json(args) {
                     Ok(f) => f.file_category(),
-                    Err(err) => return Some(invalid(&err.message)),
+                    Err(err) => return Some(invalid(&err.0)),
                 };
                 match recipes::create_recipe(&db.lock(), fields, "claude") {
                     Ok((r, is_new)) => self.saved(&r, is_new),
@@ -371,7 +371,7 @@ impl Ctx<'_> {
                 };
                 let patch = match RecipePatch::from_json(&Value::Object(patch_input)) {
                     Ok(p) => p.file_category(stored.as_deref()),
-                    Err(err) => return Some(invalid(&err.message)),
+                    Err(err) => return Some(invalid(&err.0)),
                 };
                 match recipes::update_recipe(&conn, id, patch) {
                     Ok(r) => text(format!(
@@ -532,7 +532,7 @@ impl Ctx<'_> {
                     {
                         None => None,
                         Some(Ok(n)) => Some(n),
-                        Some(Err(e)) => return Ok(validation(e)),
+                        Some(Err(e)) => return Ok(validation(e.into())),
                     };
                     if let Some(n) = &name
                         && let Some(other) = books
@@ -548,12 +548,12 @@ impl Ctx<'_> {
                     let description = match a.get("description").map(cookbook_description) {
                         None => None,
                         Some(Ok(d)) => Some(d),
-                        Some(Err(e)) => return Ok(validation(e)),
+                        Some(Err(e)) => return Ok(validation(e.into())),
                     };
                     let color = match a.get("color").map(cookbook_color) {
                         None => None,
                         Some(Ok(c)) => Some(c),
-                        Some(Err(e)) => return Ok(validation(e)),
+                        Some(Err(e)) => return Ok(validation(e.into())),
                     };
                     if name.is_none() && description.is_none() && color.is_none() {
                         return Ok(invalid("pass at least one of name, description or color"));

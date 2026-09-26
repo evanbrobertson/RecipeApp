@@ -211,7 +211,7 @@ pub fn parse_minutes(s: &str) -> Option<u32> {
     if s.is_empty() {
         return None;
     }
-    let total = if let Some(m) = crate::scraper::iso_duration_minutes(s) {
+    let total = if let Some(m) = crate::duration::iso_duration_minutes(s) {
         m
     } else if let Ok(bare) = s.parse::<f64>() {
         bare

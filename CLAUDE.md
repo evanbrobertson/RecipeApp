@@ -18,7 +18,10 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
-  for `stable` (Railway `production`). See `docs/RELEASING.md`; versions come from conventional commit messages
+  for `stable` (Railway `production`). The Linux desktop app (`desktop/linux`, Qt6/QML via cxx-qt, built in an
+  `archlinux:latest` container) rides the same version: each master push uploads a `crumb-desktop-linux-<version>`
+  tarball artifact, and Promote attaches the tarball, its `.sha256` and an AUR `PKGBUILD` to the GitHub Release.
+  See `docs/RELEASING.md`; versions come from conventional commit messages
 - **Errors/tracing:** Sentry, opt-in via `SENTRY_DSN` (`src/telemetry.rs`, `web/src/lib/sentry*.ts`)
 
 ## Commands
@@ -40,24 +43,23 @@ bun run format                   # oxfmt
 ## Project Structure
 
 ```
+crates/crumb-core/  # Pure logic shared by the server and the desktop app (model, fractions, categories, text_parser, markdown, suggest)
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
   config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
-  model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
   web.rs          # Static files + page-data injection for dynamic pages
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
-  suggest.rs      # Try next ranking + Surprise me (pure, unit-tested)
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
-  scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
+  scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock

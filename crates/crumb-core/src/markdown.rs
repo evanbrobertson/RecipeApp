@@ -52,7 +52,7 @@ pub fn recipe_to_markdown(r: &Recipe) -> String {
         out.extend(["".into(), "## Notes".into(), n.to_string()]);
     }
     // Where it came from, never a share link it was saved from (the file may be handed on)
-    if let Some(u) = crate::share::source_url(r) {
+    if let Some(u) = crate::source::source_url(r) {
         out.extend(["".into(), format!("Source: {u}")]);
     }
     out.join("\n")

@@ -161,3 +161,35 @@ jobs:
           docker run --rm -e RAILWAY_TOKEN "$RAILWAY_CLI" railway redeploy --from-source \
             --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --yes
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # The desktop executable rides the same version as the server but ships on its own: it is
+  # only built here (nothing is attached to a release yet) and it must never block or change
+  # deploy-dev, which does not depend on this job. See docs/RELEASING.md.
+  desktop-build:
+    name: Desktop release build
+    needs: version
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 45
+    steps:
+      # cxx-qt needs Qt 6.5+; see the desktop job in checks.yml
+      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: desktop-archlinux
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo build --release -p crumb-desktop-linux --locked
+      - env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: desktop/linux/packaging/build-tarball.sh "$VERSION" desktop-dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crumb-desktop-linux-${{ needs.version.outputs.version }}
+          path: |
+            desktop-dist/*.tar.gz
+            desktop-dist/*.tar.gz.sha256
+          retention-days: 30
+          if-no-files-found: error
