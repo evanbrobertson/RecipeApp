@@ -71,31 +71,53 @@ keyPassword=…
 
 In GitHub Actions, set the repository secrets `CRUMB_KEYSTORE_BASE64` (the `.jks`, base64),
 `CRUMB_KEYSTORE_PASSWORD`, `CRUMB_KEY_ALIAS` and `CRUMB_KEY_PASSWORD`. Keep the keystore
-safe: Android only installs updates signed with the same key. The version code is the
-workflow run number.
+safe: Android only installs updates signed with the same key. The version code comes from
+the release version (see docs/RELEASING.md), so a newer APK always installs over an older one.
 
 ## How it fits together
 
+The app is the web app's phone layout, screen for screen: Home, Recipes, Shelf, Review
+(Wee Chef suggestions) and More in the tab bar, and the recipe, cook mode, mise en place,
+editor, cookbook, import and Claude-connector screens behind them. Android 9 (API 28) and up.
+
 ```
 app/src/main/java/app/crumb/android/
-  CrumbApplication.kt   AppContainer: HTTP client, session, cache, repository, image loader
-  MainActivity.kt       Edge-to-edge Compose host; receives Share → Crumb text
+  CrumbApplication.kt   AppContainer: HTTP, session, cache, repository, importer, timers, stores
+  MainActivity.kt       Edge-to-edge Compose host; takes Share → Crumb text, photos and files
   data/
-    CrumbApi.kt         The server's REST API (src/api.rs), cookie auth, error messages
+    CrumbApi.kt         The whole REST API the web uses (src/api.rs, src/share.rs), cookie auth
+    Models.kt           The server's JSON shapes
     SessionStore.kt     Server address + session cookie, encrypted with an Android Keystore key
     RecipeCache.kt      Last copy of lists, recipes and cookbooks as JSON, one folder per server
     RecipeRepository.kt Server first, cache when offline
+    LocalState.kt       What the web keeps in browser storage: scale, cook step, prep progress,
+                        recently viewed, Surprise me's recent picks
+    Importer.kt         Links, text, photos and files in; Incoming.kt reads Share intents
+    PhotoImport.kt      Photos → JPEG ≤1568px → Wee Chef, or ML Kit on the phone when the
+                        server can't read photos (the web's tesseract.js path)
     Photos.kt           /img/{id}/{width}?v={fnv1a}, the same URLs as web/src/lib/img.ts
-    Durations.kt, ImportInput.kt
-  ui/                   One package per screen; theme/ holds the Green Tile tokens
+    Durations.kt        ISO times via crumb-core, shown the way the server writes them
+  timers/               Kitchen timers: exact alarms, countdown + ringing notifications,
+                        restored after a reboot; the in-app dock
+  ui/
+    components/         The web's shared classes as Compose: buttons, cards, rows, chips,
+                        modal, menu, input, toasts, tile surface, empty states
+    theme/              Green Tile tokens, fonts, light/dark/system/sunrise & sunset
+    books/              The 3D bookshelf and open book, ported from books.ts
+    …                   One package per screen
 ```
 
 - **Auth:** the same `crumb_session` cookie the website uses. The password is never stored.
   A 401 on any request returns to sign-in; the cache stays for when you sign back in.
 - **Theme:** colours, radii and fonts come from `web/src/styles/app.css` and
-  `web/src/assets/fonts` (converted to TTF). Butter is only the main action and the active tab.
+  `web/src/assets/fonts` (converted to TTF); icons are Lucide, like the web. "Sunrise &
+  sunset" (the default) runs the web's suncalc port on the phone's time zone or saved location.
 - **Photos:** Coil, through the server's resizer with the session cookie; falls back to the
-  original image URL like the web does.
+  original image URL, then the web's striped placeholder.
+- **Timers:** "Start 10 minutes timer" in cook mode sets an alarm-clock alarm, so it rings on
+  time in Doze and with the app closed, with a live countdown notification. Android 13+ asks to
+  post notifications the first time; if exact alarms aren't allowed, the app offers the
+  setting (they still ring, a little late). Timers come back after a reboot.
 - **Shared logic:** anything the web and desktop apps also compute comes from `crumb-core`
   through `app.crumb.core`, never a Kotlin rewrite.
 
@@ -103,10 +125,9 @@ app/src/main/java/app/crumb/android/
 
 1. ~~Sign in, recipe box with search, recipe, cook mode, cookbooks, Add with Share → Crumb,
    offline reading of what's been opened, CI~~
-2. Kitchen timers: AlarmManager exact alarms and notifications, surviving screen-off,
-   process death and reboot; start a timer from a cook step
-3. Save a recipe or cookbook for offline use, with its photos
-4. Photo import (camera / photo picker → `/api/recipes/import/photos`)
-5. `crumb-core` through UniFFI: ingredient scaling and mise en place in cook mode
-6. Editing, cookbook management, Wee Chef suggestions
-7. Play Store: signing key, listing, privacy policy
+2. ~~`crumb-core` through UniFFI~~
+3. Parity with the web's phone layout (in progress): kitchen timers, photo and file import and
+   Share → Crumb for them, the 3D shelf, Home, recipes with filters and select, the recipe page
+   with sharing and Wee Chef checks, cook mode, mise en place, the editor, suggestions, More
+4. Save a recipe or cookbook for offline use, with its photos
+5. Play Store: signing key, listing, privacy policy

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
-import androidx.compose.material.icons.outlined.Restaurant
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,6 +33,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.crumb.android.ui.theme.Crumb
 import coil3.compose.SubcomposeAsyncImage
+import com.composables.icons.lucide.CakeSlice
+import com.composables.icons.lucide.CookingPot
+import com.composables.icons.lucide.Croissant
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Salad
+import com.composables.icons.lucide.Sandwich
+import com.composables.icons.lucide.Soup
 
 val CardShape = RoundedCornerShape(16.dp)
 val ControlShape = RoundedCornerShape(12.dp)
@@ -116,18 +122,20 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 
 /**
  * A recipe photo, resized by the server. If that fails, the original [image] when it's a
- * web address (as the web app does), else a quiet tinted tile with a utensils mark.
+ * web address (as the web app does), else the striped stand-in with the recipe's utensil
+ * ([placeholderId] picks it, like Photo.svelte).
  */
 @Composable
-fun RecipePhoto(url: String?, image: String?, modifier: Modifier = Modifier, contentDescription: String? = null) {
+fun RecipePhoto(
+    url: String?,
+    image: String?,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    placeholderId: Long = 0,
+) {
     val original = image?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
-    val colors = Crumb.colors
-    val placeholder = @Composable {
-        Box(Modifier.fillMaxSize().background(colors.tint), contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.Restaurant, contentDescription = null, tint = colors.primary.copy(alpha = 0.5f))
-        }
-    }
-    Box(modifier.clip(ControlShape).background(colors.tint)) {
+    val placeholder = @Composable { PhotoPlaceholder(placeholderId) }
+    Box(modifier.clip(ControlShape).background(Crumb.colors.tint)) {
         if (url == null) {
             placeholder()
         } else {
@@ -151,6 +159,20 @@ fun RecipePhoto(url: String?, image: String?, modifier: Modifier = Modifier, con
                 },
             )
         }
+    }
+}
+
+/** The placeholder icons Photo.svelte picks from, by `recipe.id % length`. */
+private val PlaceholderIcons =
+    listOf(Lucide.CookingPot, Lucide.Soup, Lucide.Salad, Lucide.Croissant, Lucide.CakeSlice, Lucide.Sandwich)
+
+/** The web's striped `.photo-empty` with the recipe's utensil icon. */
+@Composable
+fun PhotoPlaceholder(id: Long, modifier: Modifier = Modifier) {
+    val c = Crumb.colors
+    val icon = PlaceholderIcons[(id % PlaceholderIcons.size).toInt()]
+    Box(modifier.fillMaxSize().photoEmpty(c.tint, c.paper), contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, tint = c.primary.copy(alpha = 0.7f), modifier = Modifier.size(40.dp))
     }
 }
 

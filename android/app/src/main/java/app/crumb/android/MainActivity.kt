@@ -11,13 +11,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.crumb.android.ui.theme.rememberDark
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import app.crumb.android.data.Incoming
 import app.crumb.android.ui.CrumbApp
 import app.crumb.android.ui.theme.CrumbTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
-    /** Text from Share → Crumb until the Add screen takes it. */
-    private val sharedText = MutableStateFlow<String?>(null)
+    /** What came in through Share → Crumb, until the Add screen takes it. */
+    private val shared = MutableStateFlow<Incoming?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -40,7 +41,7 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             CrumbTheme(dark = dark) {
-                CrumbApp(sharedText, onSharedUsed = { sharedText.value = null })
+                CrumbApp(shared, onSharedUsed = { shared.value = null })
             }
         }
     }
@@ -51,14 +52,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun receive(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: return
-        val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-        // Some apps put the page title in the subject and only the link in the text
-        sharedText.value = if (subject != null && subject !in text && !text.trim().startsWith("http")) {
-            "$subject\n\n$text"
-        } else {
-            text
-        }
+        Incoming.from(intent, contentResolver)?.let { shared.value = it }
     }
 }

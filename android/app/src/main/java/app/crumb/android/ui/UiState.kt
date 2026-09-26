@@ -29,6 +29,7 @@ sealed interface UiState<out T> {
 fun Throwable.friendlyMessage(): String = when (this) {
     is ApiException -> message
     is OfflineException -> "Can't reach your Crumb server. Check your connection and try again."
+    is IllegalStateException, is IllegalArgumentException -> message ?: "Something went wrong. Try again."
     else -> "Something went wrong. Try again."
 }
 

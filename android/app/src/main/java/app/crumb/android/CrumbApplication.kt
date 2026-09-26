@@ -2,6 +2,10 @@ package app.crumb.android
 
 import android.app.Application
 import app.crumb.android.data.CrumbApi
+import app.crumb.android.data.Importer
+import app.crumb.android.data.LocalStore
+import app.crumb.android.data.PhotoImport
+import app.crumb.android.timers.KitchenTimers
 import app.crumb.android.data.RecipeCache
 import app.crumb.android.data.RecipeRepository
 import app.crumb.android.data.SessionStore
@@ -21,10 +25,12 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /** Everything the screens share, built once per process. */
-class AppContainer(app: Application) {
+class AppContainer(app: Application, scope: CoroutineScope) {
     val session = SessionStore(app)
     val cache = RecipeCache(File(app.filesDir, "recipes"))
     val theme = ThemeStore(app)
+    val local = LocalStore(app, scope)
+    val timers = KitchenTimers(app, scope)
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -34,6 +40,7 @@ class AppContainer(app: Application) {
 
     val api = CrumbApi(http) { session.current }
     val recipes = RecipeRepository(api, cache)
+    val importer = Importer(api, PhotoImport(app, api), app.contentResolver)
 
     /** Photos come from the signed-in server, so they carry the session cookie too. */
     val photoHttp: OkHttpClient = http.newBuilder()
@@ -61,11 +68,15 @@ class CrumbApplication : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
         private set
 
-    private val scope = CoroutineScope(SupervisorJob())
+    /** Lives as long as the process: saving state, receivers' work. */
+    val scope = CoroutineScope(SupervisorJob())
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this)
+        container = AppContainer(this, scope)
+        scope.launch { container.local.load() }
+        scope.launch { container.timers.load() }
+        KitchenTimers.createChannels(this)
         scope.launch {
             container.session.load()
             container.cache.useServer(container.session.current?.server?.toString())

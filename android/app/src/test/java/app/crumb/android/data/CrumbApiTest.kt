@@ -1,6 +1,8 @@
 package app.crumb.android.data
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
@@ -164,7 +166,12 @@ class CrumbApiTest {
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/crumb/api/recipes", request.url.encodedPath)
-        assertEquals("""{"title":"Soup","totalTime":"PT30M","ingredients":[{"items":["stock"]}]}""", request.body?.utf8())
+        val body = CrumbJson.parseToJsonElement(request.body!!.utf8()).jsonObject
+        assertEquals("\"Soup\"", body["title"].toString())
+        assertEquals("\"PT30M\"", body["totalTime"].toString())
+        // Empty fields go as explicit nulls: the server reads a missing field as "leave it"
+        assertEquals(JsonNull, body["description"])
+        assertEquals(JsonNull, body["image"])
     }
 
     @Test

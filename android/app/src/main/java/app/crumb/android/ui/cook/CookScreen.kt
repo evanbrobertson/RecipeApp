@@ -42,6 +42,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.crumb.android.timers.rememberTimerStarter
+import app.crumb.android.ui.components.Btn
+import app.crumb.android.ui.components.BtnSize
+import app.crumb.android.ui.components.BtnStyle
+import app.crumb.core.findTimers
+import com.composables.icons.lucide.AlarmClock
+import com.composables.icons.lucide.Lucide
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -94,6 +101,7 @@ fun CookScreen(id: Long, onClose: () -> Unit) {
 private fun CookContent(recipe: Recipe, onClose: () -> Unit) {
     val colors = Crumb.colors
     val steps = remember(recipe) { cookSteps(recipe) }
+    val startTimer = rememberTimerStarter()
     val container = AppContainerProvider
     // Page = steps.size is the "all done" page
     var savedPage by rememberSaveable(recipe.id) { mutableStateOf(0) }
@@ -143,6 +151,15 @@ private fun CookContent(recipe: Recipe, onClose: () -> Unit) {
                                 color = colors.primary,
                             )
                             Text(step.text, style = MaterialTheme.typography.headlineSmall.copy(lineHeight = MaterialTheme.typography.headlineSmall.lineHeight))
+                            // One button per duration in the step ("Bake for 25 minutes")
+                            findTimers(step.text).forEach { t ->
+                                Btn(
+                                    "Start ${t.label} timer",
+                                    { startTimer("Step ${page + 1}: ${t.label}", t.seconds.toInt()) },
+                                    style = BtnStyle.Tile, size = BtnSize.Lg, icon = Lucide.AlarmClock,
+                                    modifier = Modifier.padding(top = 16.dp),
+                                )
+                            }
                         } else {
                             Text("All done", style = MaterialTheme.typography.headlineLarge)
                             Text("Enjoy it. Want to note that you cooked this?", style = MaterialTheme.typography.bodyLarge, color = colors.inkMuted)

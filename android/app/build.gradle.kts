@@ -73,7 +73,7 @@ val cargoAndroid = tasks.register<Exec>("cargoBuildCoreAndroid") {
     environment("ANDROID_NDK_HOME", ndkDir.get())
     commandLine(
         listOf("cargo", "ndk") + crumbAbis.flatMap { listOf("-t", it) } +
-            listOf("--platform", "26", "-o", out.path, "build", "--release", "-p", "crumb-ffi", "--lib"),
+            listOf("--platform", "28", "-o", out.path, "build", "--release", "-p", "crumb-ffi", "--lib"),
     )
 }
 
@@ -98,7 +98,7 @@ android {
 
     defaultConfig {
         applicationId = "app.crumb.android"
-        minSdk = 26
+        minSdk = 28
         targetSdk = 36
         val version = providers.environmentVariable("CRUMB_VERSION_NAME").orNull ?: "0.1.0"
         versionName = version
@@ -186,6 +186,8 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
     implementation(libs.lucide)
+    // Reads recipe photos on the phone when the server's Wee Chef can't (like the web's tesseract.js)
+    implementation(libs.mlkit.text)
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
