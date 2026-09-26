@@ -1,29 +1,25 @@
 //! Crumb: a private recipe box. Paste a link, keep just the recipe.
 
+pub use crumb_core::{categories, fractions, markdown, model, suggest, text_parser};
+
 pub mod api;
 pub mod auth;
 pub mod browser;
-pub mod categories;
 pub mod checks;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod fractions;
 pub mod images;
 pub mod importers;
 pub mod llm;
-pub mod markdown;
 pub mod mcp;
-pub mod model;
 pub mod oauth;
 pub mod photos;
 pub mod recipes;
 pub mod scraper;
 pub mod share;
-pub mod suggest;
 pub mod suggestions;
 pub mod telemetry;
-pub mod text_parser;
 pub mod web;
 
 use std::sync::Arc;

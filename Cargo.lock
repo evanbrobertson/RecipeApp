@@ -509,6 +509,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "crumb-core",
  "flate2",
  "futures-util",
  "hmac",
@@ -539,6 +540,18 @@ dependencies = [
  "wreq",
  "wreq-util",
  "zip",
+]
+
+[[package]]
+name = "crumb-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.8",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

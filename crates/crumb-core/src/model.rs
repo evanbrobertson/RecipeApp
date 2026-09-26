@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use crate::error::{AppError, AppResult};
+use crate::error::{ValidationError, ValidationResult};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Section {
@@ -215,15 +215,15 @@ fn type_name(v: &Value) -> &'static str {
     }
 }
 
-fn expected(field: &str, what: &str, got: &Value) -> AppError {
-    AppError::bad_request(format!(
+fn expected(field: &str, what: &str, got: &Value) -> ValidationError {
+    ValidationError(format!(
         "{field}: Invalid input: expected {what}, received {}",
         type_name(got)
     ))
 }
 
 /// A present key: `Ok(None)` for null, `Ok(Some(trimmed))` for strings.
-fn nullable_text(field: &str, v: &Value) -> AppResult<Option<String>> {
+fn nullable_text(field: &str, v: &Value) -> ValidationResult<Option<String>> {
     match v {
         Value::Null => Ok(None),
         Value::String(s) => Ok(Some(s.trim().to_string())),
@@ -239,32 +239,32 @@ pub fn is_valid_url(value: &str) -> bool {
         .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
 }
 
-fn nullable_url(field: &str, v: &Value) -> AppResult<Option<String>> {
+fn nullable_url(field: &str, v: &Value) -> ValidationResult<Option<String>> {
     match v {
         Value::Null => Ok(None),
         Value::String(s) if is_valid_url(s) => Ok(Some(s.clone())),
-        Value::String(_) => Err(AppError::bad_request(format!("{field}: Invalid URL"))),
+        Value::String(_) => Err(ValidationError(format!("{field}: Invalid URL"))),
         other => Err(expected(field, "string", other)),
     }
 }
 
-fn title(v: &Value) -> AppResult<String> {
+fn title(v: &Value) -> ValidationResult<String> {
     let Value::String(s) = v else {
         return Err(expected("title", "string", v));
     };
     let t = s.trim();
     if t.is_empty() {
-        return Err(AppError::bad_request("title: Title is required"));
+        return Err(ValidationError("title: Title is required".into()));
     }
     if t.chars().count() > 300 {
-        return Err(AppError::bad_request(
-            "title: Title is too long (300 characters max)",
+        return Err(ValidationError(
+            "title: Title is too long (300 characters max)".into(),
         ));
     }
     Ok(t.to_string())
 }
 
-pub fn parse_sections(field: &str, v: &Value) -> AppResult<Vec<Section>> {
+pub fn parse_sections(field: &str, v: &Value) -> ValidationResult<Vec<Section>> {
     let Value::Array(list) = v else {
         return Err(expected(field, "array", v));
     };
@@ -285,7 +285,7 @@ pub fn parse_sections(field: &str, v: &Value) -> AppResult<Vec<Section>> {
                         Value::String(s) => Ok(s.clone()),
                         other => Err(expected(&format!("{field}.items"), "string", other)),
                     })
-                    .collect::<AppResult<Vec<_>>>()?,
+                    .collect::<ValidationResult<Vec<_>>>()?,
                 Some(other) => return Err(expected(&format!("{field}.items"), "array", other)),
                 None => return Err(expected(&format!("{field}.items"), "array", &Value::Null)),
             };
@@ -294,7 +294,7 @@ pub fn parse_sections(field: &str, v: &Value) -> AppResult<Vec<Section>> {
         .collect()
 }
 
-fn nutrition(v: &Value) -> AppResult<Option<Nutrition>> {
+fn nutrition(v: &Value) -> ValidationResult<Option<Nutrition>> {
     match v {
         Value::Null => Ok(None),
         Value::Object(o) => {
@@ -309,14 +309,14 @@ fn nutrition(v: &Value) -> AppResult<Option<Nutrition>> {
     }
 }
 
-fn object(v: &Value) -> AppResult<&Map<String, Value>> {
+fn object(v: &Value) -> ValidationResult<&Map<String, Value>> {
     v.as_object()
-        .ok_or_else(|| AppError::bad_request("Invalid input: expected object"))
+        .ok_or_else(|| ValidationError("Invalid input: expected object".into()))
 }
 
 impl RecipePatch {
     /// Parses a partial update (zod `recipePatchSchema`); unknown keys are ignored.
-    pub fn from_json(v: &Value) -> AppResult<Self> {
+    pub fn from_json(v: &Value) -> ValidationResult<Self> {
         let o = object(v)?;
         let mut p = RecipePatch::default();
         let text = |key: &str| o.get(key).map(|v| nullable_text(key, v)).transpose();
@@ -373,11 +373,11 @@ impl RecipeFields {
     }
 
     /// Parses a full recipe (zod `recipeFieldsSchema`): title required, lists default to [].
-    pub fn from_json(v: &Value) -> AppResult<Self> {
+    pub fn from_json(v: &Value) -> ValidationResult<Self> {
         let o = object(v)?;
         if !o.contains_key("title") {
-            return Err(AppError::bad_request(
-                "title: Invalid input: expected string, received undefined",
+            return Err(ValidationError(
+                "title: Invalid input: expected string, received undefined".into(),
             ));
         }
         let p = RecipePatch::from_json(v)?;
@@ -402,7 +402,7 @@ impl RecipeFields {
     }
 
     /// Re-applies the schema rules to fields built in code (scraper, parsers, Wee Chef).
-    pub fn validate(mut self) -> AppResult<Self> {
+    pub fn validate(mut self) -> ValidationResult<Self> {
         self.title = title(&Value::String(self.title))?;
         let trim = |v: Option<String>| v.map(|s| s.trim().to_string());
         self.description = trim(self.description);
@@ -419,7 +419,7 @@ impl RecipeFields {
             if let Some(u) = value
                 && !is_valid_url(u)
             {
-                return Err(AppError::bad_request(format!("{field}: Invalid URL")));
+                return Err(ValidationError(format!("{field}: Invalid URL")));
             }
         }
         Ok(self)
@@ -568,41 +568,41 @@ pub struct CookbookWithRecipes {
 
 // ─── Cookbook fields ────────────────────────────────────────────────────────
 
-pub fn cookbook_name(v: &Value, required_message: &str) -> AppResult<String> {
+pub fn cookbook_name(v: &Value, required_message: &str) -> ValidationResult<String> {
     let name = v
         .as_str()
-        .ok_or_else(|| AppError::bad_request(format!("name: {required_message}")))?
+        .ok_or_else(|| ValidationError(format!("name: {required_message}")))?
         .trim();
     if name.is_empty() {
-        return Err(AppError::bad_request(format!("name: {required_message}")));
+        return Err(ValidationError(format!("name: {required_message}")));
     }
     if name.chars().count() > 100 {
-        return Err(AppError::bad_request(
-            "name: Name is too long (100 characters max)",
+        return Err(ValidationError(
+            "name: Name is too long (100 characters max)".into(),
         ));
     }
     Ok(name.to_string())
 }
 
-pub fn cookbook_description(v: &Value) -> AppResult<Option<String>> {
+pub fn cookbook_description(v: &Value) -> ValidationResult<Option<String>> {
     match v {
         Value::Null => Ok(None),
         Value::String(s) if s.trim().chars().count() <= 500 => {
             Ok(Some(s.trim().to_string()).filter(|s| !s.is_empty()))
         }
-        Value::String(_) => Err(AppError::bad_request(
-            "description: Too long (500 characters max)",
+        Value::String(_) => Err(ValidationError(
+            "description: Too long (500 characters max)".into(),
         )),
-        _ => Err(AppError::bad_request("description: expected string")),
+        _ => Err(ValidationError("description: expected string".into())),
     }
 }
 
-pub fn cookbook_color(v: &Value) -> AppResult<String> {
+pub fn cookbook_color(v: &Value) -> ValidationResult<String> {
     v.as_str()
         .and_then(book_color)
         .map(String::from)
         .ok_or_else(|| {
-            AppError::bad_request(format!("color: expected one of {}", BOOK_COLORS.join(", ")))
+            ValidationError(format!("color: expected one of {}", BOOK_COLORS.join(", ")))
         })
 }
 
@@ -628,7 +628,7 @@ mod tests {
         }
         let err =
             RecipePatch::from_json(&json!({"url": "javascript://x.test/%0Aalert(1)"})).unwrap_err();
-        assert!(err.message.contains("url: Invalid URL"), "{}", err.message);
+        assert!(err.0.contains("url: Invalid URL"), "{}", err.0);
         assert!(RecipePatch::from_json(&json!({"image": "data:image/png;base64,AA"})).is_err());
     }
 
@@ -652,10 +652,7 @@ mod tests {
             assert_eq!(cookbook_color(&json!(old)).unwrap(), new, "{old}");
         }
         let err = cookbook_color(&json!("neon")).unwrap_err();
-        assert!(
-            err.message
-                .contains("forest, tile, sage, butter, clay, cream")
-        );
+        assert!(err.0.contains("forest, tile, sage, butter, clay, cream"));
         assert!(cookbook_color(&json!(3)).is_err());
     }
 

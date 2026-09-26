@@ -25,10 +25,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Build dependencies against stub sources first, so code-only changes reuse this layer
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
-    && cargo build --release --locked && rm -rf src
+COPY crates/crumb-core/Cargo.toml crates/crumb-core/Cargo.toml
+RUN mkdir -p src crates/crumb-core/src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs crates/crumb-core/src/lib.rs \
+    && cargo build --release --locked && rm -rf src crates/crumb-core/src
 COPY src ./src
-RUN find src -name '*.rs' -exec touch {} + && cargo build --release --locked
+COPY crates ./crates
+RUN find src crates -name '*.rs' -exec touch {} + && cargo build --release --locked
 
 # ---- Run ----
 FROM debian:bookworm-slim
