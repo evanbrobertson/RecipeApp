@@ -1,0 +1,108 @@
+# The native iOS app in ios/ and the crumb-core library it links (crates/crumb-ffi):
+# crumb-core built for iPhone, the simulator and the Mac as an XCFramework with its Swift
+# bindings, swift-format, CrumbKit's tests against the real core, the app's unit and UI tests
+# on a simulator, and an unsigned device build in Release. Signed builds and TestFlight are
+# ios-release.yml, run by main.yml and promote.yml. See ios/README.md.
+name: iOS
+
+on:
+  push:
+    paths: &paths
+      - "ios/**"
+      - "crates/crumb-core/**"
+      - "crates/crumb-ffi/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ios.yml"
+      - ".github/workflows/ios-release.yml"
+      - ".github/actions/ios-setup/**"
+  pull_request:
+    branches: [master]
+    paths: *paths
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ios
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kit:
+    name: CrumbKit (core, format, tests)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/ios-setup
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/master' }}
+      - run: scripts/build-core.sh --quick
+      - name: swift-format
+        run: |
+          xcrun swift-format lint --strict --recursive --parallel --configuration .swift-format \
+            CrumbKit/Package.swift CrumbKit/Sources/CrumbKit CrumbKit/Tests \
+            Crumb CrumbShare CrumbTests CrumbUITests
+      - name: swift test
+        working-directory: ios/CrumbKit
+        run: swift test --parallel
+
+  app:
+    name: App (unit + UI tests, Release build)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/ios-setup
+      - run: scripts/build-core.sh --quick
+      - run: xcodegen generate
+      - name: Unit and UI tests on a simulator
+        run: |
+          sim=$(scripts/simulator.sh)
+          xcrun simctl list devices available | grep "$sim"
+          set -o pipefail
+          xcodebuild test -project Crumb.xcodeproj -scheme Crumb \
+            -destination "id=$sim" -derivedDataPath build/DerivedData \
+            -resultBundlePath build/Tests.xcresult | tee build/test.log | grep -E '^(Test|\*\*|error|.*: error)' || {
+              tail -200 build/test.log
+              exit 1
+            }
+      - name: Release build for iPhone (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build -project Crumb.xcodeproj -scheme Crumb -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO | tee build/release.log | grep -E '^(\*\*|error|.*: error)' || {
+              tail -200 build/release.log
+              exit 1
+            }
+      - name: Simulator app
+        run: |
+          app=$(find build/DerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name 'Crumb.app' | head -1)
+          (cd "$(dirname "$app")" && zip -qry "$GITHUB_WORKSPACE/ios/build/Crumb-simulator.zip" Crumb.app)
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-test-results
+          path: |
+            ios/build/Tests.xcresult
+            ios/build/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crumb-ios-simulator-${{ github.run_number }}
+          path: ios/build/Crumb-simulator.zip
+          if-no-files-found: error
