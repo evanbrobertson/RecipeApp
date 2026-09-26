@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
       - run: scripts/release/version.test.sh
       # The desktop packaging scripts only run on a tag in promote.yml, so lint them here
-      - run: shellcheck desktop/linux/packaging/*.sh
+      - run: shellcheck desktop/linux/packaging/*.sh ios/scripts/*.sh
 
   desktop:
     name: Desktop (Linux)
