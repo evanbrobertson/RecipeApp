@@ -1,20 +1,27 @@
-//! Share links: a read-only public page for one recipe at `/s/{token}`.
+//! Share links: read-only public pages at `/s/{token}` for one recipe or one cookbook.
 //!
-//! One link per recipe. Creating it again returns the same link; "Stop sharing" deletes the
-//! row, so the URL is gone for good and a later share gets a new token. The token is 16
-//! random bytes, kept as it is (it only grants reading this one recipe, and the owner must be
-//! able to copy the link again). Shares are not part of backups. The table has room for
-//! cookbook shares and an expiry, which nothing sets yet.
+//! One link per recipe or cookbook. Creating it again returns the same link; "Stop sharing"
+//! deletes the row, so the URL is gone for good and a later share gets a new token. The token
+//! is 16 random bytes, kept as it is (it only grants reading what's shared, and the owner must
+//! be able to copy the link again). Shares are not part of backups. The table has room for an
+//! expiry, which nothing sets yet.
 //!
-//! Under `/s/{token}` (public, outside the login):
+//! Under `/s/{token}` for a recipe (public, outside the login):
 //! - the page: the Astro template `shell/share/index.html` with the recipe rendered into it
 //!   as plain HTML (so any scraper keeps the sections), Open Graph tags, schema.org JSON-LD
 //!   and a `<link rel="alternate">` to the Crumb export;
 //! - `img/{width}` and `og.jpg`: the photo, through the same resizer as `/img`;
 //! - `crumb.json`: the recipe in the backup format, which another Crumb imports losslessly.
 //!
-//! Nothing else about the box shows: no cook log, views, checks, cookbooks, dates or names.
-//! Unknown, stopped and expired tokens all get the same plain 404, and an address that
+//! For a cookbook the link is live: it shows whatever is in the book when it's opened.
+//! - the page: `shell/share-book/index.html`, the book's name, colour and recipe cards;
+//! - `{recipeId}` (and its `img/{width}`, `og.jpg`, `crumb.json`): a recipe's page as above,
+//!   while that recipe is in the book (404 from the moment it's taken out);
+//! - `og.jpg`: the first photo in the book; `crumb.json`: every recipe in it (up to 500),
+//!   each in that book, so saving the link in another Crumb recreates the book.
+//!
+//! Nothing else about the box shows: no cook log, views, checks, other cookbooks, dates or
+//! names. Unknown, stopped and expired tokens all get the same plain 404, and an address that
 //! collects too many of those in a minute is turned away for a while.
 
 use std::collections::HashMap;
@@ -36,13 +43,16 @@ use sha2::Digest;
 use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::images::{self, Caching, Variant};
-use crate::model::{Recipe, RecipeFields, iso, now_secs};
+use crate::importers::ImportedRecipe;
+use crate::model::{Cookbook, Recipe, RecipeFields, RecipeSummary, iso, now_secs};
 use crate::recipes;
 
 /// Random bytes in a token (22 characters of base64url).
 const TOKEN_BYTES: usize = 16;
-/// The Astro template the page is rendered into.
+/// The Astro template a recipe's page is rendered into.
 pub const TEMPLATE: &str = "shell/share/index.html";
+/// And a cookbook's.
+pub const BOOK_TEMPLATE: &str = "shell/share-book/index.html";
 /// `last_opened_at` is written at most this often per share.
 const TOUCH_EVERY_SECS: i64 = 3600;
 /// Largest Crumb export another Crumb's share page may hand us (an embedded photo can be big).
@@ -51,28 +61,70 @@ const EXPORT_TIMEOUT: Duration = Duration::from_secs(15);
 
 // ─── The table ──────────────────────────────────────────────────────────────
 
+/// What a share shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Recipe(i64),
+    Cookbook(i64),
+}
+
+impl Target {
+    fn column(self) -> &'static str {
+        match self {
+            Self::Recipe(_) => "recipe_id",
+            Self::Cookbook(_) => "cookbook_id",
+        }
+    }
+
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Recipe(_) => "recipe",
+            Self::Cookbook(_) => "cookbook",
+        }
+    }
+
+    fn id(self) -> i64 {
+        match self {
+            Self::Recipe(id) | Self::Cookbook(id) => id,
+        }
+    }
+
+    /// A 404 when the recipe or cookbook isn't there.
+    fn require(self, conn: &Connection) -> AppResult<()> {
+        match self {
+            Self::Recipe(id) => recipes::require_recipe(conn, id).map(|_| ()),
+            Self::Cookbook(id) => recipes::require_cookbook(conn, id).map(|_| ()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Share {
     pub id: i64,
     pub token: String,
-    pub recipe_id: Option<i64>,
+    pub target: Target,
     pub include_notes: bool,
     pub created_at: i64,
     pub expires_at: Option<i64>,
     pub last_opened_at: Option<i64>,
 }
 
-const COLUMNS: &str = "id, token, recipe_id, include_notes, created_at, expires_at, last_opened_at";
+const COLUMNS: &str = "id, token, kind, recipe_id, cookbook_id, include_notes, created_at, expires_at, last_opened_at";
 
 fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Share> {
+    let kind: String = r.get(2)?;
+    let target = match kind.as_str() {
+        "cookbook" => Target::Cookbook(r.get(4)?),
+        _ => Target::Recipe(r.get(3)?),
+    };
     Ok(Share {
         id: r.get(0)?,
         token: r.get(1)?,
-        recipe_id: r.get(2)?,
-        include_notes: r.get::<_, i64>(3)? != 0,
-        created_at: r.get(4)?,
-        expires_at: r.get(5)?,
-        last_opened_at: r.get(6)?,
+        target,
+        include_notes: r.get::<_, i64>(5)? != 0,
+        created_at: r.get(6)?,
+        expires_at: r.get(7)?,
+        last_opened_at: r.get(8)?,
     })
 }
 
@@ -84,61 +136,99 @@ fn plausible_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-pub fn for_recipe(conn: &Connection, recipe_id: i64) -> AppResult<Option<Share>> {
+pub fn for_target(conn: &Connection, target: Target) -> AppResult<Option<Share>> {
     Ok(conn
         .query_row(
-            &format!("SELECT {COLUMNS} FROM shares WHERE recipe_id = ?1"),
-            [recipe_id],
+            &format!(
+                "SELECT {COLUMNS} FROM shares WHERE kind = ?1 AND {} = ?2",
+                target.column()
+            ),
+            params![target.kind(), target.id()],
             from_row,
         )
         .optional()?)
 }
 
-/// The recipe's share link, made if it has none.
-pub fn get_or_create(conn: &Connection, recipe_id: i64) -> AppResult<Share> {
-    recipes::require_recipe(conn, recipe_id)?;
+pub fn for_recipe(conn: &Connection, recipe_id: i64) -> AppResult<Option<Share>> {
+    for_target(conn, Target::Recipe(recipe_id))
+}
+
+pub fn for_cookbook(conn: &Connection, cookbook_id: i64) -> AppResult<Option<Share>> {
+    for_target(conn, Target::Cookbook(cookbook_id))
+}
+
+/// The recipe's or cookbook's share link, made if it has none.
+pub fn get_or_create(conn: &Connection, target: Target) -> AppResult<Share> {
+    target.require(conn)?;
     for _ in 0..3 {
-        if let Some(share) = for_recipe(conn, recipe_id)? {
+        if let Some(share) = for_target(conn, target)? {
             return Ok(share);
         }
         // DO NOTHING covers both a share made meanwhile and a (vanishingly unlikely) token clash
         conn.execute(
-            "INSERT INTO shares (token, kind, recipe_id, include_notes, created_at)
-             VALUES (?1, 'recipe', ?2, 1, ?3) ON CONFLICT DO NOTHING",
+            &format!(
+                "INSERT INTO shares (token, kind, {}, include_notes, created_at)
+                 VALUES (?1, ?2, ?3, 1, ?4) ON CONFLICT DO NOTHING",
+                target.column()
+            ),
             params![
                 crate::auth::random_token(TOKEN_BYTES),
-                recipe_id,
+                target.kind(),
+                target.id(),
                 now_secs()
             ],
         )?;
     }
-    for_recipe(conn, recipe_id)?.ok_or_else(|| AppError::internal("couldn't create a share"))
+    for_target(conn, target)?.ok_or_else(|| AppError::internal("couldn't create a share"))
 }
 
 /// Stops sharing: the link 404s from now on. Whether there was one.
-pub fn delete_for_recipe(conn: &Connection, recipe_id: i64) -> AppResult<bool> {
-    Ok(conn.execute("DELETE FROM shares WHERE recipe_id = ?1", [recipe_id])? > 0)
+pub fn delete_for(conn: &Connection, target: Target) -> AppResult<bool> {
+    Ok(conn.execute(
+        &format!(
+            "DELETE FROM shares WHERE kind = ?1 AND {} = ?2",
+            target.column()
+        ),
+        params![target.kind(), target.id()],
+    )? > 0)
 }
 
-/// Whether the recipe's share shows its notes. By recipe id, so the token never goes into
+/// Whether the share shows the notes. By recipe or cookbook id, so the token never goes into
 /// an API URL (and from there into traces and error reports).
-pub fn set_include_notes(conn: &Connection, recipe_id: i64, include: bool) -> AppResult<Share> {
-    recipes::require_recipe(conn, recipe_id)?;
+pub fn set_include_notes(conn: &Connection, target: Target, include: bool) -> AppResult<Share> {
+    target.require(conn)?;
     conn.execute(
-        "UPDATE shares SET include_notes = ?1 WHERE recipe_id = ?2",
-        params![include, recipe_id],
+        &format!(
+            "UPDATE shares SET include_notes = ?1 WHERE kind = ?2 AND {} = ?3",
+            target.column()
+        ),
+        params![include, target.kind(), target.id()],
     )?;
-    for_recipe(conn, recipe_id)?.ok_or_else(|| AppError::not_found("Share link not found"))
+    for_target(conn, target)?.ok_or_else(|| AppError::not_found("Share link not found"))
 }
 
-/// A live share and its recipe: None for an unknown, stopped or expired token.
-pub fn lookup(conn: &Connection, token: &str, now: i64) -> AppResult<Option<(Share, Recipe)>> {
+/// What a live token opens.
+pub enum Found {
+    Recipe(Share, Box<Recipe>),
+    Book(Share, Cookbook),
+}
+
+impl Found {
+    fn share(&self) -> &Share {
+        match self {
+            Self::Recipe(share, _) | Self::Book(share, _) => share,
+        }
+    }
+}
+
+/// A live share and what it shows: None for an unknown, stopped or expired token.
+pub fn lookup(conn: &Connection, token: &str, now: i64) -> AppResult<Option<Found>> {
     if !plausible_token(token) {
         return Ok(None);
     }
     let share = conn
         .query_row(
-            &format!("SELECT {COLUMNS} FROM shares WHERE token = ?1 AND kind = 'recipe'"),
+            &format!("SELECT {COLUMNS} FROM shares WHERE token = ?1"),
             [token],
             from_row,
         )
@@ -147,15 +237,14 @@ pub fn lookup(conn: &Connection, token: &str, now: i64) -> AppResult<Option<(Sha
     let Some(share) = share else {
         return Ok(None);
     };
-    let Some(recipe) = share
-        .recipe_id
-        .map(|id| recipes::get_recipe(conn, id))
-        .transpose()?
-        .flatten()
-    else {
-        return Ok(None);
-    };
-    Ok(Some((share, recipe)))
+    Ok(match share.target {
+        Target::Recipe(id) => {
+            recipes::get_recipe(conn, id)?.map(|recipe| Found::Recipe(share, Box::new(recipe)))
+        }
+        Target::Cookbook(id) => recipes::require_cookbook(conn, id)
+            .ok()
+            .map(|book| Found::Book(share, book)),
+    })
 }
 
 /// Notes the page was opened, at most once an hour.
@@ -177,7 +266,7 @@ pub fn share_url(origin: &str, token: &str) -> String {
     format!("{origin}/s/{token}")
 }
 
-/// What the recipe page and the API get: `{token, url, includeNotes, createdAt}`.
+/// What the recipe and cookbook pages and the API get: `{token, url, includeNotes, createdAt}`.
 pub fn to_json(share: &Share, origin: &str) -> Value {
     json!({
         "token": share.token,
@@ -187,14 +276,58 @@ pub fn to_json(share: &Share, origin: &str) -> Value {
     })
 }
 
+/// Every live share, newest first, for the More page: what it shows (its title, and the
+/// recipe or cookbook id the API's share routes take), its link, and when it was made and
+/// last opened.
+pub fn list(conn: &Connection, origin: &str) -> AppResult<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.token, s.kind, s.recipe_id, s.cookbook_id, s.include_notes, s.created_at,
+                s.last_opened_at, coalesce(r.title, c.name)
+         FROM shares s
+         LEFT JOIN recipes r ON s.kind = 'recipe' AND r.id = s.recipe_id
+         LEFT JOIN cookbooks c ON s.kind = 'cookbook' AND c.id = s.cookbook_id
+         WHERE (s.expires_at IS NULL OR s.expires_at > ?1) AND coalesce(r.id, c.id) IS NOT NULL
+         ORDER BY s.created_at DESC, s.id DESC",
+    )?;
+    let rows = stmt.query_map([now_secs()], |r| {
+        let token: String = r.get(0)?;
+        let kind: String = r.get(1)?;
+        let id: i64 = if kind == "cookbook" {
+            r.get(3)?
+        } else {
+            r.get(2)?
+        };
+        Ok(json!({
+            "kind": kind,
+            "id": id,
+            "title": r.get::<_, String>(7)?,
+            "url": share_url(origin, &token),
+            "includeNotes": r.get::<_, i64>(4)? != 0,
+            "createdAt": iso(r.get(5)?),
+            "lastOpenedAt": r.get::<_, Option<i64>>(6)?.map(iso),
+        }))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 /// Behind the login, with the rest of /api.
 pub fn api_routes() -> Router<AppState> {
-    Router::new().route(
-        "/api/recipes/{id}/share",
-        routing::post(create).patch(update).delete(stop),
-    )
+    Router::new()
+        .route(
+            "/api/recipes/{id}/share",
+            routing::post(create_recipe_share)
+                .patch(update_recipe_share)
+                .delete(stop_recipe_share),
+        )
+        .route(
+            "/api/cookbooks/{id}/share",
+            routing::post(create_book_share)
+                .patch(update_book_share)
+                .delete(stop_book_share),
+        )
+        .route("/api/shares", routing::get(list_shares))
 }
 
 /// The public pages under /s/ (see `auth::PUBLIC_PREFIXES`).
@@ -205,39 +338,93 @@ pub fn public_routes() -> Router<AppState> {
         .layer(axum::middleware::map_response(public_headers))
 }
 
-async fn create(
+async fn list_shares(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
+    let origin = state.config.public_origin(&headers);
+    Ok(Json(json!(list(&state.db.lock(), &origin)?)))
+}
+
+fn recipe_target(id: &str) -> AppResult<Target> {
+    Ok(Target::Recipe(crate::api::id_param(id, "id")?))
+}
+
+fn book_target(id: &str) -> AppResult<Target> {
+    Ok(Target::Cookbook(crate::api::id_param(id, "id")?))
+}
+
+async fn create_recipe_share(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
-    let id = crate::api::id_param(&id, "id")?;
-    let share = get_or_create(&state.db.lock(), id)?;
-    Ok(Json(to_json(&share, &state.config.public_origin(&headers))))
+    create(&state, recipe_target(&id)?, &headers)
 }
 
-async fn stop(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Value>> {
-    let id = crate::api::id_param(&id, "id")?;
-    let conn = state.db.lock();
-    recipes::require_recipe(&conn, id)?;
-    delete_for_recipe(&conn, id)?;
-    Ok(Json(json!({"ok": true})))
+async fn create_book_share(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> AppResult<Json<Value>> {
+    create(&state, book_target(&id)?, &headers)
 }
 
-async fn update(
+async fn stop_recipe_share(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    stop(&state, recipe_target(&id)?)
+}
+
+async fn stop_book_share(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    stop(&state, book_target(&id)?)
+}
+
+async fn update_recipe_share(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
-    let id = crate::api::id_param(&id, "id")?;
+    update(&state, recipe_target(&id)?, &headers, &body)
+}
+
+async fn update_book_share(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
+    update(&state, book_target(&id)?, &headers, &body)
+}
+
+fn create(state: &AppState, target: Target, headers: &HeaderMap) -> AppResult<Json<Value>> {
+    let share = get_or_create(&state.db.lock(), target)?;
+    Ok(Json(to_json(&share, &state.config.public_origin(headers))))
+}
+
+fn stop(state: &AppState, target: Target) -> AppResult<Json<Value>> {
+    let conn = state.db.lock();
+    target.require(&conn)?;
+    delete_for(&conn, target)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+fn update(
+    state: &AppState,
+    target: Target,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> AppResult<Json<Value>> {
     let body: Value =
-        serde_json::from_slice(&body).map_err(|_| AppError::bad_request("Invalid JSON body"))?;
+        serde_json::from_slice(body).map_err(|_| AppError::bad_request("Invalid JSON body"))?;
     let include = body
         .get("includeNotes")
         .and_then(Value::as_bool)
         .ok_or_else(|| AppError::bad_request("includeNotes: expected true or false"))?;
-    let share = set_include_notes(&state.db.lock(), id, include)?;
-    Ok(Json(to_json(&share, &state.config.public_origin(&headers))))
+    let share = set_include_notes(&state.db.lock(), target, include)?;
+    Ok(Json(to_json(&share, &state.config.public_origin(headers))))
 }
 
 /// Every /s/ response: kept out of search indexes, and no Referer to the recipe's links.
@@ -277,19 +464,16 @@ fn too_many() -> Response {
 }
 
 /// Looks a token up for a public request, counting misses against the client's address.
-fn find(state: &AppState, req: &Request, token: &str) -> Result<(Share, Recipe), Box<Response>> {
+fn find(state: &AppState, req: &Request, token: &str) -> Result<Found, Box<Response>> {
     let ip = client_ip(req, state.config.trust_proxy_headers);
     if state.share_misses.blocked(&ip) {
         return Err(Box::new(too_many()));
     }
     match lookup(&state.db.lock(), token, now_secs()) {
-        // The page, its JSON-LD and crumb.json show a category from before the fixed list
-        // filed under it (or none), as the recipe will be once it's checked
-        Ok(Some((share, mut recipe))) => {
-            recipe.recipe_category =
-                crate::categories::for_import(recipe.recipe_category.as_deref());
-            Ok((share, recipe))
+        Ok(Some(Found::Recipe(share, recipe))) => {
+            Ok(Found::Recipe(share, Box::new(shown(*recipe))))
         }
+        Ok(Some(found)) => Ok(found),
         Ok(None) => {
             state.share_misses.miss(&ip);
             Err(Box::new(missing()))
@@ -298,22 +482,69 @@ fn find(state: &AppState, req: &Request, token: &str) -> Result<(Share, Recipe),
     }
 }
 
+/// A recipe as a share shows it: its page, JSON-LD and crumb.json show a category from
+/// before the fixed list filed under it (or none), as the recipe will be once it's checked.
+fn shown(mut recipe: Recipe) -> Recipe {
+    recipe.recipe_category = crate::categories::for_import(recipe.recipe_category.as_deref());
+    recipe
+}
+
+/// A miss inside a live share (a recipe not in the book, a file that isn't there): counted
+/// like an unknown token, so a link can't be used to probe a box's recipe ids quickly.
+fn miss(state: &AppState, ip: &str) -> Response {
+    state.share_misses.miss(ip);
+    missing()
+}
+
 async fn page(State(state): State<AppState>, Path(token): Path<String>, req: Request) -> Response {
-    let (share, recipe) = match find(&state, &req, &token) {
+    let found = match find(&state, &req, &token) {
         Ok(found) => found,
         Err(res) => return *res,
     };
-    if let Err(err) = touch(&state.db.lock(), &share, now_secs()) {
+    if let Err(err) = touch(&state.db.lock(), found.share(), now_secs()) {
         tracing::warn!("[share] couldn't note an open: {err}");
     }
-    let Some(template) = state.web.html(TEMPLATE) else {
+    let origin = state.config.public_origin(req.headers());
+    match found {
+        Found::Recipe(share, recipe) => {
+            let place = Place::recipe(&share);
+            html_page(&state, TEMPLATE, |t| render(t, &recipe, &place, &origin))
+        }
+        Found::Book(share, book) => {
+            let listed = match book_listing(&state.db.lock(), book.id) {
+                Ok(listed) => listed,
+                Err(err) => return err.into_response(),
+            };
+            html_page(&state, BOOK_TEMPLATE, |t| {
+                render_book(t, &book, &listed, &share, &origin)
+            })
+        }
+    }
+}
+
+/// A recipe's page inside a shared cookbook, while it's in the book.
+fn book_recipe_page(
+    state: &AppState,
+    origin: &str,
+    share: &Share,
+    book: &Cookbook,
+    recipe: &Recipe,
+) -> Response {
+    if let Err(err) = touch(&state.db.lock(), share, now_secs()) {
+        tracing::warn!("[share] couldn't note an open: {err}");
+    }
+    let place = Place::in_book(share, book, recipe.id);
+    html_page(state, TEMPLATE, |t| render(t, recipe, &place, origin))
+}
+
+/// A template filled by `fill`, with the CSP worked out from the template (not the filled
+/// page: nothing a recipe or book puts in the page can ever authorise a script of its own).
+fn html_page(state: &AppState, template: &str, fill: impl FnOnce(&str) -> String) -> Response {
+    let Some(template) = state.web.html(template) else {
         return missing();
     };
-    let origin = state.config.public_origin(req.headers());
-    // From the template, not the rendered page: nothing the recipe puts in the page can
-    // ever authorise a script of its own
     let csp = template_csp(&template);
-    let body = render(&template, &recipe, &share, &origin);
+    let body = fill(&template);
     let tag = crate::web::etag_for(body.as_bytes());
     let mut res = body.into_response();
     let h = res.headers_mut();
@@ -331,13 +562,13 @@ async fn page(State(state): State<AppState>, Path(token): Path<String>, req: Req
     res
 }
 
-/// `crumb.json`, `og.jpg` and `img/{width}` under a share.
+/// Everything under a share's link: see the module docs.
 async fn file(
     State(state): State<AppState>,
     Path((token, rest)): Path<(String, String)>,
     req: Request,
 ) -> Response {
-    let (share, recipe) = match find(&state, &req, &token) {
+    let found = match find(&state, &req, &token) {
         Ok(found) => found,
         Err(res) => return *res,
     };
@@ -346,20 +577,105 @@ async fn file(
         .query()
         .and_then(|q| serde_urlencoded::from_str::<HashMap<String, String>>(q).ok())
         .and_then(|q| q.get("v").cloned());
-    let variant = match rest.as_str() {
-        "crumb.json" => return export(&recipe, &share),
+    // Nothing of the request is held across an await (its body isn't Sync)
+    let ip = client_ip(&req, state.config.trust_proxy_headers);
+    let origin = state.config.public_origin(req.headers());
+    drop(req);
+    match found {
+        Found::Recipe(share, recipe) => {
+            recipe_file(&state, &ip, &share, &recipe, &rest, v.as_deref()).await
+        }
+        Found::Book(share, book) => {
+            let (head, tail) = match rest.split_once('/') {
+                Some((head, tail)) => (head, Some(tail)),
+                None => (rest.as_str(), None),
+            };
+            match (head, tail) {
+                ("crumb.json", None) => {
+                    let base = share_url(&origin, &token);
+                    let conn = state.db.lock();
+                    match recipes::cookbook_recipes(&conn, book.id, recipes::MAX_BOOK_RECIPES) {
+                        Ok(list) => {
+                            let list: Vec<Recipe> = list.into_iter().map(shown).collect();
+                            let doc = recipes::export_book(
+                                &book,
+                                &list,
+                                recipes::BookExport::Shared {
+                                    base: &base,
+                                    include_notes: share.include_notes,
+                                },
+                            );
+                            json_file(&doc, &book.name)
+                        }
+                        Err(err) => err.into_response(),
+                    }
+                }
+                ("og.jpg", None) => {
+                    let cover = book_listing(&state.db.lock(), book.id)
+                        .ok()
+                        .and_then(|l| cover(&l).map(|r| r.id));
+                    match cover {
+                        // `v` is the cover's photo key, so a new cover gets a new URL
+                        Some(id) => photo(&state, id, Variant::Preview, v.as_deref()).await,
+                        None => missing(),
+                    }
+                }
+                (id, tail) => {
+                    let Some(recipe) = book_member(&state, book.id, id) else {
+                        return miss(&state, &ip);
+                    };
+                    match tail {
+                        None => book_recipe_page(&state, &origin, &share, &book, &recipe),
+                        Some(tail) => {
+                            recipe_file(&state, &ip, &share, &recipe, tail, v.as_deref()).await
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A recipe in the book, by its id as written in the path: None unless it's in the book now.
+fn book_member(state: &AppState, book_id: i64, raw: &str) -> Option<Recipe> {
+    let id = raw
+        .parse::<i64>()
+        .ok()
+        .filter(|i| *i > 0 && i.to_string() == raw)?;
+    let conn = state.db.lock();
+    if !recipes::in_cookbook(&conn, book_id, id).ok()? {
+        return None;
+    }
+    recipes::get_recipe(&conn, id).ok().flatten().map(shown)
+}
+
+/// `crumb.json`, `og.jpg` and `img/{width}` for one shared recipe (alone or in a book).
+async fn recipe_file(
+    state: &AppState,
+    ip: &str,
+    share: &Share,
+    recipe: &Recipe,
+    rest: &str,
+    v: Option<&str>,
+) -> Response {
+    let variant = match rest {
+        "crumb.json" => {
+            return json_file(
+                &recipes::export_shared(recipe, share.include_notes),
+                &recipe.title,
+            );
+        }
         "og.jpg" => Variant::Preview,
         other => match other.strip_prefix("img/").and_then(exact_width) {
             Some(width) => Variant::Webp(width),
-            None => {
-                state
-                    .share_misses
-                    .miss(&client_ip(&req, state.config.trust_proxy_headers));
-                return missing();
-            }
+            None => return miss(state, ip),
         },
     };
-    let res = images::serve_photo(&state, recipe.id, variant, v.as_deref(), Caching::Public).await;
+    photo(state, recipe.id, variant, v).await
+}
+
+async fn photo(state: &AppState, id: i64, variant: Variant, v: Option<&str>) -> Response {
+    let res = images::serve_photo(state, id, variant, v, Caching::Public).await;
     if res.status() == StatusCode::NOT_FOUND {
         return missing();
     }
@@ -371,9 +687,8 @@ fn exact_width(raw: &str) -> Option<u32> {
     images::parse_width(raw).filter(|w| w.to_string() == raw)
 }
 
-fn export(recipe: &Recipe, share: &Share) -> Response {
-    let doc = recipes::export_shared(recipe, share.include_notes);
-    let body = serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".into());
+fn json_file(doc: &Value, name: &str) -> Response {
+    let body = serde_json::to_string_pretty(doc).unwrap_or_else(|_| "{}".into());
     let mut res = body.into_response();
     let h = res.headers_mut();
     h.insert(
@@ -381,10 +696,26 @@ fn export(recipe: &Recipe, share: &Share) -> Response {
         HeaderValue::from_static("application/json; charset=utf-8"),
     );
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if let Some(v) = crate::api::attachment(&recipe.title, "json") {
+    if let Some(v) = crate::api::attachment(name, "json") {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     res
+}
+
+/// The recipes a shared cookbook's page lists, in the book's order (up to 500).
+fn book_listing(conn: &Connection, id: i64) -> AppResult<Vec<RecipeSummary>> {
+    let mut list = recipes::get_cookbook(conn, id)?.recipes;
+    list.truncate(recipes::MAX_BOOK_RECIPES);
+    for r in &mut list {
+        r.recipe_category = crate::categories::for_import(r.recipe_category.as_deref());
+    }
+    Ok(list)
+}
+
+/// The book's cover for link previews: its first recipe with a photo.
+fn cover(list: &[RecipeSummary]) -> Option<&RecipeSummary> {
+    list.iter()
+        .find(|r| r.image.as_deref().is_some_and(|i| !i.trim().is_empty()))
 }
 
 // ─── Who's asking ───────────────────────────────────────────────────────────
@@ -604,6 +935,10 @@ fn icon(name: &str) -> String {
         "note" => {
             r#"<path d="M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z"/><path d="M15 3v5a1 1 0 0 0 1 1h5"/>"#
         }
+        "back" => r#"<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>"#,
+        "pot" => {
+            r#"<path d="M2 12h20"/><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="m4 8 16-4"/><path d="m8.86 6.78-.45-1.81a2 2 0 0 1 1.45-2.43l1.94-.48a2 2 0 0 1 2.43 1.46l.45 1.8"/>"#
+        }
         "external" => {
             r#"<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>"#
         }
@@ -612,6 +947,35 @@ fn icon(name: &str) -> String {
     format!(
         r#"<svg class="share-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{body}</svg>"#
     )
+}
+
+/// Where a recipe's page sits: its path under /s/, whether it shows the notes, and the
+/// shared cookbook it's in (its name and page, for the link back).
+pub struct Place {
+    pub path: String,
+    pub include_notes: bool,
+    pub book: Option<(String, String)>,
+}
+
+impl Place {
+    /// A recipe shared on its own: `/s/{token}`.
+    pub fn recipe(share: &Share) -> Self {
+        Self {
+            path: format!("/s/{}", share.token),
+            include_notes: share.include_notes,
+            book: None,
+        }
+    }
+
+    /// A recipe in a shared cookbook: `/s/{token}/{recipeId}`.
+    pub fn in_book(share: &Share, book: &Cookbook, recipe_id: i64) -> Self {
+        let book_path = format!("/s/{}", share.token);
+        Self {
+            path: format!("{book_path}/{recipe_id}"),
+            include_notes: share.include_notes,
+            book: Some((book.name.clone(), book_path)),
+        }
+    }
 }
 
 /// Everything the page shows, worked out once.
@@ -628,8 +992,8 @@ struct View<'a> {
 }
 
 impl<'a> View<'a> {
-    fn new(recipe: &'a Recipe, share: &Share, origin: &str) -> Self {
-        let page_url = share_url(origin, &share.token);
+    fn new(recipe: &'a Recipe, place: &Place, origin: &str) -> Self {
+        let page_url = format!("{origin}{}", place.path);
         let image_key = present(&recipe.image).map(images::image_key);
         let preview_url = image_key
             .as_ref()
@@ -646,9 +1010,9 @@ impl<'a> View<'a> {
             });
         Self {
             recipe,
-            notes: present(&recipe.notes).filter(|_| share.include_notes),
+            notes: present(&recipe.notes).filter(|_| place.include_notes),
             export_url: format!("{page_url}/crumb.json"),
-            img_base: format!("/s/{}/img", share.token),
+            img_base: format!("{}/img", place.path),
             page_url,
             image_key,
             preview_url,
@@ -966,22 +1330,39 @@ fn fill(page: &mut String, marker: &str, html: &str) {
     }
 }
 
-/// The template with this recipe in it.
-pub fn render(template: &str, recipe: &Recipe, share: &Share, origin: &str) -> String {
-    let view = View::new(recipe, share, origin);
+/// The template with its title, head tags and page data set.
+fn start_page(template: &str, title: &str, head: &str, data: &Value) -> String {
     let mut page = template.to_string();
-    let title = format!("<title>{} · Crumb</title>", escape(&recipe.title));
+    let title = format!("<title>{} · Crumb</title>", escape(title));
     match (page.find("<title>"), page.find("</title>")) {
         (Some(a), Some(b)) if a < b => page.replace_range(a..b + "</title>".len(), &title),
         _ => fill(&mut page, "<head>", &format!("<head>{title}")),
     }
-    let head = view.head();
     match page.find("</head>") {
-        Some(at) => page.insert_str(at, &head),
-        None => page.insert_str(0, &head),
+        Some(at) => page.insert_str(at, head),
+        None => page.insert_str(0, head),
     }
-    let data = crate::web::MARKER.replace("null", &crate::web::inline_json(&view.page_data()));
+    let data = crate::web::MARKER.replace("null", &crate::web::inline_json(data));
     fill(&mut page, crate::web::MARKER, &data);
+    page
+}
+
+/// The template with this recipe in it.
+pub fn render(template: &str, recipe: &Recipe, place: &Place, origin: &str) -> String {
+    let view = View::new(recipe, place, origin);
+    let mut page = start_page(template, &recipe.title, &view.head(), &view.page_data());
+    let back = place
+        .book
+        .as_ref()
+        .map_or_else(String::new, |(name, path)| {
+            format!(
+                "<a class=\"btn btn-ghost share-back no-print\" href=\"{}\">{}{}</a>",
+                escape(path),
+                icon("back"),
+                escape(name)
+            )
+        });
+    fill(&mut page, "<!--share:back-->", &back);
     fill(&mut page, "<!--share:photo-->", &view.photo());
     fill(&mut page, "<!--share:intro-->", &view.intro());
     fill(&mut page, "<!--share:ingredients-->", &view.ingredients());
@@ -990,19 +1371,168 @@ pub fn render(template: &str, recipe: &Recipe, share: &Share, origin: &str) -> S
     page
 }
 
-/// The CSP for a template, worked out once per template text (it's cached in release
-/// builds and re-read in debug ones, so a changed template gets a fresh policy).
+/// The CSP for a template, worked out once per template text (templates are cached in
+/// release builds and re-read in debug ones, so a changed template gets a fresh policy).
+/// Holds the few templates there are (recipe, cookbook) and a spare.
 fn template_csp(template: &str) -> String {
-    static CACHE: Mutex<Option<(String, String)>> = Mutex::new(None);
+    static CACHE: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    match &*cache {
-        Some((t, csp)) if t == template => csp.clone(),
-        _ => {
-            let csp = content_security_policy(template);
-            *cache = Some((template.to_string(), csp.clone()));
-            csp
-        }
+    if let Some((_, csp)) = cache.iter().find(|(t, _)| t == template) {
+        return csp.clone();
     }
+    let csp = content_security_policy(template);
+    if cache.len() >= 3 {
+        cache.remove(0);
+    }
+    cache.push((template.to_string(), csp.clone()));
+    csp
+}
+
+/// A shared cookbook's page: the book's spine, name and recipe cards, each linking to that
+/// recipe's page under the book's link.
+pub fn render_book(
+    template: &str,
+    book: &Cookbook,
+    list: &[RecipeSummary],
+    share: &Share,
+    origin: &str,
+) -> String {
+    let path = format!("/s/{}", share.token);
+    let page_url = format!("{origin}{path}");
+    let export_url = format!("{page_url}/crumb.json");
+    let count = match list.len() {
+        0 => "No recipes yet".to_string(),
+        1 => "1 recipe".to_string(),
+        n => format!("{n} recipes"),
+    };
+    let description = present(&book.description)
+        .map(|d| clip(d, 200))
+        .unwrap_or_else(|| match list.len() {
+            0 => "A cookbook shared from Crumb.".to_string(),
+            _ => format!("A cookbook shared from Crumb: {}.", count.to_lowercase()),
+        });
+    let preview = cover(list)
+        .and_then(|r| r.image.as_deref())
+        .map(|image| format!("{page_url}/og.jpg?v={}", images::image_key(image)));
+
+    let mut head = String::new();
+    let mut meta = |attr: &str, name: &str, content: &str| {
+        head.push_str(&format!(
+            "<meta {attr}=\"{name}\" content=\"{}\">",
+            escape(content)
+        ));
+    };
+    meta("name", "description", &description);
+    meta("property", "og:type", "website");
+    meta("property", "og:site_name", "Crumb");
+    meta("property", "og:title", &book.name);
+    meta("property", "og:description", &description);
+    meta("property", "og:url", &page_url);
+    match &preview {
+        Some(preview) => {
+            meta("property", "og:image", preview);
+            meta(
+                "property",
+                "og:image:width",
+                &images::PREVIEW_SIZE.0.to_string(),
+            );
+            meta(
+                "property",
+                "og:image:height",
+                &images::PREVIEW_SIZE.1.to_string(),
+            );
+            meta("property", "og:image:alt", &book.name);
+            meta("name", "twitter:card", "summary_large_image");
+            meta("name", "twitter:image", preview);
+        }
+        None => meta("name", "twitter:card", "summary"),
+    }
+    meta("name", "twitter:title", &book.name);
+    meta("name", "twitter:description", &description);
+    head.push_str(&format!(
+        "<link rel=\"alternate\" type=\"{}\" href=\"{}\">",
+        crate::scraper::CRUMB_JSON_TYPE,
+        escape(&export_url)
+    ));
+    let data = json!({
+        "share": {
+            "kind": "cookbook",
+            "title": book.name,
+            "url": page_url,
+            "exportUrl": export_url,
+        }
+    });
+    let mut page = start_page(template, &book.name, &head, &data);
+
+    let color = book
+        .color
+        .as_deref()
+        .and_then(crate::model::book_color)
+        .unwrap_or("tile");
+    let name = escape(&book.name);
+    let mut intro = format!(
+        "<div class=\"share-book-head\"><div class=\"share-book-spine\" aria-hidden=\"true\">\
+         <div class=\"share-spine\" data-color=\"{color}\"><span>{name}</span></div>\
+         <div class=\"share-plank\"></div></div><div class=\"share-book-name\">\
+         <p class=\"kicker\">Cookbook</p><h1 class=\"page-title share-title\">{name}</h1>\
+         <p class=\"meta\">{count}</p></div></div>"
+    );
+    if let Some(d) = present(&book.description) {
+        intro.push_str(&format!("<p class=\"share-desc\">{}</p>", escape(d)));
+    }
+    fill(&mut page, "<!--share:book-->", &intro);
+
+    let cards = if list.is_empty() {
+        "<p class=\"card share-empty meta\">Nothing in this cookbook yet. Recipes added to it show up here.</p>".to_string()
+    } else {
+        let mut out = String::from("<ul class=\"share-cards\">");
+        for (i, r) in list.iter().enumerate() {
+            let href = format!("{path}/{}", r.id);
+            let photo = match r.image.as_deref().filter(|i| !i.trim().is_empty()) {
+                Some(image) => {
+                    let key = images::image_key(image);
+                    let src = |w: u32| format!("{href}/img/{w}?v={key}");
+                    format!(
+                        "<img class=\"share-card-photo\" src=\"{}\" srcset=\"{} 320w, {} 480w, {} 768w\" sizes=\"(min-width: 1280px) 14rem, (min-width: 1024px) 22vw, (min-width: 640px) 31vw, 46vw\" alt=\"\" loading=\"{}\" decoding=\"async\">",
+                        escape(&src(320)),
+                        escape(&src(320)),
+                        escape(&src(480)),
+                        escape(&src(768)),
+                        if i < 4 { "eager" } else { "lazy" },
+                    )
+                }
+                None => format!(
+                    "<div class=\"share-card-photo photo-empty\">{}</div>",
+                    icon("pot")
+                ),
+            };
+            let sub: Vec<&str> = [
+                present(&r.recipe_category),
+                present(&r.recipe_cuisine),
+                present(&r.total_time),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let sub = if sub.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<p class=\"meta share-card-meta\">{}</p>",
+                    escape(&sub.join(" · "))
+                )
+            };
+            out.push_str(&format!(
+                "<li><a class=\"share-card\" href=\"{}\">{photo}<h2 class=\"share-card-title\">{}</h2>{sub}</a></li>",
+                escape(&href),
+                escape(&r.title),
+            ));
+        }
+        out.push_str("</ul>");
+        out
+    };
+    fill(&mut page, "<!--share:recipes-->", &cards);
+    page
 }
 
 static SCRIPT: LazyLock<Regex> =
@@ -1071,10 +1601,23 @@ static EXPORT_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("HTTP client")
 });
 
-/// Fetches another Crumb's export (`crumb.json` from a share page) and reads its recipe.
-/// None when it can't be had or isn't a Crumb export; the caller falls back to the page.
-/// Log lines name only the host: the URL holds that share's token.
-pub async fn fetch_export(url: &str) -> Option<RecipeFields> {
+/// What another Crumb's share export holds.
+pub enum Export {
+    Recipe(Box<RecipeFields>),
+    Book(SharedBook),
+}
+
+/// A shared cookbook's export: its name, colour and recipes (each with its own share link).
+pub struct SharedBook {
+    pub name: String,
+    pub color: Option<String>,
+    pub recipes: Vec<ImportedRecipe>,
+}
+
+/// Fetches another Crumb's export (`crumb.json` from a share page) and reads it: one recipe,
+/// or a cookbook of them. None when it can't be had or isn't a Crumb export; the caller falls
+/// back to the page. Log lines name only the host: the URL holds that share's token.
+pub async fn fetch_export(url: &str) -> Option<Export> {
     let host = crate::telemetry::host_of(url);
     let res = EXPORT_CLIENT
         .get(url)
@@ -1106,15 +1649,37 @@ pub async fn fetch_export(url: &str) -> Option<RecipeFields> {
         body.extend_from_slice(&chunk);
     }
     let doc: Value = serde_json::from_slice(&body).ok()?;
+    let export = read_export(&doc)?;
+    tracing::info!("[share] {host}: saved from a Crumb share");
+    Some(export)
+}
+
+/// A Crumb share export, read. A cookbook's says `"kind": "cookbook"` and names the book;
+/// a recipe's is one recipe. Cook logs and other cookbooks in it are never taken.
+pub fn read_export(doc: &Value) -> Option<Export> {
     if doc.get("format").and_then(Value::as_str) != Some("crumb") {
         return None;
     }
-    // Only the recipe itself: a share has no cookbooks or cook log, and none are taken
-    let found = crate::importers::from_json_value(&doc)
+    let found = crate::importers::from_json_value(doc)
         .into_iter()
-        .find(|r| r.restored)?;
-    tracing::info!("[share] {host}: saved from a Crumb share");
-    Some(found.fields)
+        .filter(|r| r.restored);
+    if doc.get("kind").and_then(Value::as_str) == Some("cookbook") {
+        let info = doc.get("cookbooks").and_then(|b| b.get(0));
+        let text = |key: &str| {
+            info.and_then(|b| b.get(key))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
+        return Some(Export::Book(SharedBook {
+            name: text("name")?,
+            color: text("color"),
+            recipes: found.take(recipes::MAX_BOOK_RECIPES).collect(),
+        }));
+    }
+    let mut found = found;
+    found.next().map(|r| Export::Recipe(Box::new(r.fields)))
 }
 
 #[cfg(test)]

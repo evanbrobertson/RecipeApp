@@ -223,42 +223,62 @@ fn without_bad_links(r: &Value) -> Value {
     r
 }
 
+/// A recipe from a shared cookbook's export carries its own share link (`shareUrl`): that's
+/// the link it's kept under (as when the link itself is saved, so either way dedupes), and
+/// the `url` it names becomes where it came from.
+fn with_share_url(r: &Value, mut item: ImportedRecipe) -> ImportedRecipe {
+    let Some(share) = r
+        .get("shareUrl")
+        .and_then(Value::as_str)
+        .filter(|u| crate::model::is_valid_url(u))
+    else {
+        return item;
+    };
+    let named = item.original_url.take().or(item.fields.url.take());
+    item.original_url = named.filter(|u| !crate::recipes::same_host(u, share));
+    item.fields.url = Some(share.to_string());
+    item
+}
+
 fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
     let Some(list) = o.get("recipes").and_then(Value::as_array) else {
         return Vec::new();
     };
     list.iter()
         .filter_map(|r| match RecipeFields::from_json(&without_bad_links(r)) {
-            Ok(fields) => Some(ImportedRecipe {
-                fields,
-                cookbooks: r
-                    .get("cookbooks")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(Value::as_str)
-                            .map(String::from)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                cooked: r
-                    .get("cookedAt")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(Value::as_str)
-                            .filter_map(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                            .map(|t| t.timestamp())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                restored: true,
-                original_url: r
-                    .get("originalUrl")
-                    .and_then(Value::as_str)
-                    .filter(|u| crate::model::is_valid_url(u))
-                    .map(String::from),
-            }),
+            Ok(fields) => Some(with_share_url(
+                r,
+                ImportedRecipe {
+                    fields,
+                    cookbooks: r
+                        .get("cookbooks")
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(Value::as_str)
+                                .map(String::from)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    cooked: r
+                        .get("cookedAt")
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(Value::as_str)
+                                .filter_map(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                                .map(|t| t.timestamp())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    restored: true,
+                    original_url: r
+                        .get("originalUrl")
+                        .and_then(Value::as_str)
+                        .filter(|u| crate::model::is_valid_url(u))
+                        .map(String::from),
+                },
+            )),
             Err(err) => {
                 tracing::warn!("[import] skipped a backup recipe: {err}");
                 None

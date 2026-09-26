@@ -352,8 +352,21 @@ impl Ctx<'_> {
                 else {
                     return Some(invalid("url must be a valid URL"));
                 };
-                match recipes::import_from_url(self.state, url).await {
-                    Ok((r, is_new)) => self.saved(&r, is_new),
+                match recipes::import_link(self.state, url).await {
+                    Ok(recipes::Imported::Recipe(r, is_new)) => self.saved(&r, is_new),
+                    Ok(recipes::Imported::Book(book)) => text(format!(
+                        "Added {} to the cookbook \"{}\" (id {}){}",
+                        match book.created.len() {
+                            1 => "1 recipe".to_string(),
+                            n => format!("{n} recipes"),
+                        },
+                        book.name,
+                        book.id,
+                        match book.duplicates {
+                            0 => String::new(),
+                            n => format!("; {n} already in the box"),
+                        }
+                    )),
                     Err(err) => tool_error(err.message),
                 }
             }

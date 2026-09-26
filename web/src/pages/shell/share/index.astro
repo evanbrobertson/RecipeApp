@@ -2,6 +2,9 @@
 /**
  * A shared recipe, served by the Rust server at /s/:token (src/share.rs), never directly.
  *
+ * Also a recipe inside a shared cookbook (/s/:token/:recipeId), with a link back to the book
+ * in <!--share:back-->.
+ *
  * The server fills the <!--share:*--> markers with the recipe as plain HTML, so the page
  * reads (and scrapes) fine without JavaScript, and adds the title, link-preview tags,
  * JSON-LD and #page-data. Its own shell: no nav, timers or speculation rules, and a strict
@@ -41,6 +44,7 @@ import ShareScale from "../../../islands/ShareScale.svelte"
     <script type="application/json" id="page-data">null</script>
     <div class="share-wrap">
       <p class="share-mark page-title">Crumb</p>
+      <!--share:back-->
       <article class="share-article">
         <section class="share-hero">
           <!--share:photo-->
@@ -94,6 +98,15 @@ import ShareScale from "../../../islands/ShareScale.svelte"
     margin-bottom: 1.25rem;
     font-size: 1.5rem;
     color: var(--primary);
+  }
+  .share-back {
+    margin: -0.5rem 0 1rem -0.75rem;
+    padding-inline: 0.75rem;
+    max-width: 100%;
+  }
+  .share-back .share-icon {
+    width: 1.25rem;
+    height: 1.25rem;
   }
   .share-article > * + * {
     margin-top: 3rem;
