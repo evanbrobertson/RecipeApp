@@ -1,7 +1,7 @@
 //! Recipe data shapes shared by the REST API, the MCP connector and the importers,
 //! plus the validation rules the old zod schemas enforced.
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::error::{ValidationError, ValidationResult};
@@ -146,6 +146,19 @@ pub fn now_secs() -> i64 {
 
 pub fn ser_iso<S: Serializer>(secs: &i64, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&iso(*secs))
+}
+
+/// The inverse of [`ser_iso`]: parses an ISO-8601 timestamp from the API back to unix
+/// seconds, so a client can read the types the server serializes.
+pub fn de_iso<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let value = String::deserialize(deserializer)?;
+    chrono::DateTime::parse_from_rfc3339(&value)
+        .map(|dt| dt.timestamp())
+        .map_err(D::Error::custom)
 }
 
 /// Every settable recipe field, validated.
@@ -462,7 +475,7 @@ impl RecipeFields {
 }
 
 /// A saved recipe as the API returns it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Recipe {
     pub id: i64,
@@ -487,9 +500,9 @@ pub struct Recipe {
     /// same link dedupes on) and this is the recipe's original source, when the export
     /// named one on another site. Never a dedupe key, so an export can't claim a URL.
     pub original_url: Option<String>,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub created_at: i64,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub updated_at: i64,
 }
 
@@ -516,7 +529,7 @@ impl Recipe {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeSummary {
     pub id: i64,
@@ -527,7 +540,7 @@ pub struct RecipeSummary {
     pub recipe_category: Option<String>,
     pub recipe_cuisine: Option<String>,
     pub source: String,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub created_at: i64,
 }
 
@@ -542,14 +555,14 @@ pub struct Cookbook {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CookbookListItem {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
     pub color: Option<String>,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub created_at: i64,
     pub recipe_count: i64,
 }
