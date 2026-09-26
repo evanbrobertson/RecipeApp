@@ -586,16 +586,41 @@
   }
 }
 
+/* Paper: light colours whatever the theme, and none of the app's chrome */
 @media print {
-  header,
   nav,
+  dialog,
+  #toaster,
+  [data-timer-dock],
   .no-print {
     display: none !important;
+  }
+  :root,
+  :root.dark {
+    color-scheme: light;
+    --bg: #fff;
+    --paper: #fff;
+    --tint: #f1f1ee;
+    --bg-accented: #e8e8e4;
+    --border: #d6d6d0;
+    --border-accented: #c6c6bf;
+    --text: #111;
+    --text-muted: #444;
+    --text-dimmed: #555;
+    --primary: #1f4d38;
+    --tile: #1f4d38;
+    --on-tile: #fff;
   }
   html,
   body {
     background: white;
     color: black;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .md\:pl-60 {
+    padding-left: 0 !important;
   }
 }
 

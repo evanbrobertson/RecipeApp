@@ -45,6 +45,14 @@ export interface RecipeSummary {
   createdAt: string
 }
 
+/** A recipe's share link (`/s/{token}`): anyone with it can read that recipe. */
+export interface ShareLink {
+  token: string
+  url: string
+  includeNotes: boolean
+  createdAt: string
+}
+
 export interface Cookbook {
   id: number
   name: string

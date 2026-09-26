@@ -4,16 +4,12 @@
   import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import Columns2 from "@lucide/svelte/icons/columns-2"
   import Clock from "@lucide/svelte/icons/clock"
-  import Copy from "@lucide/svelte/icons/copy"
   import Dices from "@lucide/svelte/icons/dices"
   import ExternalLink from "@lucide/svelte/icons/external-link"
-  import FileBraces from "@lucide/svelte/icons/file-braces"
   import FileQuestion from "@lucide/svelte/icons/file-question"
-  import FileText from "@lucide/svelte/icons/file-text"
   import Flame from "@lucide/svelte/icons/flame"
   import Pencil from "@lucide/svelte/icons/pencil"
   import Plus from "@lucide/svelte/icons/plus"
-  import Printer from "@lucide/svelte/icons/printer"
   import Share from "@lucide/svelte/icons/share"
   import Snowflake from "@lucide/svelte/icons/snowflake"
   import Soup from "@lucide/svelte/icons/soup"
@@ -26,13 +22,13 @@
   import Modal from "../components/Modal.svelte"
   import Photo from "../components/Photo.svelte"
   import ScaleControl from "../components/ScaleControl.svelte"
+  import ShareSheet from "../components/ShareSheet.svelte"
   import WeeChefCard from "../components/WeeChefCard.svelte"
   import { untrack } from "svelte"
   import { whenActive } from "../lib/active"
   import { api, errorMessage, pathId } from "../lib/api"
   import { bookPalette } from "../lib/books"
   import { plural } from "../lib/checks"
-  import { recipeToMarkdown } from "../lib/format"
   import { cookedLine, logView, markCooked } from "../lib/history"
   import { scaleIngredient } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
@@ -46,6 +42,7 @@
     type CookStats,
     type Recipe,
     type RecipeChecks,
+    type ShareLink,
   } from "../lib/recipe"
   import { randomHref, rememberRandom } from "../lib/random"
   import { forgetViewed, getScale, read, rememberViewed, setScale, write } from "../lib/storage"
@@ -60,6 +57,8 @@
     checks?: RecipeChecks | null
     /** Wee Chef's checks are set up: offers "Check with Wee Chef". */
     weeChefChecks?: boolean
+    /** Its share link, if it has one. */
+    share?: ShareLink | null
   }
 
   const id = pathId()
@@ -246,20 +245,8 @@
   }
 
   // ─── Actions ───
-  async function copyRecipe() {
-    if (!recipe) return
-    try {
-      await navigator.clipboard.writeText(recipeToMarkdown(recipe))
-      toast({ title: "Recipe copied" })
-    } catch {
-      toast({ title: "Couldn't copy", tone: "error" })
-    }
-  }
-
-  function shareRecipe() {
-    if (!recipe) return
-    void navigator.share?.({ title: recipe.title, text: recipeToMarkdown(recipe) }).catch(() => {})
-  }
+  // Share, send and download live in the share sheet; the ⋯ menu keeps the rest
+  let showShare = $state(false)
 
   async function checkNow() {
     const before = page.data?.checks?.flags ?? []
@@ -311,29 +298,11 @@
     [
       { label: "Mark as cooked", icon: ChefHat, onselect: cookedNow },
       { label: "Edit", icon: Pencil, onselect: () => (location.href = `/recipes/${id}/edit`) },
-      { label: "Copy as text", icon: Copy, onselect: copyRecipe },
-      ...("share" in navigator ? [{ label: "Share", icon: Share, onselect: shareRecipe }] : []),
-      { label: "Print", icon: Printer, onselect: () => window.print() },
       { label: "Surprise me", icon: Dices, onselect: () => (location.href = randomHref(id)) },
     ],
-    [
-      ...(page.data?.weeChefChecks
-        ? [{ label: "Check with Wee Chef", icon: ClipboardCheck, onselect: checkNow }]
-        : []),
-      // Plain download links: the server names the file after the recipe
-      {
-        label: "Export as JSON",
-        icon: FileBraces,
-        href: `/api/recipes/${id}/export?format=json`,
-        download: true,
-      },
-      {
-        label: "Export as Markdown",
-        icon: FileText,
-        href: `/api/recipes/${id}/export?format=md`,
-        download: true,
-      },
-    ],
+    ...(page.data?.weeChefChecks
+      ? [[{ label: "Check with Wee Chef", icon: ClipboardCheck, onselect: checkNow }]]
+      : []),
     [{ label: "Delete", icon: Trash2, danger: true, onselect: () => (showDelete = true) }],
   ])
 </script>
@@ -377,7 +346,19 @@
             {#if sub}<p class="kicker mb-2">{sub}</p>{/if}
             <h1 class="page-title text-balance">{recipe.title}</h1>
           </div>
-          <Menu groups={menu} triggerClass="btn btn-outline btn-icon no-print -mt-1 flex-none" />
+          <div class="no-print -mt-1 flex flex-none gap-2">
+            <button
+              type="button"
+              class="btn btn-outline btn-icon"
+              aria-label="Share"
+              title="Share"
+              aria-haspopup="dialog"
+              onclick={() => (showShare = true)}
+            >
+              <Share />
+            </button>
+            <Menu groups={menu} triggerClass="btn btn-outline btn-icon" />
+          </div>
         </div>
 
         {#if recipe.author || sourceHost || cooked}
@@ -395,7 +376,7 @@
                 href={recipe.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="link inline-flex min-h-11 items-center gap-1 text-sm"
+                class="link print-url inline-flex min-h-11 items-center gap-1 text-sm"
               >
                 {sourceHost}<ExternalLink class="size-3.5" />
               </a>
@@ -622,6 +603,10 @@
   </article>
 {/if}
 
+{#if recipe && page.data}
+  <ShareSheet bind:open={showShare} {recipe} bind:share={page.data.share} />
+{/if}
+
 <Modal bind:open={showDelete} title="Delete this recipe?" description="This can't be undone.">
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (showDelete = false)}>Cancel</button>
@@ -701,6 +686,29 @@
     .split,
     .panel .section-title {
       transition: none;
+    }
+  }
+
+  /* Paper: one column, no controls, nothing split across a page break */
+  @media print {
+    .split {
+      display: block;
+    }
+    .panel + .panel {
+      margin-top: 2rem;
+    }
+    .panel :global(.lg\:sticky) {
+      position: static;
+    }
+    .ingredients > li,
+    ol > li,
+    .panel .space-y-6 > div {
+      break-inside: avoid;
+    }
+    .print-url::after {
+      content: " (" attr(href) ")";
+      font-weight: 400;
+      overflow-wrap: anywhere;
     }
   }
 
