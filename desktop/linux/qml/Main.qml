@@ -14,6 +14,10 @@ ApplicationWindow {
     title: "Crumb"
     color: Palette.bg
 
+    Behavior on color {
+        ColorAnimation { duration: 150 }
+    }
+
     Session {
         id: session
     }

@@ -31,8 +31,8 @@ Item {
         Label {
             text: "Crumb"
             color: Palette.text
+            font.family: Palette.fontSerif
             font.pixelSize: 34
-            font.bold: true
             Layout.alignment: Qt.AlignHCenter
         }
 
@@ -50,13 +50,11 @@ Item {
             font.pixelSize: 13
         }
 
-        TextField {
+        StyledField {
             id: urlField
             Layout.fillWidth: true
             placeholderText: "https://crumb.example"
             text: session ? session.serverUrl : ""
-            color: Palette.text
-            font.pixelSize: 14
             enabled: session ? !session.busy : true
             onAccepted: if (passwordField.text.length > 0) page.submit()
         }
@@ -67,12 +65,10 @@ Item {
             font.pixelSize: 13
         }
 
-        TextField {
+        StyledField {
             id: passwordField
             Layout.fillWidth: true
             echoMode: TextInput.Password
-            color: Palette.text
-            font.pixelSize: 14
             enabled: session ? !session.busy : true
             onAccepted: page.submit()
         }
@@ -97,13 +93,17 @@ Item {
             background: Rectangle {
                 radius: 12
                 color: submitButton.enabled ? Palette.butter : Palette.tint
+
+                Behavior on color {
+                    ColorAnimation { duration: 150 }
+                }
             }
 
             contentItem: Text {
                 text: submitButton.text
-                color: Palette.onButter
+                color: submitButton.enabled ? Palette.onButter : Palette.textMuted
                 font.pixelSize: 15
-                font.bold: true
+                font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
             }

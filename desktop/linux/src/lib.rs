@@ -4,11 +4,15 @@
 //! the cxx-qt generated symbols; `main.rs` is a thin wrapper calling [`run`].
 
 pub mod config;
+mod fonts;
+mod native;
 mod palette;
 mod recipes;
 mod runtime;
 mod session;
 mod smoke;
+pub mod theme;
+mod theme_watch;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -34,6 +38,9 @@ pub fn run() {
     if smoke_mode {
         smoke::install_handler();
     }
+
+    // Register the bundled fonts before the QML engine builds any text.
+    let fonts_ok = app.as_mut().is_some_and(fonts::install);
 
     static ROOT_PRESENT: AtomicBool = AtomicBool::new(false);
     static ENGINE_FAILED: AtomicBool = AtomicBool::new(false);
@@ -72,6 +79,7 @@ pub fn run() {
         }
         let failed = ENGINE_FAILED.load(Ordering::SeqCst)
             || !ROOT_PRESENT.load(Ordering::SeqCst)
+            || !fonts_ok
             || smoke::failed();
         if failed {
             eprintln!("crumb-desktop: smoke test failed");
