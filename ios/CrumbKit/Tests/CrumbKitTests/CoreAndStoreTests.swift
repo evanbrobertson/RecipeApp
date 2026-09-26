@@ -44,13 +44,13 @@ final class CoreBindingsTests: XCTestCase {
   }
 
   func testFlagWording() throws {
-    let fixed = try JSONDecoder().decode(
-      Flag.self,
-      from: Data(#"{"id":1,"field":"ingredients","itemText":"Sauce:","kind":"heading","state":"fixed","detail":{"fix":"heading"}}"#.utf8))
+    let fixedJSON =
+      #"{"id":1,"field":"ingredients","itemText":"Sauce:","kind":"heading","state":"fixed","#
+      + #""detail":{"fix":"heading"}}"#
+    let fixed = try JSONDecoder().decode(Flag.self, from: Data(fixedJSON.utf8))
     XCTAssertEqual(RecipeText.flagText(fixed), "Made “Sauce:” a section heading")
-    let review = try JSONDecoder().decode(
-      Flag.self,
-      from: Data(#"{"id":2,"field":"ingredients","itemText":"salt and pepper","kind":"merged","state":"review"}"#.utf8))
+    let reviewJSON = #"{"id":2,"field":"ingredients","itemText":"salt and pepper","kind":"merged","state":"review"}"#
+    let review = try JSONDecoder().decode(Flag.self, from: Data(reviewJSON.utf8))
     XCTAssertEqual(RecipeText.flagText(review), "“salt and pepper” might be two ingredients on one line")
   }
 }

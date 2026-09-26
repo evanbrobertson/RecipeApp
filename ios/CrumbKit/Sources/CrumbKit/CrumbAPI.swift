@@ -233,8 +233,8 @@ public final class CrumbAPI: @unchecked Sendable {
 
   /// `DELETE /api/recipes/{id}/cooked?event=`: undo one logged cook.
   public func undoCooked(id: Int64, eventId: Int64) async throws {
-    _ = try await send(
-      request("api/recipes/\(id)/cooked", method: "DELETE", query: [URLQueryItem(name: "event", value: String(eventId))]))
+    let query = [URLQueryItem(name: "event", value: String(eventId))]
+    _ = try await send(request("api/recipes/\(id)/cooked", method: "DELETE", query: query))
   }
 
   /// `GET /api/recipes/{id}/export?format=json|md`.
@@ -431,8 +431,8 @@ public final class CrumbAPI: @unchecked Sendable {
 
   private func download(_ request: URLRequest, fallbackName: String) async throws -> Download {
     let (data, response) = try await send(request)
-    let type = response.value(forHTTPHeaderField: "Content-Type")?
-      .split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+    let contentType = response.value(forHTTPHeaderField: "Content-Type") ?? ""
+    let type = contentType.split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
     return Download(
       fileName: Self.fileName(response.value(forHTTPHeaderField: "Content-Disposition"), fallback: fallbackName),
       mimeType: type, data: data)
@@ -502,10 +502,9 @@ struct MultipartForm {
 
   mutating func addFile(name: String, fileName: String, mimeType: String, data: Data) {
     let safeName = fileName.replacingOccurrences(of: "\"", with: "'")
-    body.append(
-      Data(
-        "--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(safeName)\"\r\nContent-Type: \(mimeType.isEmpty ? "application/octet-stream" : mimeType)\r\n\r\n"
-          .utf8))
+    let type = mimeType.isEmpty ? "application/octet-stream" : mimeType
+    let disposition = "form-data; name=\"\(name)\"; filename=\"\(safeName)\""
+    body.append(Data("--\(boundary)\r\nContent-Disposition: \(disposition)\r\nContent-Type: \(type)\r\n\r\n".utf8))
     body.append(data)
     body.append(Data("\r\n".utf8))
   }

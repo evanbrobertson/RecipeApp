@@ -13,7 +13,10 @@ public protocol SecretStore: Sendable {
 
 /// App Group shared by the app and the Share extension (project.yml's entitlements).
 public enum AppGroup {
-  public static let id = "group.app.crumb.ios"
+  /// `group.<bundle id>`, from the `CrumbAppGroup` Info.plist key (Config/Crumb.xcconfig).
+  public static var id: String {
+    (Bundle.main.object(forInfoDictionaryKey: "CrumbAppGroup") as? String) ?? "group.app.crumb.ios"
+  }
 
   /// Settings both targets read: the server address, the theme. Falls back to the app's
   /// own defaults if the group isn't available (an unsigned build).

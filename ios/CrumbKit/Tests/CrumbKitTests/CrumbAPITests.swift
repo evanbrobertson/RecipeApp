@@ -80,7 +80,9 @@ final class CrumbAPITests: XCTestCase {
 
   func testImportOfASharedCookbook() async throws {
     StubServer.reply { _ in
-      .init(body: #"{"id":9,"title":"Bakes","isNew":true,"cookbook":{"id":9,"name":"Bakes","added":4,"duplicates":1}}"#)
+      .init(
+        body: #"{"id":9,"title":"Bakes","isNew":true,"#
+          + #""cookbook":{"id":9,"name":"Bakes","added":4,"duplicates":1}}"#)
     }
     let result = try await makeAPI().importURL("https://other.example/s/abcdefghijklmnop")
     XCTAssertEqual(result.cookbook?.id, 9)
@@ -111,7 +113,8 @@ final class CrumbAPITests: XCTestCase {
 
   func testValidationMessagesLoseTheirFieldPrefix() async {
     StubServer.reply { _ in
-      .init(status: 400, body: #"{"statusCode":400,"statusMessage":"Bad Request","message":"title: Title is required"}"#)
+      .init(
+        status: 400, body: #"{"statusCode":400,"statusMessage":"Bad Request","message":"title: Title is required"}"#)
     }
     do {
       _ = try await makeAPI().createRecipe(RecipeFields(title: ""))
@@ -159,8 +162,8 @@ final class CrumbAPITests: XCTestCase {
       switch request.url?.path {
       case "/api/suggestions":
         return .init(
-          body: #"{"items":[{"recipe":{"id":1,"title":"Soup"},"reason":"Not cooked in a while","reasonKind":"rest"}],"ai":"ready"}"#
-        )
+          body: #"{"items":[{"recipe":{"id":1,"title":"Soup"},"reason":"Not cooked in a while","#
+            + #""reasonKind":"rest"}],"ai":"ready"}"#)
       case "/api/checks":
         return .init(body: #"{"enabled":true,"eligible":10,"checked":10,"toCheck":2}"#)
       default:

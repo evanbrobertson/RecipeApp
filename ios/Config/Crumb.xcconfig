@@ -1,0 +1,8 @@
+// Identifiers and signing for every target. The app is CRUMB_BUNDLE_ID, the Share
+// extension CRUMB_BUNDLE_ID.share, and they share the App Group group.CRUMB_BUNDLE_ID and
+// the Keychain group CRUMB_BUNDLE_ID.shared. To sign with your own Apple team, copy
+// Local.xcconfig.example to Local.xcconfig (git-ignored) and fill it in.
+CRUMB_BUNDLE_ID = app.crumb.ios
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

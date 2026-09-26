@@ -49,14 +49,20 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/master' }}
       - run: scripts/build-core.sh --quick
-      - name: swift-format
-        run: |
-          xcrun swift-format lint --strict --recursive --parallel --configuration .swift-format \
-            CrumbKit/Package.swift CrumbKit/Sources/CrumbKit CrumbKit/Tests \
-            Crumb CrumbShare CrumbTests CrumbUITests
       - name: swift test
         working-directory: ios/CrumbKit
         run: swift test --parallel
+      # Formats in place and fails on any difference, printing the patch to apply
+      # (the same as running scripts/format.sh locally)
+      - name: swift-format
+        if: ${{ !cancelled() }}
+        run: |
+          scripts/format.sh
+          git diff --exit-code -- . || {
+            echo "::error::Swift files aren't formatted. Run ios/scripts/format.sh, or apply the diff above."
+            exit 1
+          }
+          scripts/format.sh --lint
 
   app:
     name: App (unit + UI tests, Release build)
