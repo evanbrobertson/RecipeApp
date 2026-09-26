@@ -1,0 +1,4374 @@
+{
+  "parseNumber": [
+    {
+      "input": "1",
+      "output": 1
+    },
+    {
+      "input": "12",
+      "output": 12
+    },
+    {
+      "input": "1/2",
+      "output": 0.5
+    },
+    {
+      "input": "1 1/2",
+      "output": 1.5
+    },
+    {
+      "input": "1½",
+      "output": 1.5
+    },
+    {
+      "input": "½",
+      "output": 0.5
+    },
+    {
+      "input": "⅓",
+      "output": 0.3333333333333333
+    },
+    {
+      "input": ".5",
+      "output": 0.5
+    },
+    {
+      "input": "0.75",
+      "output": 0.75
+    },
+    {
+      "input": "2 ¾",
+      "output": 2.75
+    },
+    {
+      "input": "",
+      "output": null
+    },
+    {
+      "input": "abc",
+      "output": null
+    },
+    {
+      "input": "1/0",
+      "output": null
+    },
+    {
+      "input": "3-4",
+      "output": null
+    }
+  ],
+  "parseIngredient": [
+    {
+      "input": "2 cups flour",
+      "output": {
+        "raw": "2 cups flour",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "flour",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 1/2 cups flour, sifted",
+      "output": {
+        "raw": "1 1/2 cups flour, sifted",
+        "quantity": 1.5,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "flour",
+        "prep": "sifted"
+      }
+    },
+    {
+      "input": "1½ tsp salt",
+      "output": {
+        "raw": "1½ tsp salt",
+        "quantity": 1.5,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "salt",
+        "prep": null
+      }
+    },
+    {
+      "input": "½ cup sugar",
+      "output": {
+        "raw": "½ cup sugar",
+        "quantity": 0.5,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "sugar",
+        "prep": null
+      }
+    },
+    {
+      "input": "3 eggs",
+      "output": {
+        "raw": "3 eggs",
+        "quantity": 3,
+        "quantityMax": null,
+        "unit": null,
+        "name": "eggs",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 onion, finely chopped",
+      "output": {
+        "raw": "1 onion, finely chopped",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "onion",
+        "prep": "finely chopped"
+      }
+    },
+    {
+      "input": "2-3 cloves garlic",
+      "output": {
+        "raw": "2-3 cloves garlic",
+        "quantity": 2,
+        "quantityMax": 3,
+        "unit": "clove",
+        "name": "garlic",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 to 3 tbsp oil",
+      "output": {
+        "raw": "2 to 3 tbsp oil",
+        "quantity": 2,
+        "quantityMax": 3,
+        "unit": "tbsp",
+        "name": "oil",
+        "prep": null
+      }
+    },
+    {
+      "input": "1–2 cups stock",
+      "output": {
+        "raw": "1–2 cups stock",
+        "quantity": 1,
+        "quantityMax": 2,
+        "unit": "cup",
+        "name": "stock",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 t salt",
+      "output": {
+        "raw": "1 t salt",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "salt",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 T butter",
+      "output": {
+        "raw": "1 T butter",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "butter",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 Tbsp honey",
+      "output": {
+        "raw": "2 Tbsp honey",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "honey",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 TSP vanilla",
+      "output": {
+        "raw": "1 TSP vanilla",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "vanilla",
+        "prep": null
+      }
+    },
+    {
+      "input": "a pinch of salt",
+      "output": {
+        "raw": "a pinch of salt",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "pinch",
+        "name": "salt",
+        "prep": null
+      }
+    },
+    {
+      "input": "an onion",
+      "output": {
+        "raw": "an onion",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "onion",
+        "prep": null
+      }
+    },
+    {
+      "input": "one lemon",
+      "output": {
+        "raw": "one lemon",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "lemon",
+        "prep": null
+      }
+    },
+    {
+      "input": "a few sprigs thyme",
+      "output": {
+        "raw": "a few sprigs thyme",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "few sprigs thyme",
+        "prep": null
+      }
+    },
+    {
+      "input": "a couple of eggs",
+      "output": {
+        "raw": "a couple of eggs",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "couple of eggs",
+        "prep": null
+      }
+    },
+    {
+      "input": "some parsley",
+      "output": {
+        "raw": "some parsley",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "parsley",
+        "prep": null
+      }
+    },
+    {
+      "input": "▢ 1 cup rice",
+      "output": {
+        "raw": "▢ 1 cup rice",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "rice",
+        "prep": null
+      }
+    },
+    {
+      "input": "☐ 2 eggs",
+      "output": {
+        "raw": "☐ 2 eggs",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": null,
+        "name": "eggs",
+        "prep": null
+      }
+    },
+    {
+      "input": "• 1 tsp cumin",
+      "output": {
+        "raw": "• 1 tsp cumin",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "cumin",
+        "prep": null
+      }
+    },
+    {
+      "input": "* 3 carrots",
+      "output": {
+        "raw": "* 3 carrots",
+        "quantity": 3,
+        "quantityMax": null,
+        "unit": null,
+        "name": "carrots",
+        "prep": null
+      }
+    },
+    {
+      "input": "✔ 1 lime",
+      "output": {
+        "raw": "✔ 1 lime",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "lime",
+        "prep": null
+      }
+    },
+    {
+      "input": "salt and pepper to taste",
+      "output": {
+        "raw": "salt and pepper to taste",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "salt and pepper to taste",
+        "prep": null
+      }
+    },
+    {
+      "input": "Fresh basil, for garnish",
+      "output": {
+        "raw": "Fresh basil, for garnish",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "Fresh basil",
+        "prep": "for garnish"
+      }
+    },
+    {
+      "input": "oil for frying",
+      "output": {
+        "raw": "oil for frying",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "oil for frying",
+        "prep": null
+      }
+    },
+    {
+      "input": "1 (14 oz) can diced tomatoes",
+      "output": {
+        "raw": "1 (14 oz) can diced tomatoes",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "can",
+        "name": "diced tomatoes",
+        "prep": "14 oz"
+      }
+    },
+    {
+      "input": "2 cups (250 g) flour",
+      "output": {
+        "raw": "2 cups (250 g) flour",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "flour",
+        "prep": "250 g"
+      }
+    },
+    {
+      "input": "1 lb. chicken thighs",
+      "output": {
+        "raw": "1 lb. chicken thighs",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "lb",
+        "name": "chicken thighs",
+        "prep": null
+      }
+    },
+    {
+      "input": "200g butter, softened",
+      "output": {
+        "raw": "200g butter, softened",
+        "quantity": 200,
+        "quantityMax": null,
+        "unit": "g",
+        "name": "butter",
+        "prep": "softened"
+      }
+    },
+    {
+      "input": "1 kg potatoes",
+      "output": {
+        "raw": "1 kg potatoes",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "kg",
+        "name": "potatoes",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 jalapeños, seeded",
+      "output": {
+        "raw": "2 jalapeños, seeded",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": null,
+        "name": "jalapeños",
+        "prep": "seeded"
+      }
+    },
+    {
+      "input": "1 cup crème fraîche",
+      "output": {
+        "raw": "1 cup crème fraîche",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "crème fraîche",
+        "prep": null
+      }
+    },
+    {
+      "input": "3 chiles",
+      "output": {
+        "raw": "3 chiles",
+        "quantity": 3,
+        "quantityMax": null,
+        "unit": null,
+        "name": "chiles",
+        "prep": null
+      }
+    },
+    {
+      "input": "",
+      "output": {
+        "raw": "",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "",
+        "prep": null
+      }
+    },
+    {
+      "input": "   ",
+      "output": {
+        "raw": "   ",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "",
+        "prep": null
+      }
+    },
+    {
+      "input": "1",
+      "output": {
+        "raw": "1",
+        "quantity": 1,
+        "quantityMax": null,
+        "unit": null,
+        "name": "1",
+        "prep": null
+      }
+    },
+    {
+      "input": "cups",
+      "output": {
+        "raw": "cups",
+        "quantity": null,
+        "quantityMax": null,
+        "unit": null,
+        "name": "cups",
+        "prep": null
+      }
+    },
+    {
+      "input": "1/2",
+      "output": {
+        "raw": "1/2",
+        "quantity": 0.5,
+        "quantityMax": null,
+        "unit": null,
+        "name": "1/2",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 large eggs, beaten",
+      "output": {
+        "raw": "2 large eggs, beaten",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": null,
+        "name": "large eggs",
+        "prep": "beaten"
+      }
+    },
+    {
+      "input": "2 teaspoons water",
+      "output": {
+        "raw": "2 teaspoons water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 teaspoon water",
+      "output": {
+        "raw": "2 teaspoon water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tsps water",
+      "output": {
+        "raw": "2 tsps water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tsp water",
+      "output": {
+        "raw": "2 tsp water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 t water",
+      "output": {
+        "raw": "2 t water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tablespoons water",
+      "output": {
+        "raw": "2 tablespoons water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tablespoon water",
+      "output": {
+        "raw": "2 tablespoon water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tbsps water",
+      "output": {
+        "raw": "2 tbsps water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tbsp water",
+      "output": {
+        "raw": "2 tbsp water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tbs water",
+      "output": {
+        "raw": "2 tbs water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tbl water",
+      "output": {
+        "raw": "2 tbl water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 T water",
+      "output": {
+        "raw": "2 T water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "tbsp",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 cups water",
+      "output": {
+        "raw": "2 cups water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 cup water",
+      "output": {
+        "raw": "2 cup water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 c water",
+      "output": {
+        "raw": "2 c water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "cup",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 milliliters water",
+      "output": {
+        "raw": "2 milliliters water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 millilitres water",
+      "output": {
+        "raw": "2 millilitres water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 milliliter water",
+      "output": {
+        "raw": "2 milliliter water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 millilitre water",
+      "output": {
+        "raw": "2 millilitre water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 ml water",
+      "output": {
+        "raw": "2 ml water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 mL water",
+      "output": {
+        "raw": "2 mL water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "ml",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 liters water",
+      "output": {
+        "raw": "2 liters water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 litres water",
+      "output": {
+        "raw": "2 litres water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 liter water",
+      "output": {
+        "raw": "2 liter water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 litre water",
+      "output": {
+        "raw": "2 litre water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 l water",
+      "output": {
+        "raw": "2 l water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 L water",
+      "output": {
+        "raw": "2 L water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "l",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 fluid ounces water",
+      "output": {
+        "raw": "2 fluid ounces water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "fl oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 fluid ounce water",
+      "output": {
+        "raw": "2 fluid ounce water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "fl oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 fl oz water",
+      "output": {
+        "raw": "2 fl oz water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "fl oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 fl. oz. water",
+      "output": {
+        "raw": "2 fl. oz. water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "fl oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 ounces water",
+      "output": {
+        "raw": "2 ounces water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 ounce water",
+      "output": {
+        "raw": "2 ounce water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 oz water",
+      "output": {
+        "raw": "2 oz water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "oz",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pounds water",
+      "output": {
+        "raw": "2 pounds water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "lb",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pound water",
+      "output": {
+        "raw": "2 pound water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "lb",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 lbs water",
+      "output": {
+        "raw": "2 lbs water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "lb",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 lb water",
+      "output": {
+        "raw": "2 lb water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "lb",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 grams water",
+      "output": {
+        "raw": "2 grams water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "g",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 gram water",
+      "output": {
+        "raw": "2 gram water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "g",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 g water",
+      "output": {
+        "raw": "2 g water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "g",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 gr water",
+      "output": {
+        "raw": "2 gr water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "g",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 kilograms water",
+      "output": {
+        "raw": "2 kilograms water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "kg",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 kilogram water",
+      "output": {
+        "raw": "2 kilogram water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "kg",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 kg water",
+      "output": {
+        "raw": "2 kg water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "kg",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pinches water",
+      "output": {
+        "raw": "2 pinches water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "pinch",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pinch water",
+      "output": {
+        "raw": "2 pinch water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "pinch",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 dashes water",
+      "output": {
+        "raw": "2 dashes water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "dash",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 dash water",
+      "output": {
+        "raw": "2 dash water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "dash",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 cloves water",
+      "output": {
+        "raw": "2 cloves water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "clove",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 clove water",
+      "output": {
+        "raw": "2 clove water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "clove",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 cans water",
+      "output": {
+        "raw": "2 cans water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "can",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 can water",
+      "output": {
+        "raw": "2 can water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "can",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tins water",
+      "output": {
+        "raw": "2 tins water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "can",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 tin water",
+      "output": {
+        "raw": "2 tin water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "can",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 sticks water",
+      "output": {
+        "raw": "2 sticks water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "stick",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 stick water",
+      "output": {
+        "raw": "2 stick water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "stick",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 slices water",
+      "output": {
+        "raw": "2 slices water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "slice",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 slice water",
+      "output": {
+        "raw": "2 slice water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "slice",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 bunches water",
+      "output": {
+        "raw": "2 bunches water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "bunch",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 bunch water",
+      "output": {
+        "raw": "2 bunch water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "bunch",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 sprigs water",
+      "output": {
+        "raw": "2 sprigs water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "sprig",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 sprig water",
+      "output": {
+        "raw": "2 sprig water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "sprig",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 handfuls water",
+      "output": {
+        "raw": "2 handfuls water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "handful",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 handful water",
+      "output": {
+        "raw": "2 handful water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "handful",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pieces water",
+      "output": {
+        "raw": "2 pieces water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "piece",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 piece water",
+      "output": {
+        "raw": "2 piece water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "piece",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 packages water",
+      "output": {
+        "raw": "2 packages water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "package",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 package water",
+      "output": {
+        "raw": "2 package water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "package",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 packets water",
+      "output": {
+        "raw": "2 packets water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "package",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 packet water",
+      "output": {
+        "raw": "2 packet water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "package",
+        "name": "water",
+        "prep": null
+      }
+    },
+    {
+      "input": "2 pkg water",
+      "output": {
+        "raw": "2 pkg water",
+        "quantity": 2,
+        "quantityMax": null,
+        "unit": "package",
+        "name": "water",
+        "prep": null
+      }
+    }
+  ],
+  "formatQuantity": [
+    {
+      "input": 0,
+      "output": "0"
+    },
+    {
+      "input": 0.125,
+      "output": "⅛"
+    },
+    {
+      "input": 0.25,
+      "output": "¼"
+    },
+    {
+      "input": 0.3333333333333333,
+      "output": "⅓"
+    },
+    {
+      "input": 0.5,
+      "output": "½"
+    },
+    {
+      "input": 0.6666666666666666,
+      "output": "⅔"
+    },
+    {
+      "input": 0.75,
+      "output": "¾"
+    },
+    {
+      "input": 1,
+      "output": "1"
+    },
+    {
+      "input": 1.5,
+      "output": "1 ½"
+    },
+    {
+      "input": 1.25,
+      "output": "1 ¼"
+    },
+    {
+      "input": 1.333333,
+      "output": "1 ⅓"
+    },
+    {
+      "input": 2.5,
+      "output": "2 ½"
+    },
+    {
+      "input": 3,
+      "output": "3"
+    },
+    {
+      "input": 0.1,
+      "output": "0.1"
+    },
+    {
+      "input": 0.05,
+      "output": "0.05"
+    },
+    {
+      "input": 1.005,
+      "output": "1"
+    },
+    {
+      "input": 2.675,
+      "output": "2 ⅔"
+    },
+    {
+      "input": 10,
+      "output": "10"
+    },
+    {
+      "input": 12.5,
+      "output": "13"
+    },
+    {
+      "input": 100,
+      "output": "100"
+    },
+    {
+      "input": 0.3333333333,
+      "output": "⅓"
+    },
+    {
+      "input": 0.875,
+      "output": "⅞"
+    },
+    {
+      "input": 0.2,
+      "output": "0.2"
+    },
+    {
+      "input": 0.4,
+      "output": "0.4"
+    },
+    {
+      "input": 0.35,
+      "output": "⅓"
+    },
+    {
+      "input": 0.45,
+      "output": "0.5"
+    },
+    {
+      "input": 0.55,
+      "output": "0.6"
+    },
+    {
+      "input": 0.6,
+      "output": "0.6"
+    },
+    {
+      "input": 0.9,
+      "output": "0.9"
+    },
+    {
+      "input": 1.1,
+      "output": "1.1"
+    },
+    {
+      "input": 2.7,
+      "output": "2.7"
+    },
+    {
+      "input": 0.95,
+      "output": "1"
+    },
+    {
+      "input": 0.06,
+      "output": "0.1"
+    },
+    {
+      "input": 0.04,
+      "output": "0.04"
+    },
+    {
+      "input": 1.05,
+      "output": "1"
+    },
+    {
+      "input": 2.05,
+      "output": "2"
+    },
+    {
+      "input": 0.15,
+      "output": "⅙"
+    }
+  ],
+  "scaleIngredient": [
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 0.5
+      },
+      "output": "1 cups flour"
+    },
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 1
+      },
+      "output": "2 cups flour"
+    },
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 1.5
+      },
+      "output": "3 cups flour"
+    },
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 2
+      },
+      "output": "4 cups flour"
+    },
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 3
+      },
+      "output": "6 cups flour"
+    },
+    {
+      "input": {
+        "raw": "2 cups flour",
+        "factor": 0.25
+      },
+      "output": "½ cups flour"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 0.5
+      },
+      "output": "¾ cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 1
+      },
+      "output": "1 1/2 cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 1.5
+      },
+      "output": "2 ¼ cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 2
+      },
+      "output": "3 cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 3
+      },
+      "output": "4 ½ cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1 1/2 cups flour, sifted",
+        "factor": 0.25
+      },
+      "output": "⅜ cups flour, sifted"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 0.5
+      },
+      "output": "¾ tsp salt"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 1
+      },
+      "output": "1½ tsp salt"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 1.5
+      },
+      "output": "2 ¼ tsp salt"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 2
+      },
+      "output": "3 tsp salt"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 3
+      },
+      "output": "4 ½ tsp salt"
+    },
+    {
+      "input": {
+        "raw": "1½ tsp salt",
+        "factor": 0.25
+      },
+      "output": "⅜ tsp salt"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 0.5
+      },
+      "output": "¼ cup sugar"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 1
+      },
+      "output": "½ cup sugar"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 1.5
+      },
+      "output": "¾ cup sugar"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 2
+      },
+      "output": "1 cup sugar"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 3
+      },
+      "output": "1 ½ cup sugar"
+    },
+    {
+      "input": {
+        "raw": "½ cup sugar",
+        "factor": 0.25
+      },
+      "output": "⅛ cup sugar"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 0.5
+      },
+      "output": "1 ½ eggs"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 1
+      },
+      "output": "3 eggs"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 1.5
+      },
+      "output": "4 ½ eggs"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 2
+      },
+      "output": "6 eggs"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 3
+      },
+      "output": "9 eggs"
+    },
+    {
+      "input": {
+        "raw": "3 eggs",
+        "factor": 0.25
+      },
+      "output": "¾ eggs"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 0.5
+      },
+      "output": "½ onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 1
+      },
+      "output": "1 onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 1.5
+      },
+      "output": "1 ½ onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 2
+      },
+      "output": "2 onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 3
+      },
+      "output": "3 onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "1 onion, finely chopped",
+        "factor": 0.25
+      },
+      "output": "¼ onion, finely chopped"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 0.5
+      },
+      "output": "1-1 ½ cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 1
+      },
+      "output": "2-3 cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 1.5
+      },
+      "output": "3-4 ½ cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 2
+      },
+      "output": "4-6 cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 3
+      },
+      "output": "6-9 cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2-3 cloves garlic",
+        "factor": 0.25
+      },
+      "output": "½-¾ cloves garlic"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 0.5
+      },
+      "output": "1 to 1 ½ tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 1
+      },
+      "output": "2 to 3 tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 1.5
+      },
+      "output": "3 to 4 ½ tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 2
+      },
+      "output": "4 to 6 tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 3
+      },
+      "output": "6 to 9 tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "2 to 3 tbsp oil",
+        "factor": 0.25
+      },
+      "output": "½ to ¾ tbsp oil"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 0.5
+      },
+      "output": "½–1 cups stock"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 1
+      },
+      "output": "1–2 cups stock"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 1.5
+      },
+      "output": "1 ½–3 cups stock"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 2
+      },
+      "output": "2–4 cups stock"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 3
+      },
+      "output": "3–6 cups stock"
+    },
+    {
+      "input": {
+        "raw": "1–2 cups stock",
+        "factor": 0.25
+      },
+      "output": "¼–½ cups stock"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 0.5
+      },
+      "output": "½ t salt"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 1
+      },
+      "output": "1 t salt"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 1.5
+      },
+      "output": "1 ½ t salt"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 2
+      },
+      "output": "2 t salt"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 3
+      },
+      "output": "3 t salt"
+    },
+    {
+      "input": {
+        "raw": "1 t salt",
+        "factor": 0.25
+      },
+      "output": "¼ t salt"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 0.5
+      },
+      "output": "½ T butter"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 1
+      },
+      "output": "1 T butter"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 1.5
+      },
+      "output": "1 ½ T butter"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 2
+      },
+      "output": "2 T butter"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 3
+      },
+      "output": "3 T butter"
+    },
+    {
+      "input": {
+        "raw": "1 T butter",
+        "factor": 0.25
+      },
+      "output": "¼ T butter"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 0.5
+      },
+      "output": "1 Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 1
+      },
+      "output": "2 Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 1.5
+      },
+      "output": "3 Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 2
+      },
+      "output": "4 Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 3
+      },
+      "output": "6 Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "2 Tbsp honey",
+        "factor": 0.25
+      },
+      "output": "½ Tbsp honey"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 0.5
+      },
+      "output": "½ TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 1
+      },
+      "output": "1 TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 1.5
+      },
+      "output": "1 ½ TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 2
+      },
+      "output": "2 TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 3
+      },
+      "output": "3 TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "1 TSP vanilla",
+        "factor": 0.25
+      },
+      "output": "¼ TSP vanilla"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 0.5
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 1
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 1.5
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 2
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 3
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "a pinch of salt",
+        "factor": 0.25
+      },
+      "output": "a pinch of salt"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 0.5
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 1
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 1.5
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 2
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 3
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "an onion",
+        "factor": 0.25
+      },
+      "output": "an onion"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 0.5
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 1
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 1.5
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 2
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 3
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "one lemon",
+        "factor": 0.25
+      },
+      "output": "one lemon"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 0.5
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 1
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 1.5
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 2
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 3
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a few sprigs thyme",
+        "factor": 0.25
+      },
+      "output": "a few sprigs thyme"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 0.5
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 1
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 1.5
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 2
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 3
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "a couple of eggs",
+        "factor": 0.25
+      },
+      "output": "a couple of eggs"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 0.5
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 1
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 1.5
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 2
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 3
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "some parsley",
+        "factor": 0.25
+      },
+      "output": "some parsley"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 0.5
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 1
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 1.5
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 2
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 3
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "▢ 1 cup rice",
+        "factor": 0.25
+      },
+      "output": "▢ 1 cup rice"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 0.5
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 1
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 1.5
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 2
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 3
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "☐ 2 eggs",
+        "factor": 0.25
+      },
+      "output": "☐ 2 eggs"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 0.5
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 1
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 1.5
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 2
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 3
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "• 1 tsp cumin",
+        "factor": 0.25
+      },
+      "output": "• 1 tsp cumin"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 0.5
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 1
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 1.5
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 2
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 3
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "* 3 carrots",
+        "factor": 0.25
+      },
+      "output": "* 3 carrots"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 0.5
+      },
+      "output": "✔ 1 lime"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 1
+      },
+      "output": "✔ 1 lime"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 1.5
+      },
+      "output": "✔ 1 lime"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 2
+      },
+      "output": "✔ 1 lime"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 3
+      },
+      "output": "✔ 1 lime"
+    },
+    {
+      "input": {
+        "raw": "✔ 1 lime",
+        "factor": 0.25
+      },
+      "output": "✔ 1 lime"
+    }
+  ],
+  "pluralUnit": [
+    {
+      "input": {
+        "unit": "tsp",
+        "quantity": 0
+      },
+      "output": "tsp"
+    },
+    {
+      "input": {
+        "unit": "tsp",
+        "quantity": 0.5
+      },
+      "output": "tsp"
+    },
+    {
+      "input": {
+        "unit": "tsp",
+        "quantity": 1
+      },
+      "output": "tsp"
+    },
+    {
+      "input": {
+        "unit": "tsp",
+        "quantity": 1.5
+      },
+      "output": "tsp"
+    },
+    {
+      "input": {
+        "unit": "tsp",
+        "quantity": 2
+      },
+      "output": "tsp"
+    },
+    {
+      "input": {
+        "unit": "tbsp",
+        "quantity": 0
+      },
+      "output": "tbsp"
+    },
+    {
+      "input": {
+        "unit": "tbsp",
+        "quantity": 0.5
+      },
+      "output": "tbsp"
+    },
+    {
+      "input": {
+        "unit": "tbsp",
+        "quantity": 1
+      },
+      "output": "tbsp"
+    },
+    {
+      "input": {
+        "unit": "tbsp",
+        "quantity": 1.5
+      },
+      "output": "tbsp"
+    },
+    {
+      "input": {
+        "unit": "tbsp",
+        "quantity": 2
+      },
+      "output": "tbsp"
+    },
+    {
+      "input": {
+        "unit": "cup",
+        "quantity": 0
+      },
+      "output": "cup"
+    },
+    {
+      "input": {
+        "unit": "cup",
+        "quantity": 0.5
+      },
+      "output": "cup"
+    },
+    {
+      "input": {
+        "unit": "cup",
+        "quantity": 1
+      },
+      "output": "cup"
+    },
+    {
+      "input": {
+        "unit": "cup",
+        "quantity": 1.5
+      },
+      "output": "cups"
+    },
+    {
+      "input": {
+        "unit": "cup",
+        "quantity": 2
+      },
+      "output": "cups"
+    },
+    {
+      "input": {
+        "unit": "ml",
+        "quantity": 0
+      },
+      "output": "ml"
+    },
+    {
+      "input": {
+        "unit": "ml",
+        "quantity": 0.5
+      },
+      "output": "ml"
+    },
+    {
+      "input": {
+        "unit": "ml",
+        "quantity": 1
+      },
+      "output": "ml"
+    },
+    {
+      "input": {
+        "unit": "ml",
+        "quantity": 1.5
+      },
+      "output": "ml"
+    },
+    {
+      "input": {
+        "unit": "ml",
+        "quantity": 2
+      },
+      "output": "ml"
+    },
+    {
+      "input": {
+        "unit": "l",
+        "quantity": 0
+      },
+      "output": "l"
+    },
+    {
+      "input": {
+        "unit": "l",
+        "quantity": 0.5
+      },
+      "output": "l"
+    },
+    {
+      "input": {
+        "unit": "l",
+        "quantity": 1
+      },
+      "output": "l"
+    },
+    {
+      "input": {
+        "unit": "l",
+        "quantity": 1.5
+      },
+      "output": "l"
+    },
+    {
+      "input": {
+        "unit": "l",
+        "quantity": 2
+      },
+      "output": "l"
+    },
+    {
+      "input": {
+        "unit": "fl oz",
+        "quantity": 0
+      },
+      "output": "fl oz"
+    },
+    {
+      "input": {
+        "unit": "fl oz",
+        "quantity": 0.5
+      },
+      "output": "fl oz"
+    },
+    {
+      "input": {
+        "unit": "fl oz",
+        "quantity": 1
+      },
+      "output": "fl oz"
+    },
+    {
+      "input": {
+        "unit": "fl oz",
+        "quantity": 1.5
+      },
+      "output": "fl oz"
+    },
+    {
+      "input": {
+        "unit": "fl oz",
+        "quantity": 2
+      },
+      "output": "fl oz"
+    },
+    {
+      "input": {
+        "unit": "oz",
+        "quantity": 0
+      },
+      "output": "oz"
+    },
+    {
+      "input": {
+        "unit": "oz",
+        "quantity": 0.5
+      },
+      "output": "oz"
+    },
+    {
+      "input": {
+        "unit": "oz",
+        "quantity": 1
+      },
+      "output": "oz"
+    },
+    {
+      "input": {
+        "unit": "oz",
+        "quantity": 1.5
+      },
+      "output": "oz"
+    },
+    {
+      "input": {
+        "unit": "oz",
+        "quantity": 2
+      },
+      "output": "oz"
+    },
+    {
+      "input": {
+        "unit": "lb",
+        "quantity": 0
+      },
+      "output": "lb"
+    },
+    {
+      "input": {
+        "unit": "lb",
+        "quantity": 0.5
+      },
+      "output": "lb"
+    },
+    {
+      "input": {
+        "unit": "lb",
+        "quantity": 1
+      },
+      "output": "lb"
+    },
+    {
+      "input": {
+        "unit": "lb",
+        "quantity": 1.5
+      },
+      "output": "lb"
+    },
+    {
+      "input": {
+        "unit": "lb",
+        "quantity": 2
+      },
+      "output": "lb"
+    },
+    {
+      "input": {
+        "unit": "g",
+        "quantity": 0
+      },
+      "output": "g"
+    },
+    {
+      "input": {
+        "unit": "g",
+        "quantity": 0.5
+      },
+      "output": "g"
+    },
+    {
+      "input": {
+        "unit": "g",
+        "quantity": 1
+      },
+      "output": "g"
+    },
+    {
+      "input": {
+        "unit": "g",
+        "quantity": 1.5
+      },
+      "output": "g"
+    },
+    {
+      "input": {
+        "unit": "g",
+        "quantity": 2
+      },
+      "output": "g"
+    },
+    {
+      "input": {
+        "unit": "kg",
+        "quantity": 0
+      },
+      "output": "kg"
+    },
+    {
+      "input": {
+        "unit": "kg",
+        "quantity": 0.5
+      },
+      "output": "kg"
+    },
+    {
+      "input": {
+        "unit": "kg",
+        "quantity": 1
+      },
+      "output": "kg"
+    },
+    {
+      "input": {
+        "unit": "kg",
+        "quantity": 1.5
+      },
+      "output": "kg"
+    },
+    {
+      "input": {
+        "unit": "kg",
+        "quantity": 2
+      },
+      "output": "kg"
+    },
+    {
+      "input": {
+        "unit": "pinch",
+        "quantity": 0
+      },
+      "output": "pinch"
+    },
+    {
+      "input": {
+        "unit": "pinch",
+        "quantity": 0.5
+      },
+      "output": "pinch"
+    },
+    {
+      "input": {
+        "unit": "pinch",
+        "quantity": 1
+      },
+      "output": "pinch"
+    },
+    {
+      "input": {
+        "unit": "pinch",
+        "quantity": 1.5
+      },
+      "output": "pinches"
+    },
+    {
+      "input": {
+        "unit": "pinch",
+        "quantity": 2
+      },
+      "output": "pinches"
+    },
+    {
+      "input": {
+        "unit": "dash",
+        "quantity": 0
+      },
+      "output": "dash"
+    },
+    {
+      "input": {
+        "unit": "dash",
+        "quantity": 0.5
+      },
+      "output": "dash"
+    },
+    {
+      "input": {
+        "unit": "dash",
+        "quantity": 1
+      },
+      "output": "dash"
+    },
+    {
+      "input": {
+        "unit": "dash",
+        "quantity": 1.5
+      },
+      "output": "dashes"
+    },
+    {
+      "input": {
+        "unit": "dash",
+        "quantity": 2
+      },
+      "output": "dashes"
+    },
+    {
+      "input": {
+        "unit": "clove",
+        "quantity": 0
+      },
+      "output": "clove"
+    },
+    {
+      "input": {
+        "unit": "clove",
+        "quantity": 0.5
+      },
+      "output": "clove"
+    },
+    {
+      "input": {
+        "unit": "clove",
+        "quantity": 1
+      },
+      "output": "clove"
+    },
+    {
+      "input": {
+        "unit": "clove",
+        "quantity": 1.5
+      },
+      "output": "cloves"
+    },
+    {
+      "input": {
+        "unit": "clove",
+        "quantity": 2
+      },
+      "output": "cloves"
+    },
+    {
+      "input": {
+        "unit": "can",
+        "quantity": 0
+      },
+      "output": "can"
+    },
+    {
+      "input": {
+        "unit": "can",
+        "quantity": 0.5
+      },
+      "output": "can"
+    },
+    {
+      "input": {
+        "unit": "can",
+        "quantity": 1
+      },
+      "output": "can"
+    },
+    {
+      "input": {
+        "unit": "can",
+        "quantity": 1.5
+      },
+      "output": "cans"
+    },
+    {
+      "input": {
+        "unit": "can",
+        "quantity": 2
+      },
+      "output": "cans"
+    },
+    {
+      "input": {
+        "unit": "stick",
+        "quantity": 0
+      },
+      "output": "stick"
+    },
+    {
+      "input": {
+        "unit": "stick",
+        "quantity": 0.5
+      },
+      "output": "stick"
+    },
+    {
+      "input": {
+        "unit": "stick",
+        "quantity": 1
+      },
+      "output": "stick"
+    },
+    {
+      "input": {
+        "unit": "stick",
+        "quantity": 1.5
+      },
+      "output": "sticks"
+    },
+    {
+      "input": {
+        "unit": "stick",
+        "quantity": 2
+      },
+      "output": "sticks"
+    },
+    {
+      "input": {
+        "unit": "slice",
+        "quantity": 0
+      },
+      "output": "slice"
+    },
+    {
+      "input": {
+        "unit": "slice",
+        "quantity": 0.5
+      },
+      "output": "slice"
+    },
+    {
+      "input": {
+        "unit": "slice",
+        "quantity": 1
+      },
+      "output": "slice"
+    },
+    {
+      "input": {
+        "unit": "slice",
+        "quantity": 1.5
+      },
+      "output": "slices"
+    },
+    {
+      "input": {
+        "unit": "slice",
+        "quantity": 2
+      },
+      "output": "slices"
+    },
+    {
+      "input": {
+        "unit": "bunch",
+        "quantity": 0
+      },
+      "output": "bunch"
+    },
+    {
+      "input": {
+        "unit": "bunch",
+        "quantity": 0.5
+      },
+      "output": "bunch"
+    },
+    {
+      "input": {
+        "unit": "bunch",
+        "quantity": 1
+      },
+      "output": "bunch"
+    },
+    {
+      "input": {
+        "unit": "bunch",
+        "quantity": 1.5
+      },
+      "output": "bunches"
+    },
+    {
+      "input": {
+        "unit": "bunch",
+        "quantity": 2
+      },
+      "output": "bunches"
+    },
+    {
+      "input": {
+        "unit": "sprig",
+        "quantity": 0
+      },
+      "output": "sprig"
+    },
+    {
+      "input": {
+        "unit": "sprig",
+        "quantity": 0.5
+      },
+      "output": "sprig"
+    },
+    {
+      "input": {
+        "unit": "sprig",
+        "quantity": 1
+      },
+      "output": "sprig"
+    },
+    {
+      "input": {
+        "unit": "sprig",
+        "quantity": 1.5
+      },
+      "output": "sprigs"
+    },
+    {
+      "input": {
+        "unit": "sprig",
+        "quantity": 2
+      },
+      "output": "sprigs"
+    },
+    {
+      "input": {
+        "unit": "handful",
+        "quantity": 0
+      },
+      "output": "handful"
+    },
+    {
+      "input": {
+        "unit": "handful",
+        "quantity": 0.5
+      },
+      "output": "handful"
+    },
+    {
+      "input": {
+        "unit": "handful",
+        "quantity": 1
+      },
+      "output": "handful"
+    },
+    {
+      "input": {
+        "unit": "handful",
+        "quantity": 1.5
+      },
+      "output": "handfuls"
+    },
+    {
+      "input": {
+        "unit": "handful",
+        "quantity": 2
+      },
+      "output": "handfuls"
+    },
+    {
+      "input": {
+        "unit": "piece",
+        "quantity": 0
+      },
+      "output": "piece"
+    },
+    {
+      "input": {
+        "unit": "piece",
+        "quantity": 0.5
+      },
+      "output": "piece"
+    },
+    {
+      "input": {
+        "unit": "piece",
+        "quantity": 1
+      },
+      "output": "piece"
+    },
+    {
+      "input": {
+        "unit": "piece",
+        "quantity": 1.5
+      },
+      "output": "pieces"
+    },
+    {
+      "input": {
+        "unit": "piece",
+        "quantity": 2
+      },
+      "output": "pieces"
+    },
+    {
+      "input": {
+        "unit": "package",
+        "quantity": 0
+      },
+      "output": "package"
+    },
+    {
+      "input": {
+        "unit": "package",
+        "quantity": 0.5
+      },
+      "output": "package"
+    },
+    {
+      "input": {
+        "unit": "package",
+        "quantity": 1
+      },
+      "output": "package"
+    },
+    {
+      "input": {
+        "unit": "package",
+        "quantity": 1.5
+      },
+      "output": "packages"
+    },
+    {
+      "input": {
+        "unit": "package",
+        "quantity": 2
+      },
+      "output": "packages"
+    }
+  ],
+  "miseEnPlace": [
+    {
+      "input": [
+        "2 tbsp vegetable oil",
+        "1 onion, finely chopped",
+        "3 cloves garlic, minced",
+        "1 tbsp ginger, grated",
+        "2 tsp ground cumin",
+        "1 tsp ground coriander",
+        "1/2 tsp turmeric",
+        "400 ml coconut milk",
+        "2 cups chicken stock",
+        "500 g chicken thighs, diced",
+        "salt and pepper to taste"
+      ],
+      "output": [
+        {
+          "raw": "2 tbsp vegetable oil",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "vegetable oil",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 30,
+          "task": null
+        },
+        {
+          "raw": "1 onion, finely chopped",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": null,
+          "name": "onion",
+          "prep": "finely chopped",
+          "vessel": "board",
+          "volume": null,
+          "task": "chop"
+        },
+        {
+          "raw": "3 cloves garlic, minced",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": "clove",
+          "name": "garlic",
+          "prep": "minced",
+          "vessel": "board",
+          "volume": null,
+          "task": "mince"
+        },
+        {
+          "raw": "1 tbsp ginger, grated",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "ginger",
+          "prep": "grated",
+          "vessel": "ramekin",
+          "volume": 15,
+          "task": "grate"
+        },
+        {
+          "raw": "2 tsp ground cumin",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "ground cumin",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 10,
+          "task": null
+        },
+        {
+          "raw": "1 tsp ground coriander",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "ground coriander",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 5,
+          "task": null
+        },
+        {
+          "raw": "1/2 tsp turmeric",
+          "quantity": 0.5,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "turmeric",
+          "prep": null,
+          "vessel": "pinch",
+          "volume": 2.5,
+          "task": null
+        },
+        {
+          "raw": "400 ml coconut milk",
+          "quantity": 400,
+          "quantityMax": null,
+          "unit": "ml",
+          "name": "coconut milk",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 400,
+          "task": null
+        },
+        {
+          "raw": "2 cups chicken stock",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "chicken stock",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 480,
+          "task": null
+        },
+        {
+          "raw": "500 g chicken thighs, diced",
+          "quantity": 500,
+          "quantityMax": null,
+          "unit": "g",
+          "name": "chicken thighs",
+          "prep": "diced",
+          "vessel": "board",
+          "volume": null,
+          "task": "dice"
+        },
+        {
+          "raw": "salt and pepper to taste",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "salt and pepper to taste",
+          "prep": null,
+          "vessel": "jar",
+          "volume": null,
+          "task": null
+        }
+      ]
+    },
+    {
+      "input": [
+        "2 cups all-purpose flour",
+        "1 1/2 tsp baking powder",
+        "1/2 tsp salt",
+        "1 cup unsalted butter, softened",
+        "1 1/2 cups granulated sugar",
+        "3 large eggs",
+        "2 tsp vanilla extract",
+        "3/4 cup whole milk"
+      ],
+      "output": [
+        {
+          "raw": "2 cups all-purpose flour",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "all-purpose flour",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 480,
+          "task": null
+        },
+        {
+          "raw": "1 1/2 tsp baking powder",
+          "quantity": 1.5,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "baking powder",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 7.5,
+          "task": null
+        },
+        {
+          "raw": "1/2 tsp salt",
+          "quantity": 0.5,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "salt",
+          "prep": null,
+          "vessel": "pinch",
+          "volume": 2.5,
+          "task": null
+        },
+        {
+          "raw": "1 cup unsalted butter, softened",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "unsalted butter",
+          "prep": "softened",
+          "vessel": "medium",
+          "volume": 240,
+          "task": null
+        },
+        {
+          "raw": "1 1/2 cups granulated sugar",
+          "quantity": 1.5,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "granulated sugar",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 360,
+          "task": null
+        },
+        {
+          "raw": "3 large eggs",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": null,
+          "name": "large eggs",
+          "prep": null,
+          "vessel": "medium",
+          "volume": null,
+          "task": null
+        },
+        {
+          "raw": "2 tsp vanilla extract",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "vanilla extract",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 10,
+          "task": null
+        },
+        {
+          "raw": "3/4 cup whole milk",
+          "quantity": 0.75,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "whole milk",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 180,
+          "task": null
+        }
+      ]
+    },
+    {
+      "input": [
+        "2 cups mixed greens",
+        "1/4 cup fresh parsley, chopped",
+        "2 tbsp fresh dill, chopped",
+        "juice of 1 lemon",
+        "zest and juice of 2 limes",
+        "3 tbsp olive oil",
+        "1 cup cherry tomatoes, halved",
+        "1 cucumber, sliced"
+      ],
+      "output": [
+        {
+          "raw": "2 cups mixed greens",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "mixed greens",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 480,
+          "task": null
+        },
+        {
+          "raw": "1/4 cup fresh parsley, chopped",
+          "quantity": 0.25,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "fresh parsley",
+          "prep": "chopped",
+          "vessel": "small",
+          "volume": 60,
+          "task": "chop"
+        },
+        {
+          "raw": "2 tbsp fresh dill, chopped",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "fresh dill",
+          "prep": "chopped",
+          "vessel": "ramekin",
+          "volume": 30,
+          "task": "chop"
+        },
+        {
+          "raw": "juice of 1 lemon",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "juice of 1 lemon",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": null,
+          "task": "juice"
+        },
+        {
+          "raw": "zest and juice of 2 limes",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "zest and juice of 2 limes",
+          "prep": null,
+          "vessel": "small",
+          "volume": null,
+          "task": "juice"
+        },
+        {
+          "raw": "3 tbsp olive oil",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "olive oil",
+          "prep": null,
+          "vessel": "small",
+          "volume": 45,
+          "task": null
+        },
+        {
+          "raw": "1 cup cherry tomatoes, halved",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "cherry tomatoes",
+          "prep": "halved",
+          "vessel": "medium",
+          "volume": 240,
+          "task": "halve"
+        },
+        {
+          "raw": "1 cucumber, sliced",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": null,
+          "name": "cucumber",
+          "prep": "sliced",
+          "vessel": "board",
+          "volume": null,
+          "task": "slice"
+        }
+      ]
+    },
+    {
+      "input": [
+        "1 (28 oz) can crushed tomatoes",
+        "2 (14 oz) cans diced tomatoes",
+        "1 tbsp tomato paste",
+        "2 tbsp olive oil",
+        "1 onion, diced",
+        "3 cloves garlic, sliced"
+      ],
+      "output": [
+        {
+          "raw": "1 (28 oz) can crushed tomatoes",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "can",
+          "name": "crushed tomatoes",
+          "prep": "28 oz",
+          "vessel": "medium",
+          "volume": 400,
+          "task": null
+        },
+        {
+          "raw": "2 (14 oz) cans diced tomatoes",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "can",
+          "name": "diced tomatoes",
+          "prep": "14 oz",
+          "vessel": "large",
+          "volume": 800,
+          "task": null
+        },
+        {
+          "raw": "1 tbsp tomato paste",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "tomato paste",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 15,
+          "task": null
+        },
+        {
+          "raw": "2 tbsp olive oil",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "olive oil",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 30,
+          "task": null
+        },
+        {
+          "raw": "1 onion, diced",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": null,
+          "name": "onion",
+          "prep": "diced",
+          "vessel": "board",
+          "volume": null,
+          "task": "dice"
+        },
+        {
+          "raw": "3 cloves garlic, sliced",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": "clove",
+          "name": "garlic",
+          "prep": "sliced",
+          "vessel": "board",
+          "volume": null,
+          "task": "slice"
+        }
+      ]
+    },
+    {
+      "input": [
+        "1 tsp garlic powder",
+        "2 tsp onion powder",
+        "1 tsp smoked paprika",
+        "1/2 tsp cayenne pepper",
+        "1 tbsp chili powder",
+        "1 tsp dried oregano",
+        "1 bay leaf"
+      ],
+      "output": [
+        {
+          "raw": "1 tsp garlic powder",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "garlic powder",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 5,
+          "task": null
+        },
+        {
+          "raw": "2 tsp onion powder",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "onion powder",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 10,
+          "task": null
+        },
+        {
+          "raw": "1 tsp smoked paprika",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "smoked paprika",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 5,
+          "task": null
+        },
+        {
+          "raw": "1/2 tsp cayenne pepper",
+          "quantity": 0.5,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "cayenne pepper",
+          "prep": null,
+          "vessel": "pinch",
+          "volume": 2.5,
+          "task": null
+        },
+        {
+          "raw": "1 tbsp chili powder",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tbsp",
+          "name": "chili powder",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 15,
+          "task": null
+        },
+        {
+          "raw": "1 tsp dried oregano",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "tsp",
+          "name": "dried oregano",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 5,
+          "task": null
+        },
+        {
+          "raw": "1 bay leaf",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": null,
+          "name": "bay leaf",
+          "prep": null,
+          "vessel": "small",
+          "volume": null,
+          "task": null
+        }
+      ]
+    },
+    {
+      "input": [
+        "2 onions, diced",
+        "4 cloves garlic, minced",
+        "3 carrots, peeled and sliced",
+        "2 potatoes, cubed",
+        "1 head broccoli, cut into florets"
+      ],
+      "output": [
+        {
+          "raw": "2 onions, diced",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": null,
+          "name": "onions",
+          "prep": "diced",
+          "vessel": "board",
+          "volume": null,
+          "task": "dice"
+        },
+        {
+          "raw": "4 cloves garlic, minced",
+          "quantity": 4,
+          "quantityMax": null,
+          "unit": "clove",
+          "name": "garlic",
+          "prep": "minced",
+          "vessel": "board",
+          "volume": null,
+          "task": "mince"
+        },
+        {
+          "raw": "3 carrots, peeled and sliced",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": null,
+          "name": "carrots",
+          "prep": "peeled and sliced",
+          "vessel": "board",
+          "volume": null,
+          "task": "peel"
+        },
+        {
+          "raw": "2 potatoes, cubed",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": null,
+          "name": "potatoes",
+          "prep": "cubed",
+          "vessel": "board",
+          "volume": null,
+          "task": "cube"
+        },
+        {
+          "raw": "1 head broccoli, cut into florets",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": null,
+          "name": "head broccoli",
+          "prep": "cut into florets",
+          "vessel": "board",
+          "volume": null,
+          "task": "cut"
+        }
+      ]
+    },
+    {
+      "input": [
+        "juice of 1 lemon",
+        "juice of 2 oranges",
+        "zest of 1 lime"
+      ],
+      "output": [
+        {
+          "raw": "juice of 1 lemon",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "juice of 1 lemon",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": null,
+          "task": "juice"
+        },
+        {
+          "raw": "juice of 2 oranges",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "juice of 2 oranges",
+          "prep": null,
+          "vessel": "small",
+          "volume": null,
+          "task": "juice"
+        },
+        {
+          "raw": "zest of 1 lime",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "zest of 1 lime",
+          "prep": null,
+          "vessel": "board",
+          "volume": null,
+          "task": null
+        }
+      ]
+    },
+    {
+      "input": [
+        "500 g chicken thighs",
+        "1 lb beef, cubed",
+        "200g butter, softened",
+        "2 sticks celery, diced",
+        "3 lbs onions, sliced"
+      ],
+      "output": [
+        {
+          "raw": "500 g chicken thighs",
+          "quantity": 500,
+          "quantityMax": null,
+          "unit": "g",
+          "name": "chicken thighs",
+          "prep": null,
+          "vessel": "board",
+          "volume": null,
+          "task": null
+        },
+        {
+          "raw": "1 lb beef, cubed",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "lb",
+          "name": "beef",
+          "prep": "cubed",
+          "vessel": "board",
+          "volume": null,
+          "task": "cube"
+        },
+        {
+          "raw": "200g butter, softened",
+          "quantity": 200,
+          "quantityMax": null,
+          "unit": "g",
+          "name": "butter",
+          "prep": "softened",
+          "vessel": "medium",
+          "volume": 200,
+          "task": null
+        },
+        {
+          "raw": "2 sticks celery, diced",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": "stick",
+          "name": "celery",
+          "prep": "diced",
+          "vessel": "board",
+          "volume": null,
+          "task": "dice"
+        },
+        {
+          "raw": "3 lbs onions, sliced",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": "lb",
+          "name": "onions",
+          "prep": "sliced",
+          "vessel": "board",
+          "volume": null,
+          "task": "slice"
+        }
+      ]
+    },
+    {
+      "input": [
+        "salt and pepper to taste",
+        "oil for frying",
+        "fresh basil, for garnish",
+        "1 cup rice",
+        "2 eggs"
+      ],
+      "output": [
+        {
+          "raw": "salt and pepper to taste",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "salt and pepper to taste",
+          "prep": null,
+          "vessel": "jar",
+          "volume": null,
+          "task": null
+        },
+        {
+          "raw": "oil for frying",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "oil for frying",
+          "prep": null,
+          "vessel": "jar",
+          "volume": null,
+          "task": null
+        },
+        {
+          "raw": "fresh basil, for garnish",
+          "quantity": null,
+          "quantityMax": null,
+          "unit": null,
+          "name": "fresh basil",
+          "prep": "for garnish",
+          "vessel": "jar",
+          "volume": null,
+          "task": null
+        },
+        {
+          "raw": "1 cup rice",
+          "quantity": 1,
+          "quantityMax": null,
+          "unit": "cup",
+          "name": "rice",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 240,
+          "task": null
+        },
+        {
+          "raw": "2 eggs",
+          "quantity": 2,
+          "quantityMax": null,
+          "unit": null,
+          "name": "eggs",
+          "prep": null,
+          "vessel": "small",
+          "volume": null,
+          "task": null
+        }
+      ]
+    },
+    {
+      "input": [
+        "2-3 cloves garlic",
+        "1-2 tbsp olive oil",
+        "1–2 cups stock",
+        "3 eggs, beaten"
+      ],
+      "output": [
+        {
+          "raw": "2-3 cloves garlic",
+          "quantity": 2,
+          "quantityMax": 3,
+          "unit": "clove",
+          "name": "garlic",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 18,
+          "task": null
+        },
+        {
+          "raw": "1-2 tbsp olive oil",
+          "quantity": 1,
+          "quantityMax": 2,
+          "unit": "tbsp",
+          "name": "olive oil",
+          "prep": null,
+          "vessel": "ramekin",
+          "volume": 30,
+          "task": null
+        },
+        {
+          "raw": "1–2 cups stock",
+          "quantity": 1,
+          "quantityMax": 2,
+          "unit": "cup",
+          "name": "stock",
+          "prep": null,
+          "vessel": "medium",
+          "volume": 480,
+          "task": null
+        },
+        {
+          "raw": "3 eggs, beaten",
+          "quantity": 3,
+          "quantityMax": null,
+          "unit": null,
+          "name": "eggs",
+          "prep": "beaten",
+          "vessel": "medium",
+          "volume": null,
+          "task": null
+        }
+      ]
+    }
+  ],
+  "findTimers": [
+    {
+      "input": "Simmer for 20 minutes.",
+      "output": [
+        {
+          "label": "20 minutes",
+          "seconds": 1200
+        }
+      ]
+    },
+    {
+      "input": "Bake 1 hour",
+      "output": [
+        {
+          "label": "1 hour",
+          "seconds": 3600
+        }
+      ]
+    },
+    {
+      "input": "Rest 1-2 hours",
+      "output": [
+        {
+          "label": "1-2 hours",
+          "seconds": 7200
+        }
+      ]
+    },
+    {
+      "input": "Cook 30 seconds, then 5 mins",
+      "output": [
+        {
+          "label": "30 seconds",
+          "seconds": 30
+        },
+        {
+          "label": "5 mins",
+          "seconds": 300
+        }
+      ]
+    },
+    {
+      "input": "Roast for 1 hour 15 minutes",
+      "output": [
+        {
+          "label": "1 hour",
+          "seconds": 3600
+        },
+        {
+          "label": "15 minutes",
+          "seconds": 900
+        }
+      ]
+    },
+    {
+      "input": "Boil 10–12 min",
+      "output": [
+        {
+          "label": "10–12 min",
+          "seconds": 720
+        }
+      ]
+    },
+    {
+      "input": "Chill overnight",
+      "output": []
+    },
+    {
+      "input": "Stir well",
+      "output": []
+    },
+    {
+      "input": "Bake 45 min at 180C",
+      "output": [
+        {
+          "label": "45 min",
+          "seconds": 2700
+        }
+      ]
+    },
+    {
+      "input": "Cook for an hour",
+      "output": []
+    }
+  ],
+  "ingredientsForStep": [
+    {
+      "input": {
+        "step": {
+          "text": "Add the eggs and sugar",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "3 eggs",
+            "section": null
+          },
+          {
+            "raw": "1 cup sugar",
+            "section": null
+          },
+          {
+            "raw": "2 cups flour",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "3 eggs",
+          "section": null
+        },
+        {
+          "raw": "1 cup sugar",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Fold in the sugar",
+          "section": "Make the Filling"
+        },
+        "ingredients": [
+          {
+            "raw": "1/2 cup sugar",
+            "section": "Make the Filling"
+          },
+          {
+            "raw": "1 cup sugar",
+            "section": "Make the Crust"
+          },
+          {
+            "raw": "2 cups flour",
+            "section": "Make the Crust"
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "1/2 cup sugar",
+          "section": "Make the Filling"
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Beat the eggs",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "2 eggs",
+            "section": null
+          },
+          {
+            "raw": "1 egg white",
+            "section": null
+          },
+          {
+            "raw": "1 cup milk",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "2 eggs",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Drizzle the olive oil",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "2 tbsp olive oil",
+            "section": null
+          },
+          {
+            "raw": "1 tbsp oil",
+            "section": null
+          },
+          {
+            "raw": "1 tbsp vinegar",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "2 tbsp olive oil",
+          "section": null
+        },
+        {
+          "raw": "1 tbsp oil",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Add the pumpkin",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "1 cup pumpkin puree",
+            "section": null
+          },
+          {
+            "raw": "1 tsp pumpkin pie spice",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "1 cup pumpkin puree",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Add the garlic",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "3 cloves garlic, minced",
+            "section": null
+          },
+          {
+            "raw": "1 tsp garlic powder",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "3 cloves garlic, minced",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Preheat the oven to 180C",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "2 cups flour",
+            "section": null
+          },
+          {
+            "raw": "1 cup sugar",
+            "section": null
+          }
+        ]
+      },
+      "output": []
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Mix the flour",
+          "section": "For the Dough"
+        },
+        "ingredients": [
+          {
+            "raw": "2 cups flour",
+            "section": "Dough"
+          },
+          {
+            "raw": "1 cup flour",
+            "section": "Topping"
+          },
+          {
+            "raw": "1/2 cup sugar",
+            "section": "Topping"
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "2 cups flour",
+          "section": "Dough"
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Add tomatoes",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "2 tomatoes",
+            "section": null
+          },
+          {
+            "raw": "1 tsp tomato paste",
+            "section": null
+          },
+          {
+            "raw": "1 tbsp olive oil",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "2 tomatoes",
+          "section": null
+        }
+      ]
+    },
+    {
+      "input": {
+        "step": {
+          "text": "Stir in the tomatoes and basil",
+          "section": null
+        },
+        "ingredients": [
+          {
+            "raw": "2 tomatoes, chopped",
+            "section": null
+          },
+          {
+            "raw": "1/4 cup fresh basil",
+            "section": null
+          },
+          {
+            "raw": "1 tsp tomato paste",
+            "section": null
+          },
+          {
+            "raw": "2 cups rice",
+            "section": null
+          }
+        ]
+      },
+      "output": [
+        {
+          "raw": "2 tomatoes, chopped",
+          "section": null
+        },
+        {
+          "raw": "1/4 cup fresh basil",
+          "section": null
+        }
+      ]
+    }
+  ]
+}
