@@ -1,5 +1,6 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check"
+  import ChevronRight from "@lucide/svelte/icons/chevron-right"
   import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import ChefHat from "@lucide/svelte/icons/chef-hat"
   import Globe from "@lucide/svelte/icons/globe"
@@ -10,80 +11,16 @@
   import Moon from "@lucide/svelte/icons/moon"
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
-  import { api, errorMessage } from "../lib/api"
-  import { plural } from "../lib/checks"
+  import { api } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
-  import type { ChecksStatus, ConnectorInfo } from "../lib/recipe"
+  import type { ConnectorInfo } from "../lib/recipe"
   import type { ThemeMode } from "../lib/theme"
   import { toast } from "../lib/toast"
 
-  const page = pageState<{ connector: ConnectorInfo; checks?: ChecksStatus }>(async () => {
-    const connector = await api<ConnectorInfo>("/api/connector")
-    const checks = connector.weeChefChecks ? await api<ChecksStatus>("/api/checks") : undefined
-    return { connector, checks }
-  })
+  const page = pageState<{ connector: ConnectorInfo }>(async () => ({
+    connector: await api<ConnectorInfo>("/api/connector"),
+  }))
   const info = $derived(page.data?.connector)
-
-  // ─── Wee Chef checks every imported recipe (only when the server has a key) ───
-  let checks = $state<ChecksStatus | undefined>(page.data?.checks)
-  $effect(() => {
-    if (!checks && page.data?.checks) checks = page.data.checks
-  })
-  let starting = $state(false)
-  const running = $derived(!!checks && checks.pending > 0)
-  const checksText = $derived.by(() => {
-    const c = checks
-    if (!c) return ""
-    if (c.pending > 0) return `Checking… ${c.checked} of ${c.eligible} done`
-    const parts: string[] = []
-    if (c.due > 0) {
-      // Never checked, restored from a backup, or edited since Wee Chef last looked
-      const why = [
-        c.restored && `${c.restored} restored`,
-        c.edited && `${c.edited} edited since`,
-      ].filter(Boolean)
-      parts.push(`${plural(c.due, "recipe")} to check${why.length ? ` (${why.join(", ")})` : ""}`)
-      // On recipes already in the box it only suggests (plus an undoable symbol clean-up)
-      parts.push("suggests fixes, tidies only stray symbols")
-    } else if (c.checked < c.eligible) {
-      // The rest failed too often; a recipe's own menu can still try again
-      parts.push(`${c.checked} of ${c.eligible} checked`)
-    } else {
-      parts.push(`All ${plural(c.checked, "recipe")} checked`)
-    }
-    if (c.tidied) parts.push(`${plural(c.tidied, "thing")} tidied`)
-    if (c.toCheck) parts.push(`${plural(c.toCheck, "recipe")} to look at`)
-    return parts.join(" · ")
-  })
-
-  // Reads `checks` itself (not just `running`) so every fresh status schedules the next poll,
-  // until nothing is pending
-  $effect(() => {
-    const current = checks
-    if (!current || current.pending <= 0) return
-    let cancelled = false
-    const timer = setTimeout(async () => {
-      const next = await api<ChecksStatus>("/api/checks").catch(() => ({ ...current }))
-      if (!cancelled) checks = next
-    }, 1500)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  })
-
-  async function checkAll() {
-    if (starting || running) return
-    starting = true
-    try {
-      checks = await api<ChecksStatus>("/api/checks", { method: "POST" })
-      if (!checks.queued) toast({ title: "Every recipe has been checked" })
-    } catch (e) {
-      toast({ title: "Couldn't start the checks", description: errorMessage(e), tone: "error" })
-    } finally {
-      starting = false
-    }
-  }
 
   // ─── Theme (the logic lives in lib/theme-boot.js, inlined in the head) ───
   const theme = window.crumbTheme
@@ -297,23 +234,14 @@
         <!-- Always "Wee Chef", never the AI provider behind it -->
         {#if info.weeChef}<span class="meta flex-none">Wee Chef is on</span>{/if}
       </div>
-      {#if info.weeChefChecks && checks}
-        <button
-          type="button"
-          class="list-row settings-row w-full text-left"
-          disabled={running}
-          aria-busy={running}
-          onclick={checkAll}
-        >
+      {#if info.weeChefChecks}
+        <!-- Check all lives on the Suggestions page, beside what it finds -->
+        <a href="/suggestions" class="list-row settings-row">
           <ClipboardCheck class="settings-icon" />
-          <span class="min-w-0 flex-1">
-            <span class="block font-bold">Check all recipes with Wee Chef</span>
-            <span class="text-ink-muted block text-sm" aria-live="polite">{checksText}</span>
-          </span>
-          {#if running || starting}<LoaderCircle
-              class="text-primary size-5 flex-none animate-spin"
-            />{/if}
-        </button>
+          <span class="min-w-0 flex-1 font-bold">Wee Chef checks</span>
+          <span class="meta flex-none">Suggestions</span>
+          <ChevronRight class="text-ink-muted size-5 flex-none" />
+        </a>
       {/if}
       {#if info.authEnabled}
         <button type="button" class="list-row settings-row w-full text-left" onclick={signOut}>

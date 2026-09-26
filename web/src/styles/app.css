@@ -752,16 +752,17 @@
 }
 
 /*
- * Suggestions in the nav: hidden unless the page's head script found Wee Chef suggestions
- * waiting (html[data-review]); always shown on the Suggestions page itself.
+ * Suggestions in the nav: hidden unless the page's head script found Wee Chef checks set up
+ * (html[data-wee-chef]); always shown on the Suggestions page itself. The count badge only
+ * while suggestions are waiting (html[data-review]).
  */
 [data-review-nav] {
   display: none !important;
 }
-:root[data-review] [data-review-nav] {
+:root[data-wee-chef] [data-review-nav] {
   display: flex !important;
 }
-:root[data-review] .tab-grid {
+:root[data-wee-chef] .tab-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 .review-badge:empty::after {

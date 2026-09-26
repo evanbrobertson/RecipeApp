@@ -2410,6 +2410,46 @@ async fn suggestions_page_and_nav_hint_follow_open_flags() {
     assert_eq!(list["recipes"], json!([]));
 }
 
+#[tokio::test]
+async fn suggestions_page_shows_check_all_even_with_nothing_waiting() {
+    let hint = |headers: &axum::http::HeaderMap| {
+        headers
+            .get_all("server-timing")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with("crumb-review"))
+            .map(String::from)
+    };
+    let page = |path: &str| {
+        Request::get(path)
+            .header("sec-fetch-dest", "document")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    // Checks set up, nothing waiting: the nav still gets a (zero) hint, so it keeps the
+    // Suggestions item, and the page renders with its Check all progress
+    let t = jev_app("http://127.0.0.1:9");
+    let (status, headers, _) = send_raw(&t, page("/")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"0\""));
+    let (status, headers, html) = t.send(page("/suggestions")).await;
+    assert_eq!(status, StatusCode::OK, "no redirect when empty");
+    assert!(headers.get(header::LOCATION).is_none());
+    assert!(html.contains(r#""recipes":[]"#), "{html}");
+    assert!(html.contains(r#""checks":{"#), "{html}");
+    assert!(html.contains(r#""enabled":true"#), "{html}");
+
+    // Not set up: no hint (the item stays hidden) and no card data, but still a page
+    let off = TestApp::new(None);
+    let (_, headers, _) = send_raw(&off, page("/")).await;
+    assert_eq!(hint(&headers), None);
+    let (status, _, html) = off.send(page("/suggestions")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(r#""recipes":[]"#), "{html}");
+    assert!(!html.contains(r#""checks""#), "{html}");
+}
+
 /// Uploads one JSON file to the Import page's endpoint; returns its summary.
 async fn upload_json(t: &TestApp, name: &str, file: &str) -> Value {
     let boundary = "XBOUNDARY";
