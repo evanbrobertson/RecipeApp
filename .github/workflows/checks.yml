@@ -31,8 +31,9 @@ jobs:
           # One cache, written by master only, read by every pull request
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
+      # The Linux desktop app needs Qt 6.5+, newer than this runner's packages
+      - run: cargo clippy --workspace --exclude crumb-desktop-linux --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --exclude crumb-desktop-linux --locked
 
   scripts:
     name: Scripts (release versioning)
@@ -43,6 +44,33 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/release/version.test.sh
+      # The desktop packaging scripts only run on a tag in promote.yml, so lint them here
+      - run: shellcheck desktop/linux/packaging/*.sh
+
+  desktop:
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      # No display in the container; the smoke test renders the QML offscreen
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      # The runner's Qt is 6.4 and cxx-qt needs 6.5+, so build inside Arch, which tracks
+      # current Qt. qmake6 ships with qt6-base and cxx-qt finds it on PATH.
+      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own cache, kept apart from the server's host-ubuntu one
+          prefix-key: desktop-archlinux
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo clippy -p crumb-desktop-linux --all-targets --locked -- -D warnings
+      # Includes tests/smoke.rs, which runs the binary with --smoke under the offscreen platform
+      - run: cargo test -p crumb-desktop-linux --locked
 
   web:
     name: Web (astro check, oxlint, build)

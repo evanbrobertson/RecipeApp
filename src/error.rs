@@ -49,6 +49,12 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
+impl From<crumb_core::error::ValidationError> for AppError {
+    fn from(err: crumb_core::error::ValidationError) -> Self {
+        Self::bad_request(err.0)
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let body = json!({

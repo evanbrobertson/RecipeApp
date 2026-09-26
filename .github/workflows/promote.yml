@@ -52,6 +52,11 @@ jobs:
       packages: write
       # Reading the commit's check runs before promoting it
       checks: read
+    outputs:
+      # The commit actually promoted (may fall back past a docs-only push) and its version
+      sha: ${{ steps.build.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     env:
       CHANNEL: ${{ inputs.channel }}
       INPUT_SHA: ${{ inputs.sha }}
@@ -239,3 +244,45 @@ jobs:
           docker run --rm -e RAILWAY_TOKEN "$RAILWAY_CLI" railway redeploy --from-source \
             --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --yes
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Attach the Linux desktop artifacts to the GitHub Release that `promote` just made, for
+  # both stable and beta. This runs after the server promotion and depends only on it, so a
+  # failure here (or a stale release) never rolls back or blocks the server deploy above.
+  desktop-release:
+    name: Desktop release assets
+    needs: promote
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # gh can't always read the checkout's remote inside the container (git ownership checks)
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.promote.outputs.version }}
+      TAG: ${{ needs.promote.outputs.tag }}
+    steps:
+      # github-cli is not in the Arch image; the server steps use their own pinned images
+      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git github-cli
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Build the exact commit the promote job resolved (may be an ancestor of the input)
+          ref: ${{ needs.promote.outputs.sha }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: desktop-archlinux
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo build --release -p crumb-desktop-linux --locked
+      - run: desktop/linux/packaging/build-tarball.sh "$VERSION" desktop-dist
+      - name: Render the AUR PKGBUILD
+        run: |
+          sha=$(cut -d' ' -f1 "desktop-dist/crumb-desktop-linux-x86_64-$VERSION.tar.gz.sha256")
+          desktop/linux/packaging/render-pkgbuild.sh "$VERSION" "$sha" desktop-dist/PKGBUILD
+      - name: Upload the release assets
+        run: |
+          gh release upload "$TAG" \
+            desktop-dist/crumb-desktop-linux-x86_64-*.tar.gz \
+            desktop-dist/crumb-desktop-linux-x86_64-*.tar.gz.sha256 \
+            desktop-dist/PKGBUILD --clobber
