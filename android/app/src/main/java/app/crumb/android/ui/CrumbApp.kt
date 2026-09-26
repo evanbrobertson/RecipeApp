@@ -43,8 +43,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import app.crumb.android.ui.add.AddScreen
 import app.crumb.android.ui.books.BookScreen
-import app.crumb.android.ui.books.BooksScreen
+import app.crumb.android.ui.books.ShelfScreen
 import app.crumb.android.ui.components.ControlShape
+import app.crumb.android.ui.components.ToastHost
 import app.crumb.android.ui.home.HomeScreen
 import app.crumb.android.ui.suggestions.SuggestionsScreen
 import com.composables.icons.lucide.BookOpenText
@@ -102,6 +103,7 @@ fun CrumbApp(sharedText: StateFlow<String?>, onSharedUsed: () -> Unit) {
             session == null -> SignInScreen()
             else -> SignedIn(sharedText, onSharedUsed)
         }
+        ToastHost()
     }
 }
 
@@ -133,7 +135,11 @@ private fun SignedIn(sharedText: StateFlow<String?>, onSharedUsed: () -> Unit) {
             }
             composable<SuggestionsRoute> { SuggestionsScreen() }
             composable<ShelfRoute> {
-                BooksScreen(onOpen = { nav.navigate(BookRoute(it)) }, onSignedOut = signedOut)
+                ShelfScreen(
+                    onOpenRecipe = { nav.navigate(RecipeRoute(it)) },
+                    onOpenCookbook = { nav.navigate(BookRoute(it)) },
+                    onSignedOut = signedOut,
+                )
             }
             composable<AddRoute> {
                 AddScreen(

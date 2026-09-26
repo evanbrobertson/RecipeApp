@@ -79,6 +79,15 @@ class CrumbApi(
 
     suspend fun cookbook(id: Long): Cookbook = get(url("api/cookbooks/$id"), Cookbook.serializer())
 
+    suspend fun createCookbook(name: String, description: String?, color: String): CookbookListItem {
+        val body = buildJsonObject {
+            put("name", name)
+            put("description", description.orEmpty())
+            put("color", color)
+        }.toString()
+        return decode(post("api/cookbooks", body), CookbookListItem.serializer())
+    }
+
     suspend fun importUrl(link: String): ImportResult =
         decode(post("api/recipes/import", buildJsonObject { put("url", link) }.toString()), ImportResult.serializer())
 
