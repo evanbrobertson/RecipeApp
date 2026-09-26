@@ -16,7 +16,15 @@ pub mod qobject {
 
         #[rust_name = "prefers_dark"]
         fn crumbPrefersDark() -> bool;
+
+        #[rust_name = "set_clipboard_text"]
+        fn crumbSetClipboardText(text: &QString);
+
+        #[rust_name = "open_url"]
+        fn crumbOpenUrl(url: &QString) -> bool;
     }
 }
 
-pub use qobject::{add_application_font, application_font_family, prefers_dark};
+pub use qobject::{
+    add_application_font, application_font_family, open_url, prefers_dark, set_clipboard_text,
+};

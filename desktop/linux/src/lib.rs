@@ -7,6 +7,7 @@ pub mod config;
 mod fonts;
 mod native;
 mod palette;
+mod recipe;
 mod recipes;
 mod runtime;
 mod session;
@@ -27,7 +28,7 @@ pub fn run() {
     // The Basic style is the neutral base the Green Tile palette sits on.
     QQuickStyle::set_style(&QString::from("Basic"));
 
-    let smoke_mode = std::env::args().any(|arg| arg == "--smoke");
+    let smoke_mode = smoke::enabled();
 
     let mut app = QGuiApplication::new();
     if let Some(app) = app.as_mut() {
