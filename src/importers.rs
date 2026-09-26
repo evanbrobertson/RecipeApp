@@ -20,8 +20,13 @@ pub struct ImportedRecipe {
     pub cookbooks: Vec<String>,
     /// When it was cooked (unix seconds), from a Crumb backup's cook log.
     pub cooked: Vec<i64>,
-    /// From a Crumb backup: already the cook's own, so no clean-up or Wee Chef check.
+    /// From a Crumb backup: already the cook's own, so saved as it is, with no clean-up or
+    /// Wee Chef check on the way in. "Check all" checks it later and then only suggests,
+    /// apart from the small undoable clean-up (checkbox glyphs, web codes, float
+    /// quantities, raw ISO times) it gives every recipe already in the box.
     pub restored: bool,
+    /// From a Crumb backup: the original source of a recipe saved from a share.
+    pub original_url: Option<String>,
 }
 
 impl From<RecipeFields> for ImportedRecipe {
@@ -31,6 +36,7 @@ impl From<RecipeFields> for ImportedRecipe {
             cookbooks: Vec::new(),
             cooked: Vec::new(),
             restored: false,
+            original_url: None,
         }
     }
 }
@@ -132,6 +138,7 @@ fn from_paprika(p: &Map<String, Value>) -> Option<ImportedRecipe> {
         cookbooks: categories,
         cooked: Vec::new(),
         restored: false,
+        original_url: None,
     })
 }
 
@@ -199,12 +206,29 @@ fn from_mealie(o: &Map<String, Value>) -> Option<ImportedRecipe> {
     )
 }
 
+/// A backed-up (or shared) recipe with any link that isn't http(s) dropped, rather than the
+/// whole recipe refused: a `javascript:` "source" must never reach a page as a link.
+fn without_bad_links(r: &Value) -> Value {
+    let mut r = r.clone();
+    if let Some(o) = r.as_object_mut() {
+        for key in ["url", "image"] {
+            if o.get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|u| !crate::model::is_valid_url(u))
+            {
+                o.insert(key.into(), Value::Null);
+            }
+        }
+    }
+    r
+}
+
 fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
     let Some(list) = o.get("recipes").and_then(Value::as_array) else {
         return Vec::new();
     };
     list.iter()
-        .filter_map(|r| match RecipeFields::from_json(r) {
+        .filter_map(|r| match RecipeFields::from_json(&without_bad_links(r)) {
             Ok(fields) => Some(ImportedRecipe {
                 fields,
                 cookbooks: r
@@ -229,6 +253,11 @@ fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
                     })
                     .unwrap_or_default(),
                 restored: true,
+                original_url: r
+                    .get("originalUrl")
+                    .and_then(Value::as_str)
+                    .filter(|u| crate::model::is_valid_url(u))
+                    .map(String::from),
             }),
             Err(err) => {
                 tracing::warn!("[import] skipped a backup recipe: {err}");
@@ -444,6 +473,32 @@ fn recipes_from_file_at<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backups_drop_links_that_arent_http() {
+        let doc = serde_json::json!({"format": "crumb", "version": 1, "recipes": [{
+            "title": "Pie",
+            "url": "javascript://evil.test/%0Aalert(1)",
+            "image": "data:image/png;base64,AA",
+            "originalUrl": "javascript:alert(1)",
+            "ingredients": [{"items": ["1 pie"]}],
+            "instructions": [{"items": ["Eat."]}]
+        }, {
+            "title": "Tart",
+            "url": "https://a.test/s/tok",
+            "originalUrl": "https://food.test/tart",
+            "ingredients": [], "instructions": []
+        }]});
+        let found = from_json_value(&doc);
+        assert_eq!(found.len(), 2, "the recipe is kept, only the link goes");
+        assert_eq!(found[0].fields.url, None);
+        assert_eq!(found[0].fields.image, None);
+        assert_eq!(found[0].original_url, None);
+        assert_eq!(
+            found[1].original_url.as_deref(),
+            Some("https://food.test/tart")
+        );
+    }
     use serde_json::json;
 
     #[test]

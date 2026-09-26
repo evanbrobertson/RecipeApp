@@ -38,6 +38,18 @@ impl TestApp {
             )
             .unwrap();
         }
+        // The share page's shell, with its markers and one inline script to hash
+        std::fs::create_dir_all(dist.path().join("shell/share")).unwrap();
+        std::fs::write(
+            dist.path().join("shell/share/index.html"),
+            format!(
+                "<!doctype html><html><head><title>Shared recipe · Crumb</title>\
+                 <script>boot()</script></head><body>{marker}<!--share:photo--><!--share:intro-->\
+                 <h2>Ingredients</h2><!--share:ingredients--><h2>Method</h2><!--share:method-->\
+                 <!--share:source--></body></html>"
+            ),
+        )
+        .unwrap();
         std::fs::create_dir_all(dist.path().join("_astro")).unwrap();
         std::fs::write(dist.path().join("_astro/app.abc.js"), "console.log(1)").unwrap();
 
@@ -2726,4 +2738,904 @@ async fn one_recipe_exports_as_json_and_markdown() {
     assert_eq!(books.as_array().unwrap().len(), 1);
     let (_, _, html) = fresh.send(get(&format!("/recipes/{rid}"))).await;
     assert!(html.contains(r#""cookStats":{"count":1"#));
+}
+
+// ─── Share links ────────────────────────────────────────────────────────────
+
+/// Signs in to an app with a password; the cookie pair to send.
+async fn sign_in(t: &TestApp, password: &str) -> String {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"password": password}).to_string()))
+        .unwrap();
+    let (status, headers, _) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    cookie.split(';').next().unwrap().to_string()
+}
+
+/// A JSON request with an optional session cookie.
+async fn call(
+    t: &TestApp,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    cookie: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
+    }
+    let body = match body {
+        Some(b) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(b.to_string())
+        }
+        None => Body::empty(),
+    };
+    let (status, _, text) = t.send(req.body(body).unwrap()).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+fn shared_recipe(title: &str) -> Value {
+    json!({
+        "title": title,
+        "url": "https://food.test/lemon-cake",
+        "description": "Bright and tender.",
+        "image": "https://img.test/cake.jpg",
+        "author": "A Baker",
+        "prepTime": "20m",
+        "cookTime": "45 mins",
+        "totalTime": "1h 5m",
+        "recipeYield": "8 slices",
+        "recipeCategory": "Dessert",
+        "recipeCuisine": "British",
+        "ingredients": [
+            {"name": "Cake", "items": ["200 g flour", "2 eggs"]},
+            {"name": "Glaze", "items": ["100 g icing sugar", "1 lemon"]}
+        ],
+        "instructions": [
+            {"name": "Bake", "items": ["Mix the cake.", "Bake for 45 minutes."]},
+            {"name": "Finish", "items": ["Glaze it."]}
+        ],
+        "nutrition": {"calories": "320 kcal"},
+        "notes": "Grandma's secret: extra zest."
+    })
+}
+
+/// The JSON-LD block on a page, parsed.
+fn json_ld(html: &str) -> Value {
+    let start = html
+        .find(r#"<script type="application/ld+json">"#)
+        .expect("JSON-LD")
+        + r#"<script type="application/ld+json">"#.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    serde_json::from_str(&html[start..end]).expect("JSON-LD parses")
+}
+
+fn share_path(url: &str) -> String {
+    format!("/s/{}", url.rsplit('/').next().unwrap())
+}
+
+#[tokio::test]
+async fn share_links_are_one_per_recipe_until_stopped() {
+    let t = TestApp::new(None);
+    let (_, r) = t
+        .json("POST", "/api/recipes", Some(shared_recipe("Lemon Cake")))
+        .await;
+    let id = r["id"].as_i64().unwrap();
+
+    let (status, first) = t
+        .json("POST", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["includeNotes"], true);
+    let url = first["url"].as_str().unwrap();
+    assert!(url.starts_with("http://localhost:3000/s/"), "{url}");
+    assert_eq!(first["token"].as_str().unwrap().len(), 22);
+    let (_, again) = t
+        .json("POST", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    assert_eq!(again["url"], first["url"]);
+    let (status, _) = t.json("POST", "/api/recipes/999/share", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // In the recipe page's data, so the sheet needs no fetch
+    let (_, _, page) = t.send(get(&format!("/recipes/{id}"))).await;
+    assert!(page.contains(&format!(
+        "\"share\":{{\"token\":\"{}\"",
+        first["token"].as_str().unwrap()
+    )));
+
+    // SITE_URL wins for the absolute link
+    let site = TestApp::with_config(|c| c.site_url = Some("https://crumb.example/".into()));
+    let (_, r) = site
+        .json("POST", "/api/recipes", Some(shared_recipe("Cake")))
+        .await;
+    let (_, s) = site
+        .json("POST", &format!("/api/recipes/{}/share", r["id"]), None)
+        .await;
+    assert!(
+        s["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://crumb.example/s/")
+    );
+
+    // Stopping deletes it; sharing again makes a new token
+    let path = share_path(url);
+    let (status, _, _) = t.send(get(&path)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t
+        .json("DELETE", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, headers, body) = t.send(get(&path)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, "Not found");
+    assert_eq!(headers["x-robots-tag"], "noindex, noimageindex");
+    for sub in ["crumb.json", "og.jpg", "img/768"] {
+        let (status, _, body) = t.send(get(&format!("{path}/{sub}"))).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::NOT_FOUND, "Not found")
+        );
+    }
+    let (_, fresh) = t
+        .json("POST", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    assert_ne!(fresh["url"], first["url"]);
+
+    // Deleting the recipe takes its share with it
+    let (_, _) = t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    let (status, _, _) = t
+        .send(get(&share_path(fresh["url"].as_str().unwrap())))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let left: i64 = t
+        .state
+        .db
+        .lock()
+        .query_row("SELECT count(*) FROM shares", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn share_pages_are_public_read_only_pages() {
+    let t = TestApp::new(Some("pw"));
+    let cookie = sign_in(&t, "pw").await;
+    let (_, r) = call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(shared_recipe("Lemon Cake")),
+        Some(&cookie),
+    )
+    .await;
+    let id = r["id"].as_i64().unwrap();
+    // Nothing about the box: log a cook, put it in a cookbook
+    call(
+        &t,
+        "POST",
+        &format!("/api/recipes/{id}/cooked"),
+        None,
+        Some(&cookie),
+    )
+    .await;
+    let (_, book) = call(
+        &t,
+        "POST",
+        "/api/cookbooks",
+        Some(json!({"name": "Private Shelf"})),
+        Some(&cookie),
+    )
+    .await;
+    call(
+        &t,
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", book["id"]),
+        Some(json!({"recipeIds": [id]})),
+        Some(&cookie),
+    )
+    .await;
+
+    // Creating a share needs the login
+    let (status, _) = call(&t, "POST", &format!("/api/recipes/{id}/share"), None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, share) = call(
+        &t,
+        "POST",
+        &format!("/api/recipes/{id}/share"),
+        None,
+        Some(&cookie),
+    )
+    .await;
+    let url = share["url"].as_str().unwrap().to_string();
+    let path = share_path(&url);
+
+    // No cookie: the page
+    let (status, headers, html) = t.send(get(&path)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["x-robots-tag"], "noindex, noimageindex");
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+    assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+    assert!(headers.get("speculation-rules").is_none());
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        csp.starts_with("default-src 'none'; script-src 'self' 'sha256-"),
+        "{csp}"
+    );
+    for part in [
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "img-src 'self' data:",
+    ] {
+        assert!(csp.contains(part), "{csp}");
+    }
+    assert!(html.contains("<title>Lemon Cake · Crumb</title>"));
+    assert!(html.contains(r#"<meta property="og:title" content="Lemon Cake">"#));
+    assert!(html.contains(r#"<meta property="og:type" content="article">"#));
+    assert!(html.contains(&format!(r#"<meta property="og:url" content="{url}">"#)));
+    assert!(html.contains(r#"<meta name="description" content="Bright and tender.">"#));
+    // The photo is a third-party URL here, so a preview card is offered
+    assert!(html.contains(r#"<meta name="twitter:card" content="summary_large_image">"#));
+    assert!(html.contains(&format!(
+        r#"<meta property="og:image" content="{url}/og.jpg?v="#
+    )));
+    assert!(html.contains(&format!(
+        r#"<link rel="alternate" type="application/vnd.crumb+json" href="{url}/crumb.json">"#
+    )));
+    let ld = json_ld(&html);
+    assert_eq!(ld["@type"], "Recipe");
+    assert_eq!(ld["name"], "Lemon Cake");
+    assert_eq!(ld["prepTime"], "PT20M");
+    assert_eq!(ld["cookTime"], "PT45M");
+    assert_eq!(ld["totalTime"], "PT1H5M");
+    assert_eq!(ld["recipeYield"], "8 slices");
+    assert_eq!(ld["url"], "https://food.test/lemon-cake");
+    assert_eq!(ld["isBasedOn"], "https://food.test/lemon-cake");
+    assert_eq!(ld["recipeIngredient"].as_array().unwrap().len(), 4);
+    assert_eq!(ld["recipeInstructions"][0]["@type"], "HowToSection");
+    assert_eq!(
+        ld["recipeInstructions"][1]["itemListElement"][0]["text"],
+        "Glaze it."
+    );
+    assert_eq!(ld["author"]["name"], "A Baker");
+    assert!(
+        ld["image"][0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{url}/og.jpg"))
+    );
+    // Server-rendered lists with their headings, notes by default, the original link
+    assert!(html.contains(r#"<h3 class="kicker">Glaze</h3>"#));
+    assert!(html.contains(r#"<li data-scale-raw="100 g icing sugar">100 g icing sugar</li>"#));
+    assert!(html.contains("Bake for 45 minutes."));
+    assert!(html.contains("Grandma&#39;s secret: extra zest."));
+    assert!(html.contains(r#"rel="noopener noreferrer nofollow""#));
+    assert!(html.contains(">food.test<"));
+    // Never the box's private parts
+    for private in [
+        "Private Shelf",
+        "cookStats",
+        "cookedAt",
+        "checks",
+        "createdAt",
+        "\"id\"",
+    ] {
+        assert!(!html.contains(private), "{private} leaked");
+    }
+    // Another scraper keeps title, sections, steps and times
+    let parsed = crumb::scraper::parse_recipe_html(&html, &url).unwrap();
+    assert_eq!(parsed.title, "Lemon Cake");
+    assert_eq!(parsed.ingredients.len(), 2);
+    assert_eq!(parsed.ingredients[1].name.as_deref(), Some("Glaze"));
+    assert_eq!(
+        parsed.ingredients[1].items,
+        vec!["100 g icing sugar", "1 lemon"]
+    );
+    assert_eq!(parsed.instructions.len(), 2);
+    assert_eq!(parsed.instructions[0].name.as_deref(), Some("Bake"));
+    assert_eq!(parsed.prep_time.as_deref(), Some("20m"));
+    assert_eq!(parsed.total_time.as_deref(), Some("1h 5m"));
+
+    // Notes off: gone from the page and the export
+    let token = share["token"].as_str().unwrap();
+    let (status, _) = call(
+        &t,
+        "PATCH",
+        &format!("/api/recipes/{id}/share"),
+        Some(json!({"includeNotes": false})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, updated) = call(
+        &t,
+        "PATCH",
+        &format!("/api/recipes/{id}/share"),
+        Some(json!({"includeNotes": false})),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["includeNotes"], false);
+    let (_, _, html) = t.send(get(&path)).await;
+    assert!(!html.contains("extra zest"));
+    let (status, headers, export) = t.send(get(&format!("{path}/crumb.json"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    let doc: Value = serde_json::from_str(&export).unwrap();
+    assert_eq!(doc["format"], "crumb");
+    assert!(doc["recipes"][0]["notes"].is_null());
+    let (status, _) = call(
+        &t,
+        "PATCH",
+        "/api/recipes/999/share",
+        Some(json!({"includeNotes": true})),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // The old address, with the token in it, is gone
+    let (status, _) = call(
+        &t,
+        "PATCH",
+        &format!("/api/shares/{token}"),
+        Some(json!({"includeNotes": true})),
+        Some(&cookie),
+    )
+    .await;
+    assert!(status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED);
+    call(
+        &t,
+        "PATCH",
+        &format!("/api/recipes/{id}/share"),
+        Some(json!({"includeNotes": true})),
+        Some(&cookie),
+    )
+    .await;
+
+    // The export: no cook log, no cookbooks, notes back on
+    let (_, _, export) = t.send(get(&format!("{path}/crumb.json"))).await;
+    assert!(
+        !export.contains("cookedAt") && !export.contains("cookbooks"),
+        "{export}"
+    );
+    assert!(!export.contains("Private Shelf"));
+    let doc: Value = serde_json::from_str(&export).unwrap();
+    assert_eq!(doc["recipes"][0]["notes"], "Grandma's secret: extra zest.");
+    assert_eq!(doc["recipes"][0]["ingredients"][1]["name"], "Glaze");
+
+    // ...and it round-trips through the importer, twice without a duplicate
+    let other = TestApp::new(None);
+    for expect_new in [1, 0] {
+        let form = format!(
+            "--X\r\nContent-Disposition: form-data; name=\"file\"; filename=\"cake.json\"\r\n\
+             Content-Type: application/json\r\n\r\n{export}\r\n--X--\r\n"
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/import/files")
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=X")
+            .body(Body::from(form))
+            .unwrap();
+        let (status, _, body) = other.send(req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let summary: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            summary[0]["created"].as_array().unwrap().len(),
+            expect_new,
+            "{summary}"
+        );
+    }
+    let (_, list) = other.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    let (_, books) = other.json("GET", "/api/cookbooks", None).await;
+    assert_eq!(books, json!([]));
+    let (_, copy) = other
+        .json("GET", &format!("/api/recipes/{}", list[0]["id"]), None)
+        .await;
+    assert_eq!(copy["notes"], "Grandma's secret: extra zest.");
+    assert_eq!(
+        copy["ingredients"][1]["items"],
+        json!(["100 g icing sugar", "1 lemon"])
+    );
+
+    // Unknown tokens: the same plain 404
+    for bad in [
+        "/s/AAAAAAAAAAAAAAAAAAAAAA",
+        "/s/short",
+        "/s/AAAAAAAAAAAAAAAAAAAAAA/crumb.json",
+    ] {
+        let (status, _, body) = t.send(get(bad)).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::NOT_FOUND, "Not found"),
+            "{bad}"
+        );
+    }
+    // Only /s/ itself is public: not /s, /sx or a climb out of it
+    for private in ["/s", "/sx", "/sxyz/abc", "/s/../api/recipes"] {
+        let (status, _, _) = t.send(get(private)).await;
+        assert_ne!(status, StatusCode::OK, "{private}");
+    }
+    let (status, _, _) = t.send(get("/sx")).await;
+    assert_eq!(status, StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn share_photos_are_public_while_img_stays_private() {
+    use base64::Engine;
+    let cache = tempfile::tempdir().unwrap();
+    let dir = cache.path().join("img-cache");
+    let t = TestApp::with_config(|c| {
+        c.app_password = Some("pw".into());
+        c.image_cache = Some(dir.clone());
+    });
+    let cookie = sign_in(&t, "pw").await;
+    let (_, r) = call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(shared_recipe("Cake")),
+        Some(&cookie),
+    )
+    .await;
+    let id = r["id"].as_i64().unwrap();
+    let image = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png_bytes(1600, 1000))
+    );
+    set_image(&t, id, &image);
+    let key = crumb::images::image_key(&image);
+    let (_, share) = call(
+        &t,
+        "POST",
+        &format!("/api/recipes/{id}/share"),
+        None,
+        Some(&cookie),
+    )
+    .await;
+    let path = share_path(share["url"].as_str().unwrap());
+
+    let (status, headers, body) = send_raw(&t, get(&format!("{path}/img/768?v={key}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=86400");
+    assert_eq!(webp_size(&body), (768, 480));
+    // Only the widths the resizer makes
+    let (status, _, _) = send_raw(&t, get(&format!("{path}/img/700?v={key}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The link-preview card: a 1200x630 JPEG crop, cached on disk
+    let (status, headers, body) = send_raw(&t, get(&format!("{path}/og.jpg?v={key}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/jpeg");
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=86400");
+    let og = image::load_from_memory_with_format(&body, image::ImageFormat::Jpeg).unwrap();
+    assert_eq!((og.width(), og.height()), (1200, 630));
+    assert!(dir.join(format!("{id}-{key}-og.jpg")).exists());
+
+    // The same photo at /img still needs the login
+    let (status, headers, _) = send_raw(&t, get(&format!("/img/{id}/768?v={key}"))).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/login")
+    );
+
+    // No photo: no preview tags, and og.jpg 404s
+    clear_image(&t, id);
+    let (_, _, html) = t.send(get(&path)).await;
+    assert!(!html.contains("og:image"));
+    assert!(html.contains(r#"<meta name="twitter:card" content="summary">"#));
+    let (status, _, _) = send_raw(&t, get(&format!("{path}/og.jpg"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn share_pages_escape_everything() {
+    let t = TestApp::new(None);
+    let evil = "</script><img src=x onerror=alert(1)>";
+    let mut recipe = shared_recipe(evil);
+    recipe["description"] = json!(format!("\"><script>alert(2)</script>{evil}"));
+    recipe["ingredients"][0]["name"] = json!(evil);
+    recipe["ingredients"][0]["items"][0] = json!(evil);
+    recipe["instructions"][0]["items"][0] = json!(evil);
+    recipe["notes"] = json!(evil);
+    recipe["author"] = json!(evil);
+    recipe["url"] = json!("https://food.test/\"><img src=x>");
+    let (status, r) = t.json("POST", "/api/recipes", Some(recipe)).await;
+    assert_eq!(status, StatusCode::CREATED, "{r}");
+    let (_, share) = t
+        .json("POST", &format!("/api/recipes/{}/share", r["id"]), None)
+        .await;
+    let (status, _, html) = t
+        .send(get(&share_path(share["url"].as_str().unwrap())))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!html.contains("<img src=x"), "{html}");
+    assert!(!html.contains("<script>alert"));
+    assert_eq!(
+        html.matches("</script>").count(),
+        3,
+        "only the template's, page data's and JSON-LD's own"
+    );
+    assert!(
+        html.contains("<title>&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt; · Crumb</title>")
+    );
+    assert!(html.contains(
+        r#"<meta property="og:title" content="&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;">"#
+    ));
+    assert_eq!(json_ld(&html)["name"], evil);
+    assert_eq!(json_ld(&html)["recipeIngredient"][0], evil);
+}
+
+#[tokio::test]
+async fn share_misses_are_rate_limited() {
+    let t = TestApp::new(None);
+    for _ in 0..crumb::share::MISS_LIMIT {
+        let (status, _, _) = t.send(get("/s/AAAAAAAAAAAAAAAAAAAAAA")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let (status, headers, _) = t.send(get("/s/BBBBBBBBBBBBBBBBBBBBBB")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(headers[header::RETRY_AFTER], "60");
+    // The rest of the app doesn't care
+    let (status, _) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn saving_another_crumbs_share_imports_its_export() {
+    // Crumb A, on a real port, shares two recipes: one with an original link, one without
+    let a = TestApp::new(None);
+    let (_, r) = a
+        .json("POST", "/api/recipes", Some(shared_recipe("Lemon Cake")))
+        .await;
+    let mut own = shared_recipe("House Bread");
+    own["url"] = Value::Null;
+    let (_, r2) = a.json("POST", "/api/recipes", Some(own)).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let svc = NormalizePathLayer::trim_trailing_slash().layer(app(a.state.clone()));
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::ServiceExt::<Request<Body>>::into_make_service(svc),
+        )
+        .await
+        .unwrap()
+    });
+    let mut links = Vec::new();
+    for id in [&r["id"], &r2["id"]] {
+        let (_, s) = a
+            .json("POST", &format!("/api/recipes/{id}/share"), None)
+            .await;
+        links.push(format!(
+            "{origin}{}",
+            share_path(s["url"].as_str().unwrap())
+        ));
+    }
+
+    // Crumb B saves them from the links
+    let b = TestApp::new(None);
+    let (status, first) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": links[0]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["isNew"], true);
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", first["id"]), None)
+        .await;
+    // Lossless: sections, notes and the original link. Kept under the share link (the
+    // dedupe key), with the export's link as where it came from
+    assert_eq!(saved["url"], links[0].as_str());
+    assert_eq!(saved["originalUrl"], "https://food.test/lemon-cake");
+    assert_eq!(saved["notes"], "Grandma's secret: extra zest.");
+    assert_eq!(saved["ingredients"][0]["name"], "Cake");
+    assert_eq!(saved["instructions"][1]["name"], "Finish");
+    assert_eq!(saved["cookTime"], "45 mins");
+    // Saved as it was, like a restore
+    let (_, checks) = b
+        .json("GET", &format!("/api/recipes/{}/checks", first["id"]), None)
+        .await;
+    assert_eq!(checks["status"], "skipped");
+    // Again: the recipe already in the box
+    let (_, again) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": links[0]})),
+        )
+        .await;
+    assert_eq!(
+        (again["id"].clone(), again["isNew"].clone()),
+        (first["id"].clone(), json!(false))
+    );
+    // The export's link claims nothing: saving that URL itself is a recipe of its own
+    let (status, genuine) = b
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({
+                "title": "Lemon Cake (the site's)",
+                "url": "https://food.test/lemon-cake",
+                "ingredients": [{"items": ["flour"]}],
+                "instructions": [{"items": ["Bake."]}]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{genuine}");
+    assert_ne!(genuine["id"], first["id"]);
+    // Shared on from B: the original link travels, not A's share link
+    let (_, s) = b
+        .json("POST", &format!("/api/recipes/{}/share", first["id"]), None)
+        .await;
+    let (_, _, export) = b
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s["url"].as_str().unwrap())
+        )))
+        .await;
+    let doc: Value = serde_json::from_str(&export).unwrap();
+    assert_eq!(doc["recipes"][0]["url"], "https://food.test/lemon-cake");
+    assert!(!export.contains(links[0].as_str()));
+    // Backups keep both
+    let (_, _, backup) = b.send(get("/api/export")).await;
+    let backup: Value = serde_json::from_str(&backup).unwrap();
+    let kept = backup["recipes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["url"] == links[0].as_str())
+        .unwrap();
+    assert_eq!(kept["originalUrl"], "https://food.test/lemon-cake");
+
+    // No original link: kept under the share link, so it dedupes on that
+    let (_, bread) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": links[1]})),
+        )
+        .await;
+    assert_eq!(bread["isNew"], true, "{bread}");
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", bread["id"]), None)
+        .await;
+    assert_eq!(saved["url"], links[1].as_str());
+    assert!(saved["originalUrl"].is_null());
+    let (_, again) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": links[1]})),
+        )
+        .await;
+    assert_eq!(again["isNew"], false);
+    let (_, list) = b.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 3);
+}
+
+/// Serves `routes` on a real local port; returns its origin (`http://127.0.0.1:port`).
+async fn serve(routes: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+    origin
+}
+
+/// A page that says it's a Crumb share, with a recipe in its JSON-LD to fall back on.
+fn fake_share_page(export_href: &str) -> String {
+    format!(
+        r#"<html><head><title>Page Pie</title>
+        <link rel="alternate" type="application/vnd.crumb+json" href="{export_href}">
+        <script type="application/ld+json">{{"@context":"https://schema.org","@type":"Recipe",
+        "name":"Page Pie","recipeIngredient":["1 pie"],"recipeInstructions":["Eat it."]}}</script>
+        </head><body></body></html>"#
+    )
+}
+
+fn fake_export(title: &str, url: &str, image: &str) -> String {
+    json!({"format": "crumb", "version": 1, "recipes": [{
+        "title": title, "url": url, "image": image,
+        "ingredients": [{"name": null, "items": ["1 egg"]}],
+        "instructions": [{"name": null, "items": ["Cook it."]}]
+    }]})
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_made_up_share_export_cant_plant_a_script_link_or_claim_a_url() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let evil = fake_export(
+        "Evil Pie",
+        "javascript://evil.test/%0Aalert(document.cookie)",
+        "javascript:alert(1)",
+    );
+    let own_host = fake_export(
+        "Self Pie",
+        "http://127.0.0.1/popular-recipe",
+        "https://img.test/p.jpg",
+    );
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/evil",
+                route(|| async { Html(fake_share_page("/s/evil/crumb.json")) }),
+            )
+            .route("/s/evil/crumb.json", route(move || async move { evil }))
+            .route(
+                "/s/own",
+                route(|| async { Html(fake_share_page("/s/own/crumb.json")) }),
+            )
+            .route("/s/own/crumb.json", route(move || async move { own_host })),
+    )
+    .await;
+    let b = TestApp::new(None);
+
+    // A javascript: "source" is dropped; the recipe is kept under the share link
+    let link = format!("{origin}/s/evil");
+    let (status, saved) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(saved["title"], "Evil Pie", "{saved}");
+    assert_eq!(saved["url"], link.as_str(), "{saved}");
+    assert!(saved["originalUrl"].is_null());
+    assert!(saved["image"].is_null());
+    assert!(!saved.to_string().contains("javascript"));
+
+    // A "source" on the share page's own host isn't taken as the original either
+    let (_, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/own")})),
+        )
+        .await;
+    let (_, saved) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(saved["title"], "Self Pie");
+    assert!(saved["originalUrl"].is_null());
+}
+
+#[tokio::test]
+async fn crumb_exports_arent_fetched_from_another_origin() {
+    use axum::response::{Html, Redirect};
+    use axum::routing::get as route;
+    // Another port on the same host is another origin
+    let elsewhere = serve(axum::Router::new().route(
+        "/x.json",
+        route(|| async {
+            fake_export("Hijacked", "https://food.test/h", "https://img.test/h.jpg")
+        }),
+    ))
+    .await;
+    let target = format!("{elsewhere}/x.json");
+    let origin = serve(
+        axum::Router::new()
+            .route(
+                "/s/hop",
+                route(|| async { Html(fake_share_page("/s/hop/crumb.json")) }),
+            )
+            .route(
+                "/s/hop/crumb.json",
+                route(move || async move { Redirect::temporary(&target) }),
+            ),
+    )
+    .await;
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/hop")})),
+        )
+        .await;
+    // The redirect isn't followed; the page itself is scraped instead
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["title"], "Page Pie");
+}
+
+#[tokio::test]
+async fn a_stored_script_link_is_never_rendered() {
+    let t = TestApp::new(None);
+    let (_, r) = t
+        .json("POST", "/api/recipes", Some(shared_recipe("Old Row")))
+        .await;
+    // An older row, from before links were checked
+    t.state
+        .db
+        .lock()
+        .execute(
+            "UPDATE recipes SET url = 'javascript://x.test/%0Aalert(1)', original_url = 'data:text/html,hi' WHERE id = ?1",
+            [r["id"].as_i64().unwrap()],
+        )
+        .unwrap();
+    let (_, s) = t
+        .json("POST", &format!("/api/recipes/{}/share", r["id"]), None)
+        .await;
+    let (status, _, html) = t.send(get(&share_path(s["url"].as_str().unwrap()))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !html.contains("javascript:") && !html.contains("data:text"),
+        "{html}"
+    );
+    assert!(!html.contains("Original recipe"));
+    // And it can't be written that way through the API
+    let (status, _) = t
+        .json(
+            "PATCH",
+            &format!("/api/recipes/{}", r["id"]),
+            Some(json!({"url": "javascript:alert(1)"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn crumb_exports_are_only_taken_from_the_same_host() {
+    use crumb::scraper::crumb_alternate;
+    let page = |href: &str| {
+        format!(
+            r#"<html><head><link rel="alternate" type="application/vnd.crumb+json" href="{href}"></head></html>"#
+        )
+    };
+    assert_eq!(
+        crumb_alternate(&page("/s/abc/crumb.json"), "https://a.test/s/abc").as_deref(),
+        Some("https://a.test/s/abc/crumb.json")
+    );
+    assert_eq!(
+        crumb_alternate(&page("https://evil.test/x.json"), "https://a.test/s/abc"),
+        None
+    );
+    assert_eq!(
+        crumb_alternate(&page("file:///etc/passwd"), "https://a.test/s/abc"),
+        None
+    );
+    // Same host, another scheme or port: another origin
+    assert_eq!(
+        crumb_alternate(
+            &page("http://a.test/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        ),
+        None
+    );
+    assert_eq!(
+        crumb_alternate(
+            &page("https://a.test:8443/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        ),
+        None
+    );
+    assert_eq!(
+        crumb_alternate(
+            &page("https://a.test:443/s/abc/crumb.json"),
+            "https://a.test/s/abc"
+        )
+        .as_deref(),
+        Some("https://a.test/s/abc/crumb.json")
+    );
+    assert_eq!(
+        crumb_alternate("<html></html>", "https://a.test/s/abc"),
+        None
+    );
 }

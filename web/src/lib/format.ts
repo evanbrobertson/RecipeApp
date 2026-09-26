@@ -51,3 +51,30 @@ export function recipeToMarkdown(r: FormattableRecipe): string {
   if (r.url) out.push("", `Source: ${r.url}`)
   return out.join("\n")
 }
+
+/**
+ * Plain text for pasting into a message: the title, "•" ingredients under their section
+ * names, numbered steps, and the share link when there is one. Not Markdown.
+ */
+export function recipeToText(r: FormattableRecipe, link?: string | null): string {
+  const out: string[] = [r.title]
+  const ingredients = r.ingredients.filter((s) => s.items.length)
+  if (ingredients.length) {
+    out.push("", "Ingredients")
+    for (const s of ingredients) {
+      if (s.name) out.push("", s.name)
+      for (const item of s.items) out.push(`• ${item}`)
+    }
+  }
+  const steps = r.instructions.filter((s) => s.items.length)
+  if (steps.length) {
+    out.push("", "Method")
+    let n = 0
+    for (const s of steps) {
+      if (s.name) out.push("", s.name)
+      for (const item of s.items) out.push(`${++n}. ${item}`)
+    }
+  }
+  if (link) out.push("", link)
+  return out.join("\n")
+}

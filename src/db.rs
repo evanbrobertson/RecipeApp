@@ -64,6 +64,7 @@ fn recipes_table_sql(name: &str) -> String {
     instructions text NOT NULL,
     nutrition text,
     notes text,
+    original_url text,
     created_at integer NOT NULL,
     updated_at integer NOT NULL
   );"
@@ -145,7 +146,25 @@ fn bootstrap_sql() -> String {
     created_at integer NOT NULL,
     resolved_at integer
   );
-  CREATE INDEX IF NOT EXISTS recipe_flags_recipe_idx ON recipe_flags (recipe_id, state);",
+  CREATE INDEX IF NOT EXISTS recipe_flags_recipe_idx ON recipe_flags (recipe_id, state);
+
+  -- Share links (src/share.rs): one per recipe (cookbooks later). Not in backups.
+  CREATE TABLE IF NOT EXISTS shares (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    token text NOT NULL,
+    kind text NOT NULL,
+    recipe_id integer REFERENCES recipes(id) ON DELETE CASCADE,
+    cookbook_id integer REFERENCES cookbooks(id) ON DELETE CASCADE,
+    include_notes integer DEFAULT 1 NOT NULL,
+    created_at integer NOT NULL,
+    expires_at integer,
+    last_opened_at integer,
+    CHECK ((kind = 'recipe' AND recipe_id IS NOT NULL AND cookbook_id IS NULL)
+        OR (kind = 'cookbook' AND cookbook_id IS NOT NULL AND recipe_id IS NULL))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS shares_token_unique ON shares (token);
+  CREATE UNIQUE INDEX IF NOT EXISTS shares_recipe_unique ON shares (recipe_id) WHERE recipe_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS shares_cookbook_unique ON shares (cookbook_id) WHERE cookbook_id IS NOT NULL;",
         recipes_table_sql("recipes")
     )
 }
@@ -224,6 +243,14 @@ fn upgrade_legacy_schema(conn: &mut Connection) -> rusqlite::Result<()> {
 
 /// Additive column changes (new nullable columns) for existing databases.
 fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
+    // Where a recipe saved from another Crumb's share came from originally (its `url` is
+    // the share link)
+    if !columns(conn, "recipes")?
+        .iter()
+        .any(|c| c.name == "original_url")
+    {
+        conn.execute_batch("ALTER TABLE recipes ADD COLUMN original_url text")?;
+    }
     if !columns(conn, "cookbooks")?
         .iter()
         .any(|c| c.name == "color")

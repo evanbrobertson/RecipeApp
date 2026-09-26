@@ -54,9 +54,12 @@ async fn serve() -> Result<(), BoxError> {
         .layer(app(AppState::new(database, config, browser)));
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Crumb listening on http://{addr}");
+    // The peer address is the client's when no proxy is in front (share links' 404 limit)
     axum::serve(
         listener,
-        axum::ServiceExt::<Request>::into_make_service(service),
+        axum::ServiceExt::<Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(
+            service,
+        ),
     )
     .with_graceful_shutdown(shutdown())
     .await?;

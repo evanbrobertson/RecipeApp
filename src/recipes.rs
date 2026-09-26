@@ -61,6 +61,7 @@ fn recipe_from_row(r: &Row) -> rusqlite::Result<Recipe> {
             Some(nutrition)
         },
         notes: r.get("notes")?,
+        original_url: r.get("original_url")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -347,8 +348,63 @@ pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Reci
             return Ok((require_recipe(&conn, id)?, false));
         }
     }
-    let fields = crate::scraper::scrape_recipe(state, &url).await?;
-    create_checked(state, fields, "url")
+    let scraped = crate::scraper::scrape_page(state, &url).await?;
+    // Another Crumb's share page: take its export (sections, notes and the original link
+    // as they are) instead of what scraping the page gave
+    if let Some(export) = &scraped.crumb
+        && let Some(fields) = crate::share::fetch_export(export).await
+    {
+        return save_shared(state, fields, &url);
+    }
+    create_checked(state, scraped.recipe, "url")
+}
+
+/// Saves a recipe from another Crumb's share: as it was, like a backup restore (no tidy;
+/// "Check all" only suggests).
+///
+/// The export is written by whoever runs that share page, so its `url` is only a claim. The
+/// recipe is kept under the share link (the dedupe key: saving the same share again finds
+/// it), and the export's link goes in `original_url` when it's http(s) on another site.
+/// That column is never matched on, so a made-up export can't pre-claim a popular recipe's
+/// URL: saving that URL later scrapes the real page.
+fn save_shared(
+    state: &AppState,
+    mut fields: RecipeFields,
+    share_url: &str,
+) -> AppResult<(Recipe, bool)> {
+    let original = fields
+        .url
+        .take()
+        .filter(|u| is_valid_url(u) && !same_host(u, share_url));
+    fields.url = Some(share_url.to_string());
+    let conn = state.db.lock();
+    let (recipe, is_new) = create_recipe(&conn, fields, "url")?;
+    if !is_new {
+        return Ok((recipe, false));
+    }
+    crate::checks::mark_restored(&conn, recipe.id)?;
+    set_original_url(&conn, recipe.id, original.as_deref())?;
+    Ok((require_recipe(&conn, recipe.id)?, true))
+}
+
+fn same_host(a: &str, b: &str) -> bool {
+    let host = |u: &str| {
+        url::Url::parse(u)
+            .ok()?
+            .host_str()
+            .map(str::to_ascii_lowercase)
+    };
+    host(a).is_some() && host(a) == host(b)
+}
+
+fn set_original_url(conn: &Connection, id: i64, url: Option<&str>) -> AppResult<()> {
+    if let Some(url) = url.filter(|u| is_valid_url(u)) {
+        conn.execute(
+            "UPDATE recipes SET original_url = ?1 WHERE id = ?2",
+            params![url, id],
+        )?;
+    }
+    Ok(())
 }
 
 /// Tidies an imported recipe, saves it and, when it's new, remembers what the tidy
@@ -614,8 +670,10 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
             let (recipe, is_new) = create_recipe(&conn, item.fields, "import")?;
             if is_new {
                 if item.restored {
-                    // Saved as it was backed up; no check or tidy ever rewrites it
+                    // Saved as it was backed up. Not checked now; "Check all" checks it
+                    // later, suggesting only, with the small undoable clean-up
                     crate::checks::mark_restored(&conn, recipe.id)?;
+                    set_original_url(&conn, recipe.id, item.original_url.as_deref())?;
                 } else {
                     if let Some(undo) = tidied {
                         crate::checks::remember_tidy(&conn, &recipe, undo)?;
@@ -665,6 +723,21 @@ pub fn export_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
     export_json(conn, Some(id))
 }
 
+/// One recipe for a share link (`/s/{token}/crumb.json`): the backup format the importer
+/// reads, without the cook log or cookbooks, and without the notes unless the share
+/// includes them.
+pub fn export_shared(recipe: &Recipe, include_notes: bool) -> Value {
+    let mut m = recipe.fields().to_json();
+    // A recipe itself saved from a share: pass on where it came from, not that share link
+    if let Some(original) = &recipe.original_url {
+        m.insert("url".into(), json!(original));
+    }
+    if !include_notes {
+        m.insert("notes".into(), Value::Null);
+    }
+    json!({"format": "crumb", "version": 1, "recipes": [Value::Object(m)]})
+}
+
 /// The backup JSON: every recipe, or only `only` and the cookbooks it's in.
 fn export_json(conn: &Connection, only: Option<i64>) -> AppResult<Value> {
     let mut stmt = conn.prepare("SELECT * FROM recipes WHERE ?1 IS NULL OR id = ?1 ORDER BY id")?;
@@ -700,6 +773,9 @@ fn export_json(conn: &Connection, only: Option<i64>) -> AppResult<Value> {
         .iter()
         .map(|r| {
             let mut m = r.fields().to_json();
+            if let Some(original) = &r.original_url {
+                m.insert("originalUrl".into(), json!(original));
+            }
             let names: Vec<String> = links
                 .iter()
                 .filter(|l| l.1 == r.id)

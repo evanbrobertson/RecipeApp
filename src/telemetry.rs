@@ -50,10 +50,23 @@ pub fn scrub_text(s: &str) -> String {
         let host = c[2].trim_end_matches(['.', ',', ':', ';', '!', '?']);
         format!("{}://{host}{tail}", &c[1])
     });
+    let hosts = redact_path(&hosts).into_owned();
     match hosts.char_indices().nth(MAX_MESSAGE) {
         Some((at, _)) => format!("{}…", &hosts[..at]),
-        None => hosts.into_owned(),
+        None => hosts,
     }
+}
+
+/// A path with any share token hidden: `/s/{token}/og.jpg` → `/s/[token]/og.jpg`. The
+/// token is the share, so it never goes into a span, an event or a log line. `/api/shares/…`
+/// is hidden too, though nothing routes there now (the API names shares by recipe id).
+pub fn redact_path(path: &str) -> std::borrow::Cow<'_, str> {
+    static SHARE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(^|/)(s|shares)/[^/?#\s]+").unwrap());
+    if !path.contains("s/") {
+        return path.into();
+    }
+    SHARE.replace_all(path, "${1}${2}/[token]")
 }
 
 /// A URL's host for a log line (`example.com`), never its path or query.
@@ -139,8 +152,9 @@ fn scrub_event(event: &mut protocol::Event<'_>) {
         .for_each(scrub_breadcrumb);
 }
 
-/// Routes not worth a transaction: health probes and resized photos.
-const UNTRACED_PREFIXES: &[&str] = &["/api/health", "/img/"];
+/// Routes not worth a transaction: health probes and resized photos (a share's photos
+/// and export share the `/s/{token}/{*rest}` route).
+const UNTRACED_PREFIXES: &[&str] = &["/api/health", "/img/", "/s/{token}/"];
 
 /// What the environment asked for.
 #[derive(Debug, Clone, PartialEq)]
@@ -289,6 +303,8 @@ pub async fn middleware(req: Request, next: Next) -> Response {
         .headers()
         .get("sec-fetch-dest")
         .is_some_and(|v| v == "document");
+    // Share pages run no Sentry: whoever opens a link isn't the cook
+    let share = req.uri().path().starts_with("/s/");
     let name = state.traces.then(|| transaction_name(&req)).flatten();
     let mut res = match name {
         Some(name) => traced(req, next, name).await,
@@ -300,7 +316,7 @@ pub async fn middleware(req: Request, next: Next) -> Response {
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/html"));
-        if document || html {
+        if (document || html) && !share {
             res.headers_mut()
                 .append(HeaderName::from_static("server-timing"), hint.clone());
         }
@@ -356,7 +372,7 @@ fn event_request(method: &str, path: &str, headers: &HeaderMap) -> protocol::Req
         .unwrap_or("localhost");
     let mut request = protocol::Request {
         method: Some(method.to_owned()),
-        url: format!("https://{host}{path}").parse().ok(),
+        url: format!("https://{host}{}", redact_path(path)).parse().ok(),
         headers: headers
             .iter()
             .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
@@ -513,6 +529,20 @@ mod tests {
         headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
         headers.insert("x-forwarded-for", "203.0.113.9".parse().unwrap());
         headers.insert(header::USER_AGENT, "test".parse().unwrap());
+        let shared = event_request("GET", "/s/AbC-123_xyzAbC-123_xyz/og.jpg", &headers);
+        assert_eq!(
+            shared.url.unwrap().as_str(),
+            "https://crumb.example/s/[token]/og.jpg"
+        );
+        assert_eq!(redact_path("/s/tok"), "/s/[token]");
+        assert_eq!(redact_path("/api/shares/tok"), "/api/shares/[token]");
+        assert_eq!(redact_path("/api/recipes/1/share"), "/api/recipes/1/share");
+        assert_eq!(redact_path("/sx/tok"), "/sx/tok");
+        assert_eq!(redact_path("/recipes/1"), "/recipes/1");
+        assert_eq!(
+            scrub_text("share page /s/secretToken123/crumb.json failed"),
+            "share page /s/[token]/crumb.json failed"
+        );
         let r = event_request("GET", "/api/recipes", &headers);
         assert_eq!(r.url.unwrap().as_str(), "https://crumb.example/api/recipes");
         assert_eq!(r.headers.len(), 1);

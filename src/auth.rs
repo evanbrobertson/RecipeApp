@@ -119,7 +119,15 @@ pub fn logout_cookie(headers: &HeaderMap) -> HeaderValue {
     .expect("static cookie")
 }
 
-const PUBLIC_PREFIXES: [&str; 5] = ["/_astro/", "/fonts/", "/oauth/", "/.well-known/", "/mcp"];
+/// `/s/` is share links (src/share.rs): a token gives one recipe, read-only.
+const PUBLIC_PREFIXES: [&str; 6] = [
+    "/_astro/",
+    "/fonts/",
+    "/oauth/",
+    "/.well-known/",
+    "/mcp",
+    "/s/",
+];
 const PUBLIC_PATHS: [&str; 10] = [
     "/login",
     "/api/auth/login",
@@ -139,8 +147,10 @@ pub fn is_public(path: &str) -> bool {
     } else {
         path
     };
+    // No dot segments into a public prefix ("/s/../api")
+    let climbs = path.split('/').any(|seg| seg == "..");
     PUBLIC_PATHS.contains(&trimmed)
-        || PUBLIC_PREFIXES.iter().any(|p| path.starts_with(p))
+        || (!climbs && PUBLIC_PREFIXES.iter().any(|p| path.starts_with(p)))
         || (trimmed.starts_with("/icon-")
             && trimmed.ends_with(".png")
             && !trimmed[1..].contains('/'))
@@ -210,5 +220,11 @@ mod tests {
         assert!(!is_public("/icon-192.png/../api"));
         assert!(!is_public("/recipes"));
         assert!(!is_public("/api/recipes"));
+        assert!(is_public("/s/abcdefghijklmnopqrstuv"));
+        assert!(is_public("/s/abcdefghijklmnopqrstuv/img/768"));
+        assert!(!is_public("/s"));
+        assert!(!is_public("/sx"));
+        assert!(!is_public("/sxyz/abc"));
+        assert!(!is_public("/s/../api/recipes"));
     }
 }

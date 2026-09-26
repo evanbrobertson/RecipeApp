@@ -84,8 +84,6 @@
       starting = false
     }
   }
-  // Wee Chef is the AI; the provider is only a quiet hint for whoever set up the key
-  const keyName = $derived(info?.aiProvider === "Claude" ? "Anthropic" : info?.aiProvider)
 
   // ─── Theme (the logic lives in lib/theme-boot.js, inlined in the head) ───
   const theme = window.crumbTheme
@@ -293,10 +291,11 @@
         <span class="min-w-0 flex-1">
           <span class="block font-bold">Pasted text</span>
           <span class="text-ink-muted block text-sm">
-            {info.aiProvider ? "Tidied up by Wee Chef" : "Read by the built-in parser"}
+            {info.weeChef ? "Tidied up by Wee Chef" : "Read by the built-in parser"}
           </span>
         </span>
-        {#if keyName}<span class="meta flex-none">{keyName} key</span>{/if}
+        <!-- Always "Wee Chef", never the AI provider behind it -->
+        {#if info.weeChef}<span class="meta flex-none">Wee Chef is on</span>{/if}
       </div>
       {#if info.weeChefChecks && checks}
         <button

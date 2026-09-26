@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * A native <dialog>: focus trapping, Escape and the backdrop come from the browser.
-   * `side` turns it into a slide-over panel.
+   * `side` turns it into a slide-over panel; `sheet`, a bottom sheet on phones.
    */
   import X from "@lucide/svelte/icons/x"
   import type { Snippet } from "svelte"
@@ -11,6 +11,7 @@
     title: string
     description?: string
     side?: boolean
+    sheet?: boolean
     children?: Snippet
     footer?: Snippet
     class?: string
@@ -20,6 +21,7 @@
     title,
     description,
     side = false,
+    sheet = false,
     children,
     footer,
     class: className,
@@ -36,7 +38,7 @@
 
 <dialog
   bind:this={dialog}
-  class={["modal", side && "modal-side", className]}
+  class={["modal", side && "modal-side", sheet && "modal-sheet", className]}
   aria-label={title}
   onclose={() => (open = false)}
   onclick={(e) => {
@@ -123,6 +125,34 @@
   }
   .modal-body {
     margin-top: 1rem;
+  }
+  /* Phones: up from the bottom edge, full width, rounded on top only */
+  @media (max-width: 639px) {
+    .modal-sheet {
+      --modal-speed: 0.26s;
+      margin: auto 0 0;
+      width: 100vw;
+      max-width: 100vw;
+      max-height: calc(100dvh - 2.5rem);
+      overflow-y: auto;
+      border-width: 1px 0 0;
+      border-radius: var(--radius) var(--radius) 0 0;
+      opacity: 1;
+      transform: translateY(100%);
+      transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .modal-sheet[open] {
+      transform: none;
+    }
+    @starting-style {
+      .modal-sheet[open] {
+        opacity: 1;
+        transform: translateY(100%);
+      }
+    }
+    .modal-sheet .modal-panel {
+      padding-bottom: max(env(safe-area-inset-bottom), 1.25rem);
+    }
   }
   .modal-side {
     --modal-speed: 0.28s;

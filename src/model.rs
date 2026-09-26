@@ -231,8 +231,12 @@ fn nullable_text(field: &str, v: &Value) -> AppResult<Option<String>> {
     }
 }
 
+/// A web address a recipe may link to: http or https with a host. Anything else
+/// (`javascript:`, `data:`, `file:` ...) is refused, as it would run or read something when
+/// the recipe page links to it.
 pub fn is_valid_url(value: &str) -> bool {
-    url::Url::parse(value).is_ok()
+    url::Url::parse(value)
+        .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
 }
 
 fn nullable_url(field: &str, v: &Value) -> AppResult<Option<String>> {
@@ -459,6 +463,10 @@ pub struct Recipe {
     pub instructions: Vec<Section>,
     pub nutrition: Option<Value>,
     pub notes: Option<String>,
+    /// Saved from another Crumb's share: `url` is that share link (what a later save of the
+    /// same link dedupes on) and this is the recipe's original source, when the export
+    /// named one on another site. Never a dedupe key, so an export can't claim a URL.
+    pub original_url: Option<String>,
     #[serde(serialize_with = "ser_iso")]
     pub created_at: i64,
     #[serde(serialize_with = "ser_iso")]
@@ -582,6 +590,27 @@ pub fn cookbook_color(v: &Value) -> AppResult<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn recipe_links_are_only_http_or_https() {
+        assert!(is_valid_url("https://food.test/cake"));
+        assert!(is_valid_url("HTTP://food.test:8080/cake?x=1"));
+        for bad in [
+            "javascript://evil.test/%0Aalert(1)",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "file:///etc/passwd",
+            "vbscript:x",
+            "mailto:a@b.test",
+            "not a url",
+        ] {
+            assert!(!is_valid_url(bad), "{bad}");
+        }
+        let err =
+            RecipePatch::from_json(&json!({"url": "javascript://x.test/%0Aalert(1)"})).unwrap_err();
+        assert!(err.message.contains("url: Invalid URL"), "{}", err.message);
+        assert!(RecipePatch::from_json(&json!({"image": "data:image/png;base64,AA"})).is_err());
+    }
 
     #[test]
     fn cookbook_colours_accept_legacy_names() {

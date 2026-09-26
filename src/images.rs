@@ -221,15 +221,62 @@ fn not_found() -> Response {
     res
 }
 
-fn webp_response(bytes: Vec<u8>, key: &str, width: u32, current: bool) -> Response {
+/// What to make from a recipe photo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Variant {
+    /// WebP at one of [`WIDTHS`].
+    Webp(u32),
+    /// A 1200×630 JPEG crop for link previews (Open Graph).
+    Preview,
+}
+
+impl Variant {
+    fn file_suffix(self) -> String {
+        match self {
+            Variant::Webp(w) => format!("{w}.webp"),
+            Variant::Preview => "og.jpg".into(),
+        }
+    }
+}
+
+/// Who may keep a copy of a sized photo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caching {
+    /// Behind the login: the browser only, for good once the URL has the current key.
+    Private,
+    /// A share page's photo: link-preview bots and shared caches may keep it for a day.
+    Public,
+}
+
+/// Width and height of the link-preview crop.
+pub const PREVIEW_SIZE: (u32, u32) = (1200, 630);
+const PREVIEW_JPEG_QUALITY: u8 = 82;
+
+fn image_response(
+    bytes: Vec<u8>,
+    key: &str,
+    variant: Variant,
+    current: bool,
+    caching: Caching,
+) -> Response {
     let mut res = bytes.into_response();
     let h = res.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/webp"));
-    h.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(if current { IMMUTABLE } else { "no-cache" }),
-    );
-    if let Ok(tag) = HeaderValue::from_str(&format!("\"{key}-{width}\"")) {
+    let content_type = match variant {
+        Variant::Webp(_) => "image/webp",
+        Variant::Preview => "image/jpeg",
+    };
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    let cache = match (current, caching) {
+        (false, _) => "no-cache",
+        (true, Caching::Private) => IMMUTABLE,
+        (true, Caching::Public) => "public, max-age=86400",
+    };
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    let tag = match variant {
+        Variant::Webp(w) => format!("\"{key}-{w}\""),
+        Variant::Preview => format!("\"{key}-og\""),
+    };
+    if let Ok(tag) = HeaderValue::from_str(&tag) {
         h.insert(header::ETAG, tag);
     }
     res
@@ -241,15 +288,38 @@ fn digits<T: std::str::FromStr>(s: &str) -> Option<T> {
         .flatten()
 }
 
+/// A width from a URL segment, snapped to the nearest one the server makes.
+pub fn parse_width(raw: &str) -> Option<u32> {
+    digits::<u32>(raw).map(snap_width)
+}
+
 async fn serve(
     State(state): State<AppState>,
     UrlPath((id, width)): UrlPath<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    let (Some(id), Some(width)) = (digits::<i64>(&id), digits::<u32>(&width)) else {
+    let (Some(id), Some(width)) = (digits::<i64>(&id), parse_width(&width)) else {
         return not_found();
     };
-    let width = snap_width(width);
+    serve_photo(
+        &state,
+        id,
+        Variant::Webp(width),
+        q.get("v").map(String::as_str),
+        Caching::Private,
+    )
+    .await
+}
+
+/// A recipe's photo made into `variant`, from the disk cache when it's there. `v` is the
+/// key the URL carries: only a URL with the current key may be cached for long.
+pub async fn serve_photo(
+    state: &AppState,
+    id: i64,
+    variant: Variant,
+    v: Option<&str>,
+    caching: Caching,
+) -> Response {
     let row: Option<(Option<String>, Option<String>)> = state
         .db
         .lock()
@@ -264,10 +334,10 @@ async fn serve(
         return not_found();
     };
     let key = image_key(&image);
-    let current = q.get("v").is_some_and(|v| *v == key);
+    let current = v.is_some_and(|v| v == key);
     let images = &state.images;
     let source = format!("{id}-{key}");
-    let name = format!("{source}-{width}.webp");
+    let name = format!("{source}-{}", variant.file_suffix());
 
     if images.failed_recently(&source) {
         return not_found();
@@ -279,13 +349,13 @@ async fn serve(
         }
     };
     if let Some(bytes) = read_cached().await {
-        return webp_response(bytes, &key, width, current);
+        return image_response(bytes, &key, variant, current, caching);
     }
 
     let _slot = images.claim(&name).await;
     // Someone else may have made it (or failed) while this request waited
     if let Some(bytes) = read_cached().await {
-        return webp_response(bytes, &key, width, current);
+        return image_response(bytes, &key, variant, current, caching);
     }
     if images.failed_recently(&source) {
         return not_found();
@@ -305,14 +375,17 @@ async fn serve(
     let worker = state.images.clone();
     let cache_name = name.clone();
     let made = tokio::task::spawn_blocking(move || {
-        let out = resize_to_webp(&original, width)?;
+        let out = match variant {
+            Variant::Webp(width) => resize_to_webp(&original, width)?,
+            Variant::Preview => preview_jpeg(&original)?,
+        };
         worker.store(&cache_name, &out);
         Ok::<_, String>(out)
     })
     .await
     .unwrap_or_else(|e| Err(format!("resize task failed: {e}")));
     match made {
-        Ok(bytes) => webp_response(bytes, &key, width, current),
+        Ok(bytes) => image_response(bytes, &key, variant, current, caching),
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
             images.record_failure(source);
@@ -462,8 +535,8 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("bad base64 in data URI: {e}"))
 }
 
-/// Decodes, applies EXIF orientation, scales to `width` (never up) and encodes lossy WebP.
-pub fn resize_to_webp(bytes: &[u8], width: u32) -> Result<Vec<u8>, String> {
+/// Decodes with the size guards and applies EXIF orientation.
+fn decode(bytes: &[u8]) -> Result<DynamicImage, String> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
@@ -482,11 +555,16 @@ pub fn resize_to_webp(bytes: &[u8], width: u32) -> Result<Vec<u8>, String> {
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| format!("can't decode: {e}"))?;
     img.apply_orientation(orientation);
-
-    let (w, h) = (img.width(), img.height());
-    if w == 0 || h == 0 {
+    if img.width() == 0 || img.height() == 0 {
         return Err("empty image".into());
     }
+    Ok(img)
+}
+
+/// Decodes, applies EXIF orientation, scales to `width` (never up) and encodes lossy WebP.
+pub fn resize_to_webp(bytes: &[u8], width: u32) -> Result<Vec<u8>, String> {
+    let mut img = decode(bytes)?;
+    let (w, h) = (img.width(), img.height());
     if width < w {
         let height = ((f64::from(h) * f64::from(width) / f64::from(w)).round() as u32).max(1);
         img = img.resize_exact(width, height, FilterType::CatmullRom);
@@ -502,6 +580,18 @@ pub fn resize_to_webp(bytes: &[u8], width: u32) -> Result<Vec<u8>, String> {
     encoded
         .map(|m| m.to_vec())
         .map_err(|e| format!("can't encode WebP: {e:?}"))
+}
+
+/// The link-preview card: the photo scaled to cover 1200×630 and cropped to its centre,
+/// as a JPEG (what every link-preview bot can read).
+pub fn preview_jpeg(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let (w, h) = PREVIEW_SIZE;
+    let img = decode(bytes)?.resize_to_fill(w, h, FilterType::CatmullRom);
+    let mut out = Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, PREVIEW_JPEG_QUALITY)
+        .encode_image(&img.to_rgb8())
+        .map_err(|e| format!("can't encode JPEG: {e}"))?;
+    Ok(out.into_inner())
 }
 
 #[cfg(test)]

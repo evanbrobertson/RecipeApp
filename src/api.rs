@@ -218,7 +218,7 @@ fn file_slug(title: &str, ascii: bool) -> String {
 
 /// `attachment` with an ASCII `filename` and, when the title has other letters, a UTF-8
 /// `filename*` (RFC 6266).
-fn attachment(title: &str, ext: &str) -> Option<HeaderValue> {
+pub(crate) fn attachment(title: &str, ext: &str) -> Option<HeaderValue> {
     let ascii = file_slug(title, true);
     let full = file_slug(title, false);
     let mut value = format!("attachment; filename=\"{ascii}.{ext}\"");
