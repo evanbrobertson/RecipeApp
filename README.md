@@ -288,6 +288,30 @@ APP_PASSWORD=change-me ./target/release/crumb
 
 See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASING.md) for how builds are released (CI, image tags, dev and stable).
 
+### Linux desktop (Omarchy)
+
+The desktop edition opens the same Rust server and Astro pages in a native GTK/WebKit window.
+On Omarchy it reads the active `colors.toml` palette, applies its colours to Crumb's existing
+interface, and follows theme switches while the app is open. Other Linux desktops use Crumb's
+normal theme. Recipe imports, cooking mode, backups, printing and file downloads use the same
+routes as the web app; downloads go to `~/Downloads`.
+
+On Omarchy, install `base-devel`, `rust`, `bun`, `python-gobject`, `gtk3` and `webkit2gtk-4.1`
+through your package manager, then run:
+
+```bash
+bash scripts/install-desktop.sh
+crumb-desktop
+```
+
+The installer builds the frontend and Rust server and adds Crumb to the application launcher
+for the current user. It can be run again to install a newer checkout. Recipes live in
+`~/.local/share/crumb/recipes.db` (or `$XDG_DATA_HOME/crumb/recipes.db`); the desktop edition
+does not use the database of another Crumb installation. The server listens only on an ephemeral
+`127.0.0.1` port and exits with the window. Pass `APP_PASSWORD` and optional AI keys in the
+launcher environment if you use those features. A Claude connector on another device needs a
+separately reachable Crumb server; the desktop-only loopback address is not reachable from it.
+
 ## Configuration
 
 | Variable            | Required   | Description                                                                   |

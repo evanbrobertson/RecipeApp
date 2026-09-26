@@ -5,6 +5,7 @@ web/.astro
 
 # Dependencies
 node_modules
+__pycache__/
 
 # Local data
 .data
