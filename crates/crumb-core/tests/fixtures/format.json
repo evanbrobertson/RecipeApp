@@ -1,0 +1,1591 @@
+{
+  "isShareLink": [
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnop",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnop/42",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnop/",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmno",
+      "output": false
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnopq/7",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/x/s/abcdefghijklmnop",
+      "output": false
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnop?box=1",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/s/abcdefghijklmnop/42/?x=1",
+      "output": true
+    },
+    {
+      "input": "https://crumb.example/recipes/1",
+      "output": false
+    },
+    {
+      "input": "not a url",
+      "output": false
+    },
+    {
+      "input": "https://",
+      "output": false
+    },
+    {
+      "input": "",
+      "output": false
+    },
+    {
+      "input": null,
+      "output": false
+    }
+  ],
+  "publicSource": [
+    {
+      "input": {
+        "url": null,
+        "originalUrl": null
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "url": "https://crumb.example/s/abcdefghijklmnop",
+        "originalUrl": null
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "url": "https://origin.example/recipe",
+        "originalUrl": null
+      },
+      "output": "https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "url": null,
+        "originalUrl": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "url": "https://crumb.example/s/abcdefghijklmnop",
+        "originalUrl": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "url": "https://origin.example/recipe",
+        "originalUrl": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "url": null,
+        "originalUrl": "https://origin.example/recipe"
+      },
+      "output": "https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "url": "https://crumb.example/s/abcdefghijklmnop",
+        "originalUrl": "https://origin.example/recipe"
+      },
+      "output": "https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "url": "https://origin.example/recipe",
+        "originalUrl": "https://origin.example/recipe"
+      },
+      "output": "https://origin.example/recipe"
+    }
+  ],
+  "recipeToMarkdown": [
+    {
+      "input": {
+        "name": "minimal",
+        "recipe": {
+          "title": "Toast",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 slice bread"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        }
+      },
+      "output": "# Toast\n\n## Ingredients\n- 1 slice bread\n\n## Instructions"
+    },
+    {
+      "input": {
+        "name": "full",
+        "recipe": {
+          "title": "Roast Chicken",
+          "description": "A weeknight roast.",
+          "url": "https://origin.example/recipe",
+          "originalUrl": null,
+          "author": "Evan",
+          "prepTime": "10 min",
+          "cookTime": "1 hr",
+          "freezeTime": "3 months",
+          "totalTime": "1 hr 10 min",
+          "recipeYield": "4 servings",
+          "recipeCategory": "Dinner",
+          "recipeCuisine": "British",
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 chicken",
+                "2 tbsp oil"
+              ]
+            },
+            {
+              "name": "Stuffing",
+              "items": [
+                "1 lemon",
+                "2 sprigs thyme"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the oven.",
+                "Roast the chicken."
+              ]
+            },
+            {
+              "name": "Rest",
+              "items": [
+                "Rest for 15 minutes."
+              ]
+            }
+          ],
+          "notes": "Save the fat."
+        }
+      },
+      "output": "# Roast Chicken\n\nA weeknight roast.\n\nPrep: 10 min · Cook: 1 hr · Additional: 3 months · Total: 1 hr 10 min · Yield: 4 servings · Category: Dinner · Cuisine: British · By: Evan\n\n## Ingredients\n- 1 chicken\n- 2 tbsp oil\n\n### Stuffing\n- 1 lemon\n- 2 sprigs thyme\n\n## Instructions\n1. Heat the oven.\n2. Roast the chicken.\n\n### Rest\n3. Rest for 15 minutes.\n\n## Notes\nSave the fat.\n\nSource: https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "name": "emptySections",
+        "recipe": {
+          "title": "Empty",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": []
+            },
+            {
+              "name": "Sauce",
+              "items": []
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": []
+            }
+          ],
+          "notes": null
+        }
+      },
+      "output": "# Empty\n\n## Ingredients\n\n### Sauce\n\n## Instructions"
+    },
+    {
+      "input": {
+        "name": "shareOnly",
+        "recipe": {
+          "title": "Shared",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        }
+      },
+      "output": "# Shared\n\n## Ingredients\n- 1 egg\n\n## Instructions"
+    },
+    {
+      "input": {
+        "name": "sourcedFromShare",
+        "recipe": {
+          "title": "Shared from somewhere",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": "https://origin.example/recipe",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        }
+      },
+      "output": "# Shared from somewhere\n\n## Ingredients\n- 1 egg\n\n## Instructions\n\nSource: https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "name": "shareAsOriginal",
+        "recipe": {
+          "title": "Odd one",
+          "description": null,
+          "url": "https://origin.example/recipe",
+          "originalUrl": "https://crumb.example/s/abcdefghijklmnop",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        }
+      },
+      "output": "# Odd one\n\n## Ingredients\n- 1 egg\n\n## Instructions\n\nSource: https://origin.example/recipe"
+    },
+    {
+      "input": {
+        "name": "unicode",
+        "recipe": {
+          "title": "Crème brûlée 🍮",
+          "description": "Dessert",
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "Custard",
+              "items": [
+                "500 ml double cream",
+                "1 vanilla pod"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the cream.",
+                "Whisk the yolks."
+              ]
+            }
+          ],
+          "notes": null
+        }
+      },
+      "output": "# Crème brûlée 🍮\n\nDessert\n\n## Ingredients\n\n### Custard\n- 500 ml double cream\n- 1 vanilla pod\n\n## Instructions\n1. Heat the cream.\n2. Whisk the yolks."
+    },
+    {
+      "input": {
+        "name": "blankLines",
+        "recipe": {
+          "title": "Blank lines",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "2 eggs"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Beat the eggs.\n\nAdd salt.",
+                "Fold in the flour.\n"
+              ]
+            }
+          ],
+          "notes": null
+        }
+      },
+      "output": "# Blank lines\n\n## Ingredients\n- 2 eggs\n\n## Instructions\n1. Beat the eggs.\n\nAdd salt.\n2. Fold in the flour.\n"
+    },
+    {
+      "input": {
+        "name": "notesOnly",
+        "recipe": {
+          "title": "Plain",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 cup rice"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": "Made this twice."
+        }
+      },
+      "output": "# Plain\n\n## Ingredients\n- 1 cup rice\n\n## Instructions\n\n## Notes\nMade this twice."
+    },
+    {
+      "input": {
+        "name": "blankNames",
+        "recipe": {
+          "title": "Blank names",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "",
+              "items": [
+                "1 tsp salt"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": "",
+              "items": [
+                "Season."
+              ]
+            }
+          ],
+          "notes": null
+        }
+      },
+      "output": "# Blank names\n\n## Ingredients\n- 1 tsp salt\n\n## Instructions\n1. Season."
+    }
+  ],
+  "recipeToText": [
+    {
+      "input": {
+        "name": "minimal",
+        "recipe": {
+          "title": "Toast",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 slice bread"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Toast\n\nIngredients\n• 1 slice bread"
+    },
+    {
+      "input": {
+        "name": "minimal",
+        "recipe": {
+          "title": "Toast",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 slice bread"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Toast\n\nIngredients\n• 1 slice bread\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "full",
+        "recipe": {
+          "title": "Roast Chicken",
+          "description": "A weeknight roast.",
+          "url": "https://origin.example/recipe",
+          "originalUrl": null,
+          "author": "Evan",
+          "prepTime": "10 min",
+          "cookTime": "1 hr",
+          "freezeTime": "3 months",
+          "totalTime": "1 hr 10 min",
+          "recipeYield": "4 servings",
+          "recipeCategory": "Dinner",
+          "recipeCuisine": "British",
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 chicken",
+                "2 tbsp oil"
+              ]
+            },
+            {
+              "name": "Stuffing",
+              "items": [
+                "1 lemon",
+                "2 sprigs thyme"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the oven.",
+                "Roast the chicken."
+              ]
+            },
+            {
+              "name": "Rest",
+              "items": [
+                "Rest for 15 minutes."
+              ]
+            }
+          ],
+          "notes": "Save the fat."
+        },
+        "link": null
+      },
+      "output": "Roast Chicken\n\nIngredients\n• 1 chicken\n• 2 tbsp oil\n\nStuffing\n• 1 lemon\n• 2 sprigs thyme\n\nMethod\n1. Heat the oven.\n2. Roast the chicken.\n\nRest\n3. Rest for 15 minutes."
+    },
+    {
+      "input": {
+        "name": "full",
+        "recipe": {
+          "title": "Roast Chicken",
+          "description": "A weeknight roast.",
+          "url": "https://origin.example/recipe",
+          "originalUrl": null,
+          "author": "Evan",
+          "prepTime": "10 min",
+          "cookTime": "1 hr",
+          "freezeTime": "3 months",
+          "totalTime": "1 hr 10 min",
+          "recipeYield": "4 servings",
+          "recipeCategory": "Dinner",
+          "recipeCuisine": "British",
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 chicken",
+                "2 tbsp oil"
+              ]
+            },
+            {
+              "name": "Stuffing",
+              "items": [
+                "1 lemon",
+                "2 sprigs thyme"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the oven.",
+                "Roast the chicken."
+              ]
+            },
+            {
+              "name": "Rest",
+              "items": [
+                "Rest for 15 minutes."
+              ]
+            }
+          ],
+          "notes": "Save the fat."
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Roast Chicken\n\nIngredients\n• 1 chicken\n• 2 tbsp oil\n\nStuffing\n• 1 lemon\n• 2 sprigs thyme\n\nMethod\n1. Heat the oven.\n2. Roast the chicken.\n\nRest\n3. Rest for 15 minutes.\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "emptySections",
+        "recipe": {
+          "title": "Empty",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": []
+            },
+            {
+              "name": "Sauce",
+              "items": []
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": []
+            }
+          ],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Empty"
+    },
+    {
+      "input": {
+        "name": "emptySections",
+        "recipe": {
+          "title": "Empty",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": []
+            },
+            {
+              "name": "Sauce",
+              "items": []
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": []
+            }
+          ],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Empty\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "shareOnly",
+        "recipe": {
+          "title": "Shared",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Shared\n\nIngredients\n• 1 egg"
+    },
+    {
+      "input": {
+        "name": "shareOnly",
+        "recipe": {
+          "title": "Shared",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Shared\n\nIngredients\n• 1 egg\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "sourcedFromShare",
+        "recipe": {
+          "title": "Shared from somewhere",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": "https://origin.example/recipe",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Shared from somewhere\n\nIngredients\n• 1 egg"
+    },
+    {
+      "input": {
+        "name": "sourcedFromShare",
+        "recipe": {
+          "title": "Shared from somewhere",
+          "description": null,
+          "url": "https://crumb.example/s/abcdefghijklmnop",
+          "originalUrl": "https://origin.example/recipe",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Shared from somewhere\n\nIngredients\n• 1 egg\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "shareAsOriginal",
+        "recipe": {
+          "title": "Odd one",
+          "description": null,
+          "url": "https://origin.example/recipe",
+          "originalUrl": "https://crumb.example/s/abcdefghijklmnop",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Odd one\n\nIngredients\n• 1 egg"
+    },
+    {
+      "input": {
+        "name": "shareAsOriginal",
+        "recipe": {
+          "title": "Odd one",
+          "description": null,
+          "url": "https://origin.example/recipe",
+          "originalUrl": "https://crumb.example/s/abcdefghijklmnop",
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 egg"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Odd one\n\nIngredients\n• 1 egg\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "unicode",
+        "recipe": {
+          "title": "Crème brûlée 🍮",
+          "description": "Dessert",
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "Custard",
+              "items": [
+                "500 ml double cream",
+                "1 vanilla pod"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the cream.",
+                "Whisk the yolks."
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Crème brûlée 🍮\n\nIngredients\n\nCustard\n• 500 ml double cream\n• 1 vanilla pod\n\nMethod\n1. Heat the cream.\n2. Whisk the yolks."
+    },
+    {
+      "input": {
+        "name": "unicode",
+        "recipe": {
+          "title": "Crème brûlée 🍮",
+          "description": "Dessert",
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "Custard",
+              "items": [
+                "500 ml double cream",
+                "1 vanilla pod"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Heat the cream.",
+                "Whisk the yolks."
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Crème brûlée 🍮\n\nIngredients\n\nCustard\n• 500 ml double cream\n• 1 vanilla pod\n\nMethod\n1. Heat the cream.\n2. Whisk the yolks.\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "blankLines",
+        "recipe": {
+          "title": "Blank lines",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "2 eggs"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Beat the eggs.\n\nAdd salt.",
+                "Fold in the flour.\n"
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Blank lines\n\nIngredients\n• 2 eggs\n\nMethod\n1. Beat the eggs.\n\nAdd salt.\n2. Fold in the flour.\n"
+    },
+    {
+      "input": {
+        "name": "blankLines",
+        "recipe": {
+          "title": "Blank lines",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "2 eggs"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": null,
+              "items": [
+                "Beat the eggs.\n\nAdd salt.",
+                "Fold in the flour.\n"
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Blank lines\n\nIngredients\n• 2 eggs\n\nMethod\n1. Beat the eggs.\n\nAdd salt.\n2. Fold in the flour.\n\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "notesOnly",
+        "recipe": {
+          "title": "Plain",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 cup rice"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": "Made this twice."
+        },
+        "link": null
+      },
+      "output": "Plain\n\nIngredients\n• 1 cup rice"
+    },
+    {
+      "input": {
+        "name": "notesOnly",
+        "recipe": {
+          "title": "Plain",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": null,
+              "items": [
+                "1 cup rice"
+              ]
+            }
+          ],
+          "instructions": [],
+          "notes": "Made this twice."
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Plain\n\nIngredients\n• 1 cup rice\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "blankNames",
+        "recipe": {
+          "title": "Blank names",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "",
+              "items": [
+                "1 tsp salt"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": "",
+              "items": [
+                "Season."
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": null
+      },
+      "output": "Blank names\n\nIngredients\n• 1 tsp salt\n\nMethod\n1. Season."
+    },
+    {
+      "input": {
+        "name": "blankNames",
+        "recipe": {
+          "title": "Blank names",
+          "description": null,
+          "url": null,
+          "originalUrl": null,
+          "author": null,
+          "prepTime": null,
+          "cookTime": null,
+          "freezeTime": null,
+          "totalTime": null,
+          "recipeYield": null,
+          "recipeCategory": null,
+          "recipeCuisine": null,
+          "ingredients": [
+            {
+              "name": "",
+              "items": [
+                "1 tsp salt"
+              ]
+            }
+          ],
+          "instructions": [
+            {
+              "name": "",
+              "items": [
+                "Season."
+              ]
+            }
+          ],
+          "notes": null
+        },
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "Blank names\n\nIngredients\n• 1 tsp salt\n\nMethod\n1. Season.\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    }
+  ],
+  "bookToText": [
+    {
+      "input": {
+        "name": "Empty shelf",
+        "titles": []
+      },
+      "output": "Empty shelf"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "titles": [
+          "Roast Chicken"
+        ],
+        "link": "https://origin.example/recipe"
+      },
+      "output": "Weeknight dinners\n\n• Roast Chicken\n\nhttps://origin.example/recipe"
+    },
+    {
+      "input": {
+        "name": "Baking",
+        "titles": [
+          "Scones",
+          "Victoria sponge",
+          "Shortbread"
+        ]
+      },
+      "output": "Baking\n\n• Scones\n• Victoria sponge\n• Shortbread"
+    },
+    {
+      "input": {
+        "name": "Baking with a link",
+        "titles": [
+          "Scones",
+          "Victoria sponge"
+        ],
+        "link": "https://origin.example/recipe"
+      },
+      "output": "Baking with a link\n\n• Scones\n• Victoria sponge\n\nhttps://origin.example/recipe"
+    },
+    {
+      "input": {
+        "name": "🍜 Noodles",
+        "titles": [
+          "Ramen",
+          "Pho"
+        ],
+        "link": "https://crumb.example/s/abcdefghijklmnop"
+      },
+      "output": "🍜 Noodles\n\n• Ramen\n• Pho\n\nhttps://crumb.example/s/abcdefghijklmnop"
+    },
+    {
+      "input": {
+        "name": "Titles with blank link",
+        "titles": [
+          "One"
+        ],
+        "link": ""
+      },
+      "output": "Titles with blank link\n\n• One"
+    },
+    {
+      "input": {
+        "name": "Titles with null link",
+        "titles": [
+          "One"
+        ],
+        "link": null
+      },
+      "output": "Titles with null link\n\n• One"
+    }
+  ],
+  "bookImportedTitle": [
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 12,
+        "duplicates": 0
+      },
+      "output": "Added 12 recipes to Weeknight dinners"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 1,
+        "duplicates": 0
+      },
+      "output": "Added 1 recipe to Weeknight dinners"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 0,
+        "duplicates": 0
+      },
+      "output": "Added Weeknight dinners, an empty cookbook"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 12,
+        "duplicates": 0,
+        "skipped": 1
+      },
+      "output": "Added 12 recipes to Weeknight dinners, 1 skipped"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 1,
+        "duplicates": 0,
+        "skipped": 0
+      },
+      "output": "Added 1 recipe to Weeknight dinners"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 0,
+        "duplicates": 3
+      },
+      "output": "Already in your recipes, now in Weeknight dinners"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 0,
+        "duplicates": 3,
+        "skipped": 2
+      },
+      "output": "Already in your recipes, now in Weeknight dinners, 2 skipped"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 5,
+        "duplicates": 3
+      },
+      "output": "Added 5 recipes to Weeknight dinners"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 0,
+        "duplicates": 0,
+        "skipped": 4
+      },
+      "output": "Added 0 recipes to Weeknight dinners, 4 skipped"
+    },
+    {
+      "input": {
+        "name": "Weeknight dinners",
+        "added": 0,
+        "duplicates": 0,
+        "skipped": 0
+      },
+      "output": "Added Weeknight dinners, an empty cookbook"
+    }
+  ],
+  "countItems": [
+    {
+      "input": [],
+      "output": 0
+    },
+    {
+      "input": [
+        {
+          "name": null,
+          "items": []
+        }
+      ],
+      "output": 0
+    },
+    {
+      "input": [
+        {
+          "name": null,
+          "items": [
+            "a"
+          ]
+        }
+      ],
+      "output": 1
+    },
+    {
+      "input": [
+        {
+          "name": "Sauce",
+          "items": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "output": 3
+    },
+    {
+      "input": [
+        {
+          "name": null,
+          "items": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "name": "Topping",
+          "items": [
+            "c"
+          ]
+        },
+        {
+          "name": null,
+          "items": []
+        }
+      ],
+      "output": 3
+    }
+  ],
+  "kicker": [
+    {
+      "input": {
+        "recipeCategory": "Dinner",
+        "recipeCuisine": "Italian"
+      },
+      "output": "Dinner · Italian"
+    },
+    {
+      "input": {
+        "recipeCategory": "Dinner",
+        "recipeCuisine": null
+      },
+      "output": "Dinner"
+    },
+    {
+      "input": {
+        "recipeCategory": null,
+        "recipeCuisine": "Italian"
+      },
+      "output": "Italian"
+    },
+    {
+      "input": {
+        "recipeCategory": null,
+        "recipeCuisine": null
+      },
+      "output": ""
+    },
+    {
+      "input": {
+        "recipeCategory": "",
+        "recipeCuisine": ""
+      },
+      "output": ""
+    },
+    {
+      "input": {
+        "recipeCategory": "",
+        "recipeCuisine": "Italian"
+      },
+      "output": "Italian"
+    },
+    {
+      "input": {
+        "recipeCategory": "Dinner",
+        "recipeCuisine": ""
+      },
+      "output": "Dinner"
+    }
+  ],
+  "webLink": [
+    {
+      "input": "https://www.example.com/a",
+      "output": "https://www.example.com/a"
+    },
+    {
+      "input": "http://Example.COM:8080/x",
+      "output": "http://Example.COM:8080/x"
+    },
+    {
+      "input": "https://www.www.example.com",
+      "output": "https://www.www.example.com"
+    },
+    {
+      "input": "javascript:alert(1)",
+      "output": null
+    },
+    {
+      "input": "data:text/html,hi",
+      "output": null
+    },
+    {
+      "input": "ftp://example.com",
+      "output": null
+    },
+    {
+      "input": "mailto:a@b.c",
+      "output": null
+    },
+    {
+      "input": "https://",
+      "output": null
+    },
+    {
+      "input": "not a url",
+      "output": null
+    },
+    {
+      "input": "https://bücher.example/",
+      "output": "https://bücher.example/"
+    },
+    {
+      "input": "https://example.com./",
+      "output": "https://example.com./"
+    },
+    {
+      "input": null,
+      "output": null
+    },
+    {
+      "input": "",
+      "output": null
+    },
+    {
+      "input": "  https://example.com  ",
+      "output": "  https://example.com  "
+    }
+  ],
+  "hostOf": [
+    {
+      "input": "https://www.example.com/a",
+      "output": "example.com"
+    },
+    {
+      "input": "http://Example.COM:8080/x",
+      "output": "example.com"
+    },
+    {
+      "input": "https://www.www.example.com",
+      "output": "www.example.com"
+    },
+    {
+      "input": "javascript:alert(1)",
+      "output": null
+    },
+    {
+      "input": "data:text/html,hi",
+      "output": null
+    },
+    {
+      "input": "ftp://example.com",
+      "output": null
+    },
+    {
+      "input": "mailto:a@b.c",
+      "output": null
+    },
+    {
+      "input": "https://",
+      "output": null
+    },
+    {
+      "input": "not a url",
+      "output": null
+    },
+    {
+      "input": "https://bücher.example/",
+      "output": "xn--bcher-kva.example"
+    },
+    {
+      "input": "https://example.com./",
+      "output": "example.com."
+    },
+    {
+      "input": null,
+      "output": null
+    },
+    {
+      "input": "",
+      "output": null
+    },
+    {
+      "input": "  https://example.com  ",
+      "output": "example.com"
+    }
+  ]
+}

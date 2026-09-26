@@ -4,6 +4,7 @@
 pub mod categories;
 pub mod duration;
 pub mod error;
+pub mod format;
 pub mod fractions;
 pub mod ingredients;
 pub mod markdown;
