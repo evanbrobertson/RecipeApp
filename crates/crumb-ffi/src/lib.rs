@@ -1,8 +1,11 @@
-//! crumb-core for Kotlin: the Android app's scaling, mise en place, step timers, step
-//! ingredients, durations and text export all come from here, so they match the web and
+//! crumb-core for the native apps (Kotlin on Android, Swift on iOS): scaling, mise en place,
+//! step timers, step ingredients, durations, text export, photo URLs, server addresses,
+//! error wording and the sunrise theme all come from here, so they match the web and
 //! desktop apps exactly. Plain functions and records only; recipes cross as the API's JSON.
 
-use crumb_core::{categories, duration, format, fractions, ingredients, model, source};
+use crumb_core::{
+    categories, checks, client, duration, format, fractions, ingredients, model, source, sun,
+};
 
 uniffi::setup_scaffolding!();
 
@@ -268,6 +271,206 @@ pub fn book_imported_title(
     )
 }
 
+// ─── Client helpers ────────────────────────────────────────────────────────
+
+/// The session cookie's name, `crumb_session`.
+#[uniffi::export]
+pub fn session_cookie_name() -> String {
+    client::SESSION_COOKIE.to_string()
+}
+
+/// FNV-1a key of a recipe's image string, the `v` of its photo URLs.
+#[uniffi::export]
+pub fn image_key(image: String) -> String {
+    client::image_key(&image)
+}
+
+/// The smallest width the server's resizer makes that is at least `px`.
+#[uniffi::export]
+pub fn snap_width(px: u32) -> u32 {
+    client::snap_width(px)
+}
+
+/// `img/{id}/{width}?v={key}` relative to the server's base URL, or null without an image.
+#[uniffi::export]
+pub fn photo_path(recipe_id: i64, image: Option<String>, px: u32) -> Option<String> {
+    client::photo_path(recipe_id, image.as_deref(), px)
+}
+
+/// What someone typed as their server, as a base URL ending in "/" (HTTPS by default).
+#[uniffi::export]
+pub fn server_url(input: String) -> Option<String> {
+    client::server_url(&input)
+}
+
+/// Whether plain HTTP is fine for this server (the device itself or the local network).
+#[uniffi::export]
+pub fn allows_cleartext(base_url: String) -> bool {
+    client::allows_cleartext(&base_url)
+}
+
+/// The session value from a `Set-Cookie` header, unless it clears the cookie.
+#[uniffi::export]
+pub fn session_cookie(set_cookie: String) -> Option<String> {
+    client::session_cookie(&set_cookie)
+}
+
+/// The message to show for a failed request, from its status and body.
+#[uniffi::export]
+pub fn error_message(status: u16, body: String) -> String {
+    client::error_message(status, &body)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ImportInput {
+    Link { url: String },
+    Text { text: String },
+}
+
+/// A paste or share as a link to fetch or the recipe's own text; null when blank.
+#[uniffi::export]
+pub fn classify_import(raw: String) -> Option<ImportInput> {
+    client::classify_import(&raw).map(|input| match input {
+        client::ImportInput::Link(url) => ImportInput::Link { url },
+        client::ImportInput::Text(text) => ImportInput::Text { text },
+    })
+}
+
+/// Offline search: every word of `query` in the title, category or cuisine.
+#[uniffi::export]
+pub fn matches_search(
+    query: String,
+    title: String,
+    category: Option<String>,
+    cuisine: Option<String>,
+) -> bool {
+    client::matches_search(&query, &title, category.as_deref(), cuisine.as_deref())
+}
+
+/// A recipe time for display: ISO 8601 as "1h 30m", anything else as written.
+#[uniffi::export]
+pub fn display_duration(raw: Option<String>) -> Option<String> {
+    client::display_duration(raw.as_deref())
+}
+
+/// A timer's remaining time, "4:05" or "1:02:03".
+#[uniffi::export]
+pub fn format_clock(seconds: f64) -> String {
+    client::format_clock(seconds)
+}
+
+/// "Cooked 3 times · last 2 weeks ago" (times in Unix ms); null when never cooked.
+#[uniffi::export]
+pub fn cooked_line(count: u32, last_cooked_ms: Option<i64>, now_ms: i64) -> Option<String> {
+    client::cooked_line(count, last_cooked_ms, now_ms)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CookStep {
+    pub section: Option<String>,
+    pub text: String,
+}
+
+/// Cook mode's pages: every non-blank instruction with its section.
+#[uniffi::export]
+pub fn cook_steps(recipe_json: String) -> Result<Vec<CookStep>, CoreError> {
+    Ok(client::cook_steps(&recipe(&recipe_json)?)
+        .into_iter()
+        .map(|s| CookStep {
+            section: s.section,
+            text: s.text,
+        })
+        .collect())
+}
+
+// ─── Sunrise & sunset theme ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct SunState {
+    pub dark: bool,
+    /// Unix ms of the next sunrise or sunset (or a re-check, in polar day or night).
+    pub next_change_ms: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct SunLocation {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+/// Whether it's dark at `now_ms` where the cook is, and when that next changes.
+#[uniffi::export]
+pub fn sun_state(now_ms: f64, location: SunLocation) -> SunState {
+    let s = sun::sun_state(now_ms, location.lat, location.lng);
+    SunState {
+        dark: s.dark,
+        next_change_ms: s.next_change_ms,
+    }
+}
+
+/// A location from the time zone alone (`standard_offset_east_secs`: the smaller of the
+/// zone's January and July offsets, in seconds east of UTC).
+#[uniffi::export]
+pub fn estimate_location(zone_id: String, standard_offset_east_secs: i32) -> SunLocation {
+    let (lat, lng) = sun::estimate_location(&zone_id, standard_offset_east_secs);
+    SunLocation { lat, lng }
+}
+
+// ─── Wee Chef's checks ─────────────────────────────────────────────────────
+
+/// What Wee Chef did to a line on import (from the flag's `detail.fix`, `detail.category`
+/// and `detail.was`).
+#[uniffi::export]
+pub fn fix_text(
+    fix: Option<String>,
+    item_text: String,
+    category: Option<String>,
+    was: Option<String>,
+) -> String {
+    checks::fix_text(
+        fix.as_deref(),
+        &item_text,
+        category.as_deref(),
+        was.as_deref(),
+    )
+}
+
+/// Why a flagged line might need a look, from the flag's `kind`.
+#[uniffi::export]
+pub fn review_text(kind: String) -> String {
+    checks::review_text(&kind).to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct ChecksCounts {
+    pub eligible: u32,
+    pub checked: u32,
+    pub pending: u32,
+    pub tidied: u32,
+    pub to_check: u32,
+    pub due: u32,
+    pub restored: u32,
+    pub edited: u32,
+}
+
+/// One line on where Check all stands; `run` is how many the last Check all queued.
+#[uniffi::export]
+pub fn checks_status_text(counts: ChecksCounts, run: Option<u32>) -> String {
+    checks::checks_status_text(
+        checks::ChecksCounts {
+            eligible: counts.eligible,
+            checked: counts.checked,
+            pending: counts.pending,
+            tidied: counts.tidied,
+            to_check: counts.to_check,
+            due: counts.due,
+            restored: counts.restored,
+            edited: counts.edited,
+        },
+        run,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +505,32 @@ mod tests {
         let t = find_timers("Bake for 25–30 minutes".into());
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].seconds, 1800);
+    }
+
+    #[test]
+    fn client_helpers_cross_the_boundary() {
+        assert_eq!(
+            classify_import("see https://example.com/pie".into()),
+            Some(ImportInput::Link {
+                url: "https://example.com/pie".into()
+            })
+        );
+        assert_eq!(
+            server_url("crumb.example.com".into()).as_deref(),
+            Some("https://crumb.example.com/")
+        );
+        assert_eq!(
+            display_duration(Some("PT90M".into())).as_deref(),
+            Some("1h 30m")
+        );
+        let loc = estimate_location("Europe/London".into(), 0);
+        assert_eq!(
+            loc,
+            SunLocation {
+                lat: 50.0,
+                lng: 0.0
+            }
+        );
     }
 
     #[test]

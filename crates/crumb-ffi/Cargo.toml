@@ -2,7 +2,7 @@
 name = "crumb-ffi"
 version = "0.1.0"
 edition = "2024"
-description = "UniFFI bindings to crumb-core for the Android app (Kotlin)."
+description = "UniFFI bindings to crumb-core for the native apps (Kotlin on Android, Swift on iOS)."
 license = "MIT"
 publish = false
 

@@ -1,3 +1,10 @@
 [bindings.kotlin]
 package_name = "app.crumb.core"
 cdylib_name = "crumb_ffi"
+
+# ios/scripts/build-core.sh: CrumbCore.swift, over the C module CrumbCoreFFI in the XCFramework
+[bindings.swift]
+module_name = "CrumbCore"
+ffi_module_name = "CrumbCoreFFI"
+ffi_module_filename = "CrumbCoreFFI"
+generate_module_map = true
