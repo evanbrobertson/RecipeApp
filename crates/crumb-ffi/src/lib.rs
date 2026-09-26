@@ -435,6 +435,12 @@ pub fn fix_text(
     )
 }
 
+/// A line quoted in a sentence (“…”), shortened when longer than `max` characters.
+#[uniffi::export]
+pub fn quote(text: String, max: u32) -> String {
+    checks::quote(&text, max as usize)
+}
+
 /// Why a flagged line might need a look, from the flag's `kind`.
 #[uniffi::export]
 pub fn review_text(kind: String) -> String {
