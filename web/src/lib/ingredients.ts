@@ -394,3 +394,114 @@ export function findTimers(step: string): { label: string; seconds: number }[] {
   }
   return out
 }
+
+// ─── Ingredients used in a step (cooking mode) ────────────────────────────
+
+/** Words that describe an ingredient rather than name it ("2 large eggs, chilled"). */
+const DESCRIPTORS = new Set(
+  (
+    "large small medium big fresh freshly ground chopped minced diced sliced grated shredded " +
+    "chilled cold warm hot softened melted room temperature unsalted salted extra virgin full " +
+    "fat low reduced light dark packed finely roughly coarsely thinly organic whole raw dried " +
+    "frozen ripe boneless skinless plain pure stick sticks piece pieces optional divided heaping " +
+    "level good quality homemade store bought prepared canned jarred fine coarse about more " +
+    "plus taste needed serving garnish baking and or of the a an for to with into in on at"
+  ).split(" "),
+)
+/**
+ * Words for a form or cut of something ("pumpkin puree", "garlic cloves", "pork belly"): a step
+ * that names only the first part ("the pumpkin") still means this ingredient. Not "paste",
+ * "sugar" or "vinegar": "the tomatoes" isn't tomato paste and "golden brown" isn't brown sugar.
+ */
+const FORMS = new Set(
+  (
+    "puree clove leave leaf fillet breast thigh leg drumstick wing chop loin tenderloin belly " +
+    "shoulder steak rib mince noodle floret stalk sprig head bulb wedge juice zest"
+  ).split(" "),
+)
+/** Words in a section heading that don't name what the section makes ("Make the filling"). */
+const SECTION_FILLER = new Set(
+  "make making prepare prep for the a an and of to your step start finish assemble assembly".split(
+    " ",
+  ),
+)
+
+/** "Tomatoes" and "tomato", "cherries" and "cherry", "eggs" and "egg" compare equal. */
+function stem(word: string): string {
+  if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`
+  if (word.length > 4 && /(?:ches|shes|xes|oes|sses)$/.test(word)) return word.slice(0, -2)
+  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1)
+  return word
+}
+
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, " ")
+    .split(/[\s-]+/)
+    .filter((w) => w.length >= 3)
+    .map(stem)
+}
+
+/** The words that name an ingredient: "¾ cup light brown sugar" → brown, sugar. */
+function nameWords(raw: string): string[] {
+  // Stray brackets and alternatives the parser leaves behind: "oil (canola", "/ 1/2 cup butter )"
+  const name = parseIngredient(raw).name.split(/[()]/)[0]!
+  const all = words(name).filter((w) => !DESCRIPTORS.has(w) && !aliasToUnit.has(w))
+  return [...new Set(all)]
+}
+
+/**
+ * The ingredients a step uses, from the words it mentions.
+ *
+ * - When the step's section shares a word with an ingredient section ("Make the Crust" and
+ *   "Pie Crust"), that section's ingredients are tried first, so "sugar" in the crust steps is
+ *   the crust's sugar, not the filling's.
+ * - Each word in the step goes to the ingredients it names most completely: "pumpkin" alone is
+ *   the pumpkin puree, while "pumpkin pie spice" is the spice.
+ * - Words are matched whole, so "salt" doesn't match "unsalted butter", and a stray word
+ *   doesn't count: "pie crust" isn't the pumpkin pie spice.
+ */
+export function ingredientsForStep<T extends { raw: string; section: string | null }>(
+  step: { text: string; section: string | null },
+  ingredients: T[],
+): T[] {
+  const mentioned = new Set(words(step.text))
+  if (!mentioned.size) return []
+  const named = ingredients.map((ing) => {
+    const ws = nameWords(ing.raw)
+    const hits = ws.filter((w) => mentioned.has(w))
+    // A partial mention counts if it's the main word ("sugar" for brown sugar), or names what a
+    // form or cut is of ("pumpkin" for pumpkin puree); not a stray word ("pie" for pumpkin pie
+    // spice, "brown" for brown sugar)
+    const head = ws[ws.length - 1]!
+    const counts = hits.includes(head) || (FORMS.has(head) && hits.length * 2 >= ws.length)
+    return { ing, ws, hits: counts ? hits : [] }
+  })
+
+  const stepSection = new Set(words(step.section ?? "").filter((w) => !SECTION_FILLER.has(w)))
+  const inSection = (section: string | null) =>
+    words(section ?? "").some((w) => !SECTION_FILLER.has(w) && stepSection.has(w))
+  const local = named.filter((n) => inSection(n.ing.section))
+
+  // Hand each mentioned word to the ingredients it covers best, section first
+  const chosen = new Set<T>()
+  const claimed = new Set<string>()
+  for (const pool of [local, named]) {
+    const best = new Map<string, { ratio: number; ings: T[] }>()
+    for (const { ing, ws, hits } of pool) {
+      for (const w of hits) {
+        if (claimed.has(w)) continue
+        const ratio = hits.length / ws.length
+        const cur = best.get(w)
+        if (!cur || ratio > cur.ratio) best.set(w, { ratio, ings: [ing] })
+        else if (ratio === cur.ratio) cur.ings.push(ing)
+      }
+    }
+    for (const [w, { ings }] of best) {
+      claimed.add(w)
+      for (const ing of ings) chosen.add(ing)
+    }
+  }
+  return ingredients.filter((ing) => chosen.has(ing))
+}
