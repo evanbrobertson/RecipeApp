@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The session is encrypted with a device-bound key, so it can't be restored elsewhere. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="datastore/session.preferences_pb" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="datastore/session.preferences_pb" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,76 @@
+# The native Android app in android/: unit tests, lint, and debug + release APKs.
+# Release APKs are signed only when the CRUMB_KEYSTORE_* secrets exist (see android/README.md).
+name: Android
+
+on:
+  push:
+    branches: [master]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  pull_request:
+    branches: [master]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: android
+
+jobs:
+  build:
+    name: Android (test, lint, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CRUMB_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Also validates the Gradle wrapper jar
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/master' }}
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-37.0" "build-tools;36.1.0" > /dev/null
+      - name: Release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CRUMB_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            echo "CRUMB_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "No release keystore; the release APK is unsigned." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - run: ./gradlew --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+        env:
+          CRUMB_KEYSTORE_PASSWORD: ${{ secrets.CRUMB_KEYSTORE_PASSWORD }}
+          CRUMB_KEY_ALIAS: ${{ secrets.CRUMB_KEY_ALIAS }}
+          CRUMB_KEY_PASSWORD: ${{ secrets.CRUMB_KEY_PASSWORD }}
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crumb-android-${{ github.run_number }}
+          path: android/app/build/outputs/apk/

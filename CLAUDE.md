@@ -59,6 +59,7 @@ src/
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
+android/          # Native Android app (Kotlin + Jetpack Compose), a client of the REST API; see android/README.md
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
