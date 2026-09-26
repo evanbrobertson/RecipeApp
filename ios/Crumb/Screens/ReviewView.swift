@@ -81,9 +81,13 @@ struct ReviewView: View {
       try? await Task.sleep(for: .seconds(4))
       if !Task.isCancelled { await load() }
     }
-    .sheet(item: $reviewing, onDismiss: { Task { await load() } }) { item in
+    .sheet(item: $reviewing, onDismiss: reload) { item in
       FlagsView(recipeId: item.id, title: item.title)
     }
+  }
+
+  private func reload() {
+    Task { await load() }
   }
 
   private func load() async {
