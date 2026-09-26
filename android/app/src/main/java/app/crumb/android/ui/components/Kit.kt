@@ -58,6 +58,8 @@ import app.crumb.android.ui.theme.Caveat
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.DmSerif
 import app.crumb.android.ui.theme.NunitoSans
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Lucide
 
@@ -108,6 +110,8 @@ fun Btn(
     trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     contentDescription: String? = null,
+    /** Side padding in place of the size's own, for buttons sharing a narrow row. */
+    padding: Dp? = null,
 ) {
     val c = Crumb.colors
     val (bg, fg) = when (style) {
@@ -148,13 +152,21 @@ fun Btn(
                 if (style == BtnStyle.Outline && enabled) Modifier.border(1.dp, c.lineStrong, ControlShape) else Modifier,
             )
             .clickable(interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = if (iconOnly || style == BtnStyle.Link) 0.dp else size.padding),
+            .padding(horizontal = if (iconOnly || style == BtnStyle.Link) 0.dp else padding ?: size.padding),
         horizontalArrangement = Arrangement.spacedBy(size.gap, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) Icon(icon, contentDescription = if (iconOnly) contentDescription ?: text else null, tint = ink, modifier = Modifier.size(size.icon))
         if (text != null) {
-            Text(text, color = ink, fontFamily = NunitoSans, fontSize = size.font.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            // Shrinks (never below 13sp) rather than clipping when two buttons share a narrow row
+            BasicText(
+                text,
+                style = TextStyle(color = ink, fontFamily = NunitoSans, fontWeight = FontWeight.Bold),
+                maxLines = 1,
+                softWrap = false,
+                autoSize = TextAutoSize.StepBased(minFontSize = 13.sp, maxFontSize = size.font.sp),
+                modifier = Modifier.weight(1f, fill = false),
+            )
         }
         if (trailingIcon != null) Icon(trailingIcon, contentDescription = null, tint = ink, modifier = Modifier.size(size.icon))
     }

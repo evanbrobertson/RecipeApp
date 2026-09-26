@@ -179,10 +179,12 @@ class CrumbApi(
     suspend fun markCooked(id: Long): Cooked =
         decode(post("api/recipes/$id/cooked", "{}"), Cooked.serializer())
 
-    /** `DELETE /api/recipes/{id}/cooked?event={eventId}`: undo one logged cook. */
-    suspend fun undoCooked(id: Long, eventId: Long) {
-        delete("api/recipes/$id/cooked?event=$eventId").close()
-    }
+    /** `GET /api/recipes/{id}/cooked`: how often and when it was last cooked. */
+    suspend fun cookStats(id: Long): Cooked = get(url("api/recipes/$id/cooked"), Cooked.serializer())
+
+    /** `DELETE /api/recipes/{id}/cooked?event={eventId}`: undo one logged cook; returns the stats. */
+    suspend fun undoCooked(id: Long, eventId: Long): Cooked =
+        decode(delete("api/recipes/$id/cooked?event=$eventId"), Cooked.serializer())
 
     /** `GET /api/recipes/{id}/export?format=json|md`: the recipe as a download. */
     suspend fun exportRecipe(id: Long, format: String): Download =

@@ -170,8 +170,8 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                     )
                 }
                 composable<RecipeRoute> { backStack ->
-                    val id = backStack.toRoute<RecipeRoute>().id
-                    RecipeScreen(id = id, onBack = { crumbNav.back() }, onCook = { crumbNav.cook(id) }, onSignedOut = signedOut)
+                    val route = backStack.toRoute<RecipeRoute>()
+                    RecipeScreen(id = route.id, fromRandom = route.fromRandom, onSignedOut = signedOut)
                 }
                 composable<CookRoute> { backStack ->
                     CookScreen(backStack.toRoute<CookRoute>().id, onClose = { crumbNav.back() })
