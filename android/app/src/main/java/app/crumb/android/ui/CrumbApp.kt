@@ -63,6 +63,8 @@ import com.composables.icons.lucide.LibraryBig
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Sparkles
 import app.crumb.android.ui.cook.CookScreen
+import app.crumb.android.ui.edit.EditScreen
+import app.crumb.android.ui.edit.NewRecipeScreen
 import app.crumb.android.ui.more.MoreScreen
 import app.crumb.android.ui.prep.PrepScreen
 import app.crumb.android.ui.recipe.RecipeScreen
@@ -178,8 +180,8 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                     CookScreen(backStack.toRoute<CookRoute>().id, onClose = { crumbNav.back() })
                 }
                 composable<PrepRoute> { PrepScreen(it.toRoute<PrepRoute>().id) }
-                composable<EditRoute> { Message("Edit recipe", "Coming together.") }
-                composable<NewRecipeRoute> { Message("New recipe", "Coming together.") }
+                composable<EditRoute> { backStack -> EditScreen(backStack.toRoute<EditRoute>().id) }
+                composable<NewRecipeRoute> { backStack -> NewRecipeScreen(backStack.toRoute<NewRecipeRoute>().title) }
                 composable<ImportRoute> { Message("Import recipes", "Coming together.") }
                 composable<ConnectRoute> { Message("Connect to Claude", "Coming together.") }
                 composable<BookRoute> { backStack ->
