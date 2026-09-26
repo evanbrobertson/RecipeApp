@@ -1,0 +1,350 @@
+---
+/**
+ * A shared recipe, served by the Rust server at /s/:token (src/share.rs), never directly.
+ *
+ * The server fills the <!--share:*--> markers with the recipe as plain HTML, so the page
+ * reads (and scrapes) fine without JavaScript, and adds the title, link-preview tags,
+ * JSON-LD and #page-data. Its own shell: no nav, timers or speculation rules, and a strict
+ * CSP that allows the inline scripts here by hash.
+ */
+import "../../../styles/app.css"
+import nunito from "../../../assets/fonts/nunito-sans.woff2?url"
+import dmSerif from "../../../assets/fonts/dm-serif-display.woff2?url"
+import caveat from "../../../assets/fonts/caveat.woff2?url"
+import themeBoot from "../../../lib/theme-boot.js?raw"
+import ShareActions from "../../../islands/ShareActions.svelte"
+import ShareScale from "../../../islands/ShareScale.svelte"
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Shared recipe · Crumb</title>
+    <meta name="robots" content="noindex, noimageindex" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f5f1e6" data-light="#f5f1e6" data-dark="#141c17" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href={nunito} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={dmSerif} as="font" type="font/woff2" crossorigin />
+    <style
+      set:html={`
+      @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
+      @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Caveat";src:url(${caveat}) format("woff2");font-weight:700;font-display:swap}
+    `}
+    />
+    <script is:inline set:html={themeBoot} />
+  </head>
+  <body>
+    <script type="application/json" id="page-data">null</script>
+    <div class="share-wrap">
+      <p class="share-mark page-title">Crumb</p>
+      <article class="share-article">
+        <section class="share-hero">
+          <!--share:photo-->
+          <div class="share-intro">
+            <!--share:intro-->
+            <div class="no-print">
+              <ShareActions client:only="svelte">
+                <div slot="fallback" class="share-actions-skeleton" aria-hidden="true"></div>
+              </ShareActions>
+            </div>
+          </div>
+        </section>
+
+        <div class="share-split">
+          <section class="share-panel" aria-labelledby="share-ingredients-title">
+            <div class="share-panel-head">
+              <h2 id="share-ingredients-title" class="section-title">Ingredients</h2>
+              <div class="no-print"><ShareScale client:only="svelte" /></div>
+            </div>
+            <!--share:ingredients-->
+          </section>
+          <section class="share-panel" aria-labelledby="share-method-title">
+            <div class="share-panel-head">
+              <h2 id="share-method-title" class="section-title">Method</h2>
+            </div>
+            <!--share:method-->
+          </section>
+        </div>
+
+        <footer class="share-foot">
+          <!--share:source-->
+          <p class="share-made meta">Shared from Crumb, a private recipe box.</p>
+        </footer>
+      </article>
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  .share-wrap {
+    max-width: 75rem;
+    margin-inline: auto;
+    padding: max(env(safe-area-inset-top), 1.25rem) 1rem 4rem;
+  }
+  @media (min-width: 768px) {
+    .share-wrap {
+      padding-inline: 2rem;
+    }
+  }
+  .share-mark {
+    margin-bottom: 1.25rem;
+    font-size: 1.5rem;
+    color: var(--primary);
+  }
+  .share-article > * + * {
+    margin-top: 3rem;
+  }
+  .share-hero {
+    display: grid;
+    gap: 1.5rem;
+  }
+  @media (min-width: 1024px) {
+    .share-hero:has(> .share-photo) {
+      grid-template-columns: minmax(0, 560px) minmax(16rem, 1fr);
+      gap: 3rem;
+    }
+  }
+  .share-photo {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--radius-ctl);
+    background: var(--tint);
+  }
+  .share-intro > * + * {
+    margin-top: 1.25rem;
+  }
+  .share-intro > .kicker + .share-title {
+    margin-top: 0.5rem;
+  }
+  .share-title {
+    text-wrap: balance;
+  }
+  @media (min-width: 768px) {
+    .share-title {
+      font-size: 2.5rem;
+    }
+  }
+  .share-intro > .share-by {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .share-desc {
+    max-width: 65ch;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+    text-wrap: pretty;
+  }
+  .share-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+    padding: 0.375rem 0.25rem;
+  }
+  .share-meta > div {
+    padding: 0.75rem 0.875rem;
+  }
+  .share-meta dt {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .share-meta dd {
+    margin-top: 0.25rem;
+    font-weight: 700;
+  }
+  .share-icon {
+    width: 1rem;
+    height: 1rem;
+    flex: none;
+    color: var(--primary);
+  }
+  .share-actions-skeleton {
+    height: 3.5rem;
+  }
+
+  .share-split {
+    display: grid;
+    gap: 3rem;
+  }
+  @media (min-width: 1024px) {
+    .share-split {
+      grid-template-columns: minmax(0, 40fr) minmax(0, 60fr);
+      gap: 3.5rem;
+    }
+  }
+  .share-panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+    min-height: 2.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .share-ingredients > * + *,
+  .share-steps > * + * {
+    margin-top: 1.5rem;
+  }
+  .share-steps > * + * {
+    margin-top: 2rem;
+  }
+  .share-group > h3 {
+    margin-bottom: 0.625rem;
+  }
+  .share-steps .share-group > h3 {
+    margin-bottom: 1rem;
+  }
+  .share-list > li {
+    position: relative;
+    padding: 0.75rem 1rem;
+    line-height: 1.375;
+    overflow-wrap: anywhere;
+  }
+  .share-list > li + li::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 1rem;
+    right: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .share-step-list > li {
+    display: flex;
+    gap: 1rem;
+  }
+  .share-step-list > li + li {
+    margin-top: 1.5rem;
+  }
+  .share-num {
+    width: 2.25rem;
+    flex: none;
+    text-align: right;
+    font-size: 1.75rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .share-step-list p {
+    min-width: 0;
+    padding-top: 0.125rem;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .share-notes {
+    margin-top: 2.5rem;
+    padding: 1.5rem;
+  }
+  .share-notes h2 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    color: var(--primary);
+  }
+  .share-notes .share-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  .share-notes p {
+    margin-top: 0.5rem;
+    font-size: 1.625rem;
+    line-height: 1.15;
+    white-space: pre-line;
+  }
+  .share-nutrition {
+    margin-top: 2.5rem;
+  }
+  .share-nutrition h2 {
+    margin-bottom: 1.25rem;
+  }
+  .share-nutrition dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+    gap: 0.75rem;
+  }
+  .share-nutrition dl > div {
+    padding: 0.75rem 1rem;
+  }
+  .share-nutrition dd {
+    margin-top: 0.125rem;
+    font-weight: 700;
+  }
+  .share-foot {
+    border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+  }
+  .share-source {
+    font-size: 0.9375rem;
+    color: var(--text-muted);
+  }
+  .share-source a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-height: 2.75rem;
+  }
+  .share-source .share-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+  .share-made {
+    margin-top: 0.25rem;
+  }
+
+  @media print {
+    .share-wrap {
+      max-width: none;
+      padding: 0;
+    }
+    .share-mark {
+      font-size: 1.125rem;
+      margin-bottom: 0.75rem;
+    }
+    .share-article > * + * {
+      margin-top: 1.5rem;
+    }
+    .share-hero,
+    .share-split {
+      display: block;
+    }
+    .share-photo {
+      width: auto;
+      max-width: 100%;
+      max-height: 8cm;
+      margin-bottom: 1rem;
+    }
+    .share-panel + .share-panel {
+      margin-top: 1.5rem;
+    }
+    .share-group,
+    .share-list > li,
+    .share-step-list > li,
+    .share-notes,
+    .share-nutrition {
+      break-inside: avoid;
+    }
+    .share-panel-head {
+      min-height: 0;
+      margin-bottom: 0.75rem;
+    }
+    .share-source a {
+      min-height: 0;
+    }
+    .share-source a::after {
+      content: " (" attr(href) ")";
+      font-weight: 400;
+      overflow-wrap: anywhere;
+    }
+    .share-source .share-icon {
+      display: none;
+    }
+  }
+</style>

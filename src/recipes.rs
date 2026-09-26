@@ -347,8 +347,34 @@ pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Reci
             return Ok((require_recipe(&conn, id)?, false));
         }
     }
-    let fields = crate::scraper::scrape_recipe(state, &url).await?;
-    create_checked(state, fields, "url")
+    let scraped = crate::scraper::scrape_page(state, &url).await?;
+    // Another Crumb's share page: take its export (sections, notes and the original link
+    // as they are) instead of what scraping the page gave
+    if let Some(export) = &scraped.crumb
+        && let Some(fields) = crate::share::fetch_export(state, export).await
+    {
+        return save_shared(state, fields, &url);
+    }
+    create_checked(state, scraped.recipe, "url")
+}
+
+/// Saves a recipe from another Crumb's share: as it was, like a backup restore (no tidy;
+/// "Check all" only suggests). Without an original link it's kept under the share link, so
+/// saving the same share again finds it.
+fn save_shared(
+    state: &AppState,
+    mut fields: RecipeFields,
+    share_url: &str,
+) -> AppResult<(Recipe, bool)> {
+    if fields.url.as_deref().is_none_or(|u| !is_valid_url(u)) {
+        fields.url = Some(share_url.to_string());
+    }
+    let conn = state.db.lock();
+    let (recipe, is_new) = create_recipe(&conn, fields, "url")?;
+    if is_new {
+        crate::checks::mark_restored(&conn, recipe.id)?;
+    }
+    Ok((recipe, is_new))
 }
 
 /// Tidies an imported recipe, saves it and, when it's new, remembers what the tidy
@@ -614,7 +640,8 @@ pub async fn import_file(state: &AppState, name: &str, bytes: Vec<u8>) -> Import
             let (recipe, is_new) = create_recipe(&conn, item.fields, "import")?;
             if is_new {
                 if item.restored {
-                    // Saved as it was backed up; no check or tidy ever rewrites it
+                    // Saved as it was backed up. Not checked now; "Check all" checks it
+                    // later, suggesting only, with the small undoable clean-up
                     crate::checks::mark_restored(&conn, recipe.id)?;
                 } else {
                     if let Some(undo) = tidied {
@@ -663,6 +690,17 @@ pub fn export_backup(conn: &Connection) -> AppResult<Value> {
 pub fn export_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
     require_exists(conn, id)?;
     export_json(conn, Some(id))
+}
+
+/// One recipe for a share link (`/s/{token}/crumb.json`): the backup format the importer
+/// reads, without the cook log or cookbooks, and without the notes unless the share
+/// includes them.
+pub fn export_shared(recipe: &Recipe, include_notes: bool) -> Value {
+    let mut m = recipe.fields().to_json();
+    if !include_notes {
+        m.insert("notes".into(), Value::Null);
+    }
+    json!({"format": "crumb", "version": 1, "recipes": [Value::Object(m)]})
 }
 
 /// The backup JSON: every recipe, or only `only` and the cookbooks it's in.

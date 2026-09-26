@@ -20,7 +20,10 @@ pub struct ImportedRecipe {
     pub cookbooks: Vec<String>,
     /// When it was cooked (unix seconds), from a Crumb backup's cook log.
     pub cooked: Vec<i64>,
-    /// From a Crumb backup: already the cook's own, so no clean-up or Wee Chef check.
+    /// From a Crumb backup: already the cook's own, so saved as it is, with no clean-up or
+    /// Wee Chef check on the way in. "Check all" checks it later and then only suggests,
+    /// apart from the small undoable clean-up (checkbox glyphs, web codes, float
+    /// quantities, raw ISO times) it gives every recipe already in the box.
     pub restored: bool,
 }
 

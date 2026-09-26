@@ -18,6 +18,7 @@ pub mod oauth;
 pub mod photos;
 pub mod recipes;
 pub mod scraper;
+pub mod share;
 pub mod suggest;
 pub mod suggestions;
 pub mod telemetry;
@@ -49,6 +50,8 @@ pub struct AppState {
     pub images: Arc<images::Images>,
     /// Wee Chef's import checks: the background queue.
     pub checks: Arc<checks::Checks>,
+    /// Unknown share tokens asked for, per client address (see `share::Misses`).
+    pub share_misses: Arc<share::Misses>,
 }
 
 impl AppState {
@@ -71,6 +74,7 @@ impl AppState {
             zone: Arc::default(),
             ai: Arc::default(),
             checks: Arc::default(),
+            share_misses: Arc::default(),
         }
     }
 }
@@ -89,6 +93,8 @@ pub fn app(state: AppState) -> Router {
         .merge(oauth::routes())
         .merge(mcp::routes())
         .merge(images::routes())
+        .merge(share::api_routes())
+        .merge(share::public_routes())
         .merge(web::routes())
         .fallback(web::static_files)
         // Inside the login check, so only signed-in page loads learn the count
@@ -116,7 +122,17 @@ pub fn app(state: AppState) -> Router {
             "permissions-policy",
             "camera=(), microphone=(), geolocation=(self)",
         ))
-        .layer(TraceLayer::new_for_http())
+        // Share tokens never reach a span (see telemetry::redact_path)
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                tracing::debug_span!(
+                    "request",
+                    method = %req.method(),
+                    uri = %telemetry::redact_path(req.uri().path()),
+                    version = ?req.version(),
+                )
+            }),
+        )
         // Outermost: request transactions and the browser's Sentry hint (no-op without SENTRY_DSN)
         .layer(axum::middleware::from_fn(telemetry::middleware))
         .with_state(state)

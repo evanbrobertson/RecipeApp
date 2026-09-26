@@ -148,6 +148,9 @@ pub struct Config {
     pub typesafe: Option<TypesafeConfig>,
     pub site_url: Option<String>,
     pub railway_domain: Option<String>,
+    /// Behind Railway's proxy (`RAILWAY_ENVIRONMENT` is set): the client's address is the
+    /// first `X-Forwarded-For` hop. Otherwise forwarded headers are ignored.
+    pub trust_proxy_headers: bool,
     pub web_dist: PathBuf,
     /// Where resized recipe photos are kept (`img-cache/` next to the database).
     /// None = resize on every request.
@@ -167,6 +170,7 @@ impl Default for Config {
             typesafe: None,
             site_url: None,
             railway_domain: None,
+            trust_proxy_headers: false,
             web_dist: PathBuf::from("web/dist"),
             image_cache: None,
             host: "0.0.0.0".into(),
@@ -246,6 +250,7 @@ impl Config {
             typesafe: typesafe_from_env(),
             site_url: env(&["SITE_URL", "NUXT_PUBLIC_SITE_URL"]),
             railway_domain: env(&["RAILWAY_PUBLIC_DOMAIN"]),
+            trust_proxy_headers: env(&["RAILWAY_ENVIRONMENT"]).is_some(),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),
             image_cache: Some(crate::db::image_cache_dir(&crate::db::database_path())),
             host: env(&["HOST"]).unwrap_or(d.host),

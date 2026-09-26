@@ -38,7 +38,7 @@ impl Web {
     }
 
     /// Reads `rel` (e.g. "recipes/index.html") from the build.
-    fn html(&self, rel: &str) -> Option<String> {
+    pub fn html(&self, rel: &str) -> Option<String> {
         if cfg!(debug_assertions) {
             return std::fs::read_to_string(self.dist.join(rel)).ok();
         }
@@ -104,7 +104,7 @@ pub fn not_found(state: &AppState) -> Response {
 }
 
 /// JSON safe to drop inside a <script> element.
-fn inline_json(data: &Value) -> String {
+pub fn inline_json(data: &Value) -> String {
     serde_json::to_string(data)
         .unwrap_or_else(|_| "null".into())
         .replace('<', "\\u003c")
@@ -223,6 +223,7 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
         return static_files(State(state), req).await;
     };
     let mut hero = None;
+    let origin = state.config.public_origin(req.headers());
     let data = (|| {
         let conn = state.db.lock();
         let recipe = recipes::require_recipe(&conn, id)?;
@@ -235,6 +236,9 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
             "checks": crate::checks::for_recipe(&conn, id)?,
             // "Check with Wee Chef" in the menu
             "weeChefChecks": crate::checks::enabled(&state),
+            // The share sheet's link, if there is one
+            "share": crate::share::for_recipe(&conn, id)?
+                .map(|s| crate::share::to_json(&s, &origin)),
         }))
     })();
     let mut res = page(&state, "shell/recipe/index.html", data);
@@ -333,7 +337,8 @@ pub async fn review_hint(
             .headers()
             .get(header::ACCEPT)
             .is_some_and(|v| v.to_str().is_ok_and(|a| a.contains("text/html")));
-    let skip = req.uri().path() == "/login";
+    // Nor share pages: nothing about the box goes to someone with a link
+    let skip = req.uri().path() == "/login" || req.uri().path().starts_with("/s/");
     let mut res = next.run(req).await;
     // A 304 carries no content type, but the browser refreshes its stored headers from it
     let html = res.status() == StatusCode::NOT_MODIFIED

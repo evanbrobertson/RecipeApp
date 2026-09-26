@@ -38,7 +38,7 @@ async fn main() {
         .await;
         let host = crumb::telemetry::host_of(&url);
         let winner = match &result {
-            Ok((method, recipe)) => format!(
+            Ok((method, crumb::scraper::Scraped { recipe, .. })) => format!(
                 "{} \"{}\" prep={:?} cook={:?} extra={:?} total={:?}",
                 method.label(),
                 recipe.title,

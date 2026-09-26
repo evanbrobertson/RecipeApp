@@ -1,2 +1,4 @@
 User-agent: *
+# Share links: fetchable so link previews work (each page also says noindex)
+Allow: /s/
 Disallow: /

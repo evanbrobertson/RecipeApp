@@ -177,8 +177,48 @@ fn is_block_status(status: u16) -> bool {
     matches!(status, 403 | 429 | 503)
 }
 
+/// What a recipe page gave: the recipe as scraped, and the address of its Crumb export
+/// when the page is another Crumb's share page (see [`crumb_alternate`]).
+#[derive(Debug, Clone)]
+pub struct Scraped {
+    pub recipe: RecipeFields,
+    pub crumb: Option<String>,
+}
+
+impl Scraped {
+    fn from_page(html: &str, url: &str) -> Option<Self> {
+        Some(Self {
+            recipe: parse_recipe_html(html, url)?,
+            crumb: crumb_alternate(html, url),
+        })
+    }
+}
+
+/// The type a Crumb share page names its lossless export by.
+pub const CRUMB_JSON_TYPE: &str = "application/vnd.crumb+json";
+
+/// `<link rel="alternate" type="application/vnd.crumb+json" href>` on a page: another Crumb's
+/// share page offering the recipe as a Crumb export. Only an http(s) address on the page's
+/// own host is taken.
+pub fn crumb_alternate(html: &str, page_url: &str) -> Option<String> {
+    if !html.contains(CRUMB_JSON_TYPE) {
+        return None;
+    }
+    let base = url::Url::parse(page_url).ok()?;
+    let doc = Html::parse_document(html);
+    let link = sel(r#"link[rel~="alternate"]"#);
+    let href = doc
+        .select(&link)
+        .find(|l| l.value().attr("type") == Some(CRUMB_JSON_TYPE))?
+        .value()
+        .attr("href")?;
+    let target = base.join(href.trim()).ok()?;
+    let same_host = target.host_str().is_some() && target.host_str() == base.host_str();
+    (matches!(target.scheme(), "http" | "https") && same_host).then(|| target.to_string())
+}
+
 enum Verdict {
-    Recipe(Box<RecipeFields>),
+    Recipe(Box<Scraped>),
     /// Refused or challenged: worth another profile.
     Blocked(String),
     /// Anything else that didn't give a recipe.
@@ -194,8 +234,8 @@ fn judge(fetched: Fetched, url: &str) -> Verdict {
         Fetched::Page { status, .. } if !(200..300).contains(&status) => {
             Verdict::Failed(format!("The site responded with {status}."))
         }
-        Fetched::Page { html, .. } => match parse_recipe_html(&html, url) {
-            Some(recipe) => Verdict::Recipe(Box::new(recipe)),
+        Fetched::Page { html, .. } => match Scraped::from_page(&html, url) {
+            Some(scraped) => Verdict::Recipe(Box::new(scraped)),
             None if is_challenge_page(&html) => {
                 Verdict::Blocked("The site showed a bot check instead of the recipe.".into())
             }
@@ -211,7 +251,7 @@ pub async fn scrape_with<F, Fut>(
     url: &str,
     browser: bool,
     mut fetch: F,
-) -> Result<(Method, RecipeFields), String>
+) -> Result<(Method, Scraped), String>
 where
     F: FnMut(Method) -> Fut,
     Fut: Future<Output = Fetched>,
@@ -227,8 +267,8 @@ where
 
     if browser {
         match fetch(Method::Browser).await {
-            Fetched::Page { html, .. } => match parse_recipe_html(&html, url) {
-                Some(recipe) => return Ok((Method::Browser, recipe)),
+            Fetched::Page { html, .. } => match Scraped::from_page(&html, url) {
+                Some(scraped) => return Ok((Method::Browser, scraped)),
                 None => {
                     problem = "Couldn't find a recipe on that page, even in a real browser.".into()
                 }
@@ -248,6 +288,11 @@ where
 
 /// Scrapes a recipe page (see [`scrape_with`] for the order it tries).
 pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeFields> {
+    Ok(scrape_page(state, url).await?.recipe)
+}
+
+/// [`scrape_recipe`], also saying whether the page offers a Crumb export.
+pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
     let parsed =
         url::Url::parse(url).map_err(|_| AppError::bad_request("Please enter a valid URL"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -271,9 +316,9 @@ pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeField
 
     let host = crate::telemetry::host_of(url);
     match result {
-        Ok((method, recipe)) => {
+        Ok((method, scraped)) => {
             tracing::info!("[scraper] {host}: {}", method.label());
-            Ok(recipe)
+            Ok(scraped)
         }
         Err(message) => {
             tracing::info!("[scraper] {host}: failed");
@@ -958,7 +1003,7 @@ mod tests {
     fn scripted(
         browser: bool,
         mut responses: Vec<(Method, Fetched)>,
-    ) -> (Result<(Method, RecipeFields), String>, Vec<Method>) {
+    ) -> (Result<(Method, Scraped), String>, Vec<Method>) {
         let asked = std::cell::RefCell::new(Vec::new());
         let result = tokio::runtime::Builder::new_current_thread()
             .build()
