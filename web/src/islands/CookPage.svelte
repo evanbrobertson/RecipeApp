@@ -18,7 +18,7 @@
   import ScaleControl from "../components/ScaleControl.svelte"
   import { api, pathId } from "../lib/api"
   import { markCooked } from "../lib/history"
-  import { findTimers, parseIngredient, scaleIngredient } from "../lib/ingredients"
+  import { findTimers, ingredientsForStep, parseIngredient, scaleIngredient } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
   import type { Recipe } from "../lib/recipe"
   import { getScale, read, setScale, write } from "../lib/storage"
@@ -104,19 +104,8 @@
     }
   }
 
-  // Ingredients mentioned in this step ("Add the flour and sugar" → flour, sugar)
-  const stepIngredients = $derived.by(() => {
-    const text = step?.text.toLowerCase() ?? ""
-    if (!text) return []
-    return ingredients.filter(({ raw }) => {
-      const name = parseIngredient(raw)
-        .name.toLowerCase()
-        .replace(/[^a-z\s-]/g, " ")
-      const words = name.split(/\s+/).filter((w) => w.length > 3)
-      const key = words[words.length - 1]
-      return key ? text.includes(key.replace(/(es|s)$/, "")) : false
-    })
-  })
+  // Ingredients this step uses ("Add the flour and sugar" → flour, sugar), from its section first
+  const stepIngredients = $derived(step ? ingredientsForStep(step, ingredients) : [])
 
   const stepTimers = $derived(step ? findTimers(step.text) : [])
 
