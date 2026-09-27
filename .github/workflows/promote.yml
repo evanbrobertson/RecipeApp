@@ -31,6 +31,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/evanbrobertson/recipeapp
+  AUTH_IMAGE: ghcr.io/evanbrobertson/recipeapp-auth
   SENTRY_ORG: team-evan
   SENTRY_PROJECT: crumb-recipes
   RAILWAY_CLI: ghcr.io/railwayapp/cli:5.62.1@sha256:e02abb3fd3d568ba2f5b02de069aacd2160ba7d2d876b36e95f64e984fdacbe1
@@ -61,6 +62,7 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'RecipeApp' }}
+      RAILWAY_AUTH_SERVICE: ${{ vars.RAILWAY_AUTH_SERVICE }}
       RAILWAY_ENVIRONMENT: ${{ vars.RAILWAY_ENVIRONMENT || (inputs.channel == 'stable' && 'production' || inputs.channel) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -170,6 +172,13 @@ jobs:
           docker buildx imagetools create --tag "$IMAGE:$CHANNEL" --tag "$IMAGE:$VERSION" "$IMAGE:sha-$SHORT"
           docker buildx imagetools inspect "$IMAGE:$CHANNEL" --format '{{ .Manifest.Digest }}' |
             sed "s|^|Image \`$IMAGE:$CHANNEL\` = |" >> "$GITHUB_STEP_SUMMARY"
+          # The auth service's image from the same commit (builds before it existed have none)
+          if docker buildx imagetools inspect "$AUTH_IMAGE:sha-$SHORT" >/dev/null 2>&1; then
+            docker buildx imagetools create --tag "$AUTH_IMAGE:$CHANNEL" --tag "$AUTH_IMAGE:$VERSION" \
+              "$AUTH_IMAGE:sha-$SHORT"
+          else
+            echo "::notice::No $AUTH_IMAGE:sha-$SHORT; the auth image is left as it is"
+          fi
 
       - name: Tag and GitHub Release
         env:
@@ -236,6 +245,9 @@ jobs:
             echo "::warning::No RAILWAY_TOKEN in the $CHANNEL environment; the image is tagged but nothing was deployed"
             exit 0
           fi
-          docker run --rm -e RAILWAY_TOKEN "$RAILWAY_CLI" railway redeploy --from-source \
-            --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENVIRONMENT" --yes
+          # The auth service first (when there is one), so the app never runs against an older one
+          for service in $RAILWAY_AUTH_SERVICE "$RAILWAY_SERVICE"; do
+            docker run --rm -e RAILWAY_TOKEN "$RAILWAY_CLI" railway redeploy --from-source \
+              --service "$service" --environment "$RAILWAY_ENVIRONMENT" --yes
+          done
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"

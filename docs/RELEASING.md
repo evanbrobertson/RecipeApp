@@ -66,7 +66,7 @@ Environment secrets and variables (Settings → Environments). The workflows use
 | `dev` | Railway project token for the `dev` environment | `dev` (default) | dev URL, shown on the deployment |
 | `stable` | Railway project token for the `production` environment | `production` (default) | the app's URL |
 
-`RAILWAY_SERVICE` (variable, default `RecipeApp`) overrides the service name. `GITHUB_TOKEN` pushes images to GHCR; nothing else is needed for that. The Sentry org and project (`team-evan` / `crumb-recipes`) and the image name are set at the top of `main.yml` and `promote.yml`.
+`RAILWAY_SERVICE` (variable, default `RecipeApp`) overrides the service name. The hosted edition's auth service (`auth/`) is built beside it as `ghcr.io/evanbrobertson/recipeapp-auth`, with the same tags, moved and promoted together; set `RAILWAY_AUTH_SERVICE` (variable) to its Railway service name and CI redeploys it before the app. Unset, only the image is built. `GITHUB_TOKEN` pushes images to GHCR; nothing else is needed for that. The Sentry org and project (`team-evan` / `crumb-recipes`) and the image name are set at the top of `main.yml` and `promote.yml`.
 
 ## One-time setup
 

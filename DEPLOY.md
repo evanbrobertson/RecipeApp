@@ -76,8 +76,11 @@ The hosted edition (`AUTH_MODE=hosted`) adds a second service, `crumb-auth` ([`a
 volume, so it keeps its own SQLite database on its own volume. Only Crumb's server talks to it, over Railway's
 private network; don't give it a public domain.
 
-1. **Add the service:** New → GitHub repo → this repo, then Settings → **Root Directory** `auth`. Railway reads
-   `auth/railway.json` and builds `auth/Dockerfile`. Name it `crumb-auth`.
+1. **Add the service:** New → Docker image → `ghcr.io/evanbrobertson/recipeapp-auth:main` (dev) or `:stable`
+   (production). CI builds it from `auth/` beside the main image on every master commit and promotes it with
+   it (see [docs/RELEASING.md](./docs/RELEASING.md)); set the health check to `/health`. Name it `crumb-auth`,
+   and set the GitHub variable `RAILWAY_AUTH_SERVICE=crumb-auth` so CI redeploys it too. For your own copy
+   without GHCR, deploy from the repo with Settings → **Root Directory** `auth` instead (`auth/railway.json`).
 2. **Attach a volume** to it (any mount path). It stores `auth.db` there.
 3. **Set its variables:**
 
