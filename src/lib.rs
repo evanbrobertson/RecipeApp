@@ -11,6 +11,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod fractions;
+pub mod hosted;
 pub mod households;
 pub mod images;
 pub mod importers;
@@ -49,8 +50,11 @@ pub struct AppState {
     pub db: db::Db,
     /// Every household's box.
     pub households: Arc<households::Households>,
-    /// People and their sessions, with `AUTH_MODE=accounts`.
+    /// People and their sessions with `AUTH_MODE=accounts`; with `hosted`, the ids that map
+    /// Better Auth's people and organizations onto local ones.
     pub accounts: Option<Arc<accounts::Accounts>>,
+    /// The Better Auth service, with `AUTH_MODE=hosted`.
+    pub hosted: Option<Arc<hosted::Hosted>>,
     pub config: Arc<config::Config>,
     pub http: reqwest::Client,
     pub web: Arc<web::Web>,
@@ -81,7 +85,19 @@ impl AppState {
             config.households_dir.clone(),
         ));
         let home = households.home().clone();
-        let accounts = config.accounts().then(|| {
+        let hosted = config.hosted().then(|| {
+            let (Some(url), Some(secret)) =
+                (&config.auth_service_url, &config.auth_internal_secret)
+            else {
+                panic!("AUTH_MODE=hosted needs AUTH_SERVICE_URL and AUTH_INTERNAL_SECRET");
+            };
+            Arc::new(hosted::Hosted::new(
+                url,
+                secret,
+                config.hosted_home_owner.clone(),
+            ))
+        });
+        let accounts = (config.accounts() || config.hosted()).then(|| {
             let opened = match &config.accounts_db {
                 Some(path) => accounts::Accounts::open(path),
                 None => accounts::Accounts::open_in_memory(),
@@ -90,6 +106,7 @@ impl AppState {
         });
         Self {
             accounts,
+            hosted,
             household: home.id,
             db: home.db,
             households,
@@ -168,6 +185,8 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(api::routes())
         .merge(account_api::routes())
+        // Hosted: the rest of /api/auth/* is Better Auth's
+        .route("/api/auth/{*rest}", axum::routing::any(hosted::proxy))
         .merge(oauth::routes())
         .merge(mcp::routes())
         .merge(images::routes())

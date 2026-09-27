@@ -356,7 +356,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
 /// The household an MCP request's bearer token works on, or None when it has no valid
 /// token. Without a password (and without accounts) every request works on the one box.
 /// With accounts, a token must belong to someone who is still in that household.
-pub fn access_household(
+pub async fn access_household(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Option<crate::households::HouseholdId> {
@@ -391,10 +391,15 @@ pub fn access_household(
         return Some(crate::households::HOME);
     };
     let owner = owner_of(user, household)?;
-    accounts
-        .is_member(owner.user_id, owner.household_id)
-        .unwrap_or(false)
-        .then_some(owner.household_id)
+    let member = match &state.hosted {
+        Some(hosted) => {
+            hosted
+                .is_member(accounts, owner.user_id, owner.household_id)
+                .await
+        }
+        None => accounts.is_member(owner.user_id, owner.household_id),
+    };
+    member.unwrap_or(false).then_some(owner.household_id)
 }
 
 fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
@@ -707,7 +712,7 @@ async fn authorize(
     }
 
     // With accounts, the connector is approved by a signed-in person, for their household
-    let session = crate::auth::session(state, headers);
+    let session = crate::auth::session(state, headers).await;
     let accounts = state.accounts.is_some();
     let logged_in = if accounts {
         session.is_some()

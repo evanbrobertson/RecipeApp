@@ -125,7 +125,7 @@ async fn login(
     body: Bytes,
 ) -> AppResult<Response> {
     let body = json_body(&body)?;
-    if state.config.accounts() {
+    if state.config.accounts() || state.config.hosted() {
         return crate::account_api::log_in(&state, &headers, &body).await;
     }
     let password = body
