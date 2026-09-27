@@ -60,7 +60,7 @@ const FIX_FROM: f64 = 0.9;
 const CATEGORY_FROM: f64 = 0.7;
 
 /// Recipe sources that came from outside and are worth checking.
-pub const CHECKED_SOURCES: [&str; 4] = ["url", "text", "import", "photo"];
+pub const CHECKED_SOURCES: [&str; 5] = ["url", "text", "import", "photo", "video"];
 
 /// Why a recipe was queued, which decides whether a check may change it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

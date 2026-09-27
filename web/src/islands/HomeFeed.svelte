@@ -60,6 +60,7 @@
     claude: "via Claude",
     manual: "written by you",
     import: "imported",
+    video: "from a video",
   }
 
   function freshMeta(r: RecipeSummary) {

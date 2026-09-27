@@ -878,8 +878,8 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "import_recipe_from_url",
             "title": "Import recipe from URL",
-            "description": "Fetch a recipe web page and save just the recipe. Returns the existing recipe if that URL was already saved.",
-            "inputSchema": object(json!({"url": {"type": "string", "format": "uri", "description": "Recipe page URL"}}).as_object().unwrap().clone(), &["url"]),
+            "description": "Fetch a recipe web page and save just the recipe. Also takes cooking videos (TikTok, Instagram Reels, YouTube Shorts): the recipe is read from the caption, or from what is said and shown in the video, which can take a minute or two. Returns the existing recipe if that URL was already saved.",
+            "inputSchema": object(json!({"url": {"type": "string", "format": "uri", "description": "Recipe page or cooking video URL"}}).as_object().unwrap().clone(), &["url"]),
             "annotations": {"openWorldHint": true}
         }),
         json!({
