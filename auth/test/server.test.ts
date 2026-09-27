@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { generateKeyPairSync, verify } from "node:crypto"
+import { createHash, generateKeyPairSync, randomBytes, sign, verify } from "node:crypto"
 import { logMailer } from "../src/mailer"
 import { createApp } from "../src/server"
 import { type Social, appleClientSecret, socialFromEnv } from "../src/social"
@@ -17,7 +17,8 @@ async function setup(social?: Social) {
     mailer,
     social,
   })
-  const jar = new Map<string, string>()
+  /** Each person's cookies, by name (a passkey challenge cookie joins the session's). */
+  const jar = new Map<string, Map<string, string>>()
   async function call(
     who: string,
     path: string,
@@ -26,7 +27,9 @@ async function setup(social?: Social) {
   ) {
     const h = new Headers(headers)
     h.set("origin", ORIGIN)
-    if (jar.has(who)) h.set("cookie", jar.get(who)!)
+    const mine = jar.get(who) ?? new Map<string, string>()
+    jar.set(who, mine)
+    if (mine.size) h.set("cookie", [...mine].map(([k, v]) => `${k}=${v}`).join("; "))
     if (body !== undefined) h.set("content-type", "application/json")
     const res = await app.fetch(
       new Request(`${ORIGIN}${path}`, {
@@ -35,11 +38,13 @@ async function setup(social?: Social) {
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
     )
-    const cookies = res.headers
-      .getSetCookie()
-      .map((c) => c.split(";")[0]!)
-      .filter((c) => !c.endsWith("="))
-    if (cookies.length) jar.set(who, cookies.join("; "))
+    for (const c of res.headers.getSetCookie()) {
+      const pair = c.split(";")[0]!
+      const at = pair.indexOf("=")
+      const [name, value] = [pair.slice(0, at), pair.slice(at + 1)]
+      if (value) mine.set(name, value)
+      else mine.delete(name)
+    }
     const text = await res.text()
     let data: any = text
     try {
@@ -49,12 +54,15 @@ async function setup(social?: Social) {
   }
   const internal = (who: string, path: string, body?: unknown) =>
     call(who, path, body, { "x-crumb-internal": SECRET })
+  // Each person from an address of their own: the rate limiter counts sign-ups per address,
+  // across every test in this file
   const signUp = (who: string, name: string) =>
-    call(who, "/api/auth/sign-up/email", {
-      email: `${who}@example.com`,
-      password: "long enough",
-      name,
-    })
+    call(
+      who,
+      "/api/auth/sign-up/email",
+      { email: `${who}@example.com`, password: "long enough", name },
+      { "x-real-ip": `10.0.${who.length}.${who.charCodeAt(0)}` },
+    )
   return { app, mailer, call, internal, signUp }
 }
 
@@ -137,6 +145,128 @@ test("everyone gets a kitchen, and invites bring people into one", async () => {
   expect(after.household.id).not.toBe(ann.household.id)
 })
 
+/** A passkey on a pretend device: P-256, "none" attestation, as a platform authenticator makes. */
+function softAuthenticator() {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" })
+  const jwk = publicKey.export({ format: "jwk" })
+  const id = randomBytes(16)
+  let counter = 0
+  const b64url = (b: Uint8Array) => Buffer.from(b).toString("base64url")
+  const sha256 = (b: Uint8Array | string) => createHash("sha256").update(b).digest()
+  const u32 = (n: number) => Buffer.from([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255])
+  const rpHash = sha256(new URL(ORIGIN).hostname)
+  const clientData = (type: string, challenge: string) =>
+    Buffer.from(JSON.stringify({ type, challenge, origin: ORIGIN, crossOrigin: false }))
+
+  return {
+    id: b64url(id),
+    register(challenge: string) {
+      // COSE EC2 key {1: 2, 3: -7, -1: 1, -2: x, -3: y} and {fmt, attStmt, authData}, in CBOR
+      const bytes = (b: Buffer) => Buffer.concat([Buffer.from([0x58, b.length]), b])
+      const text = (t: string) => Buffer.concat([Buffer.from([0x60 + t.length]), Buffer.from(t)])
+      const cose = Buffer.concat([
+        Buffer.from([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21]),
+        bytes(Buffer.from(jwk.x!, "base64url")),
+        Buffer.from([0x22]),
+        bytes(Buffer.from(jwk.y!, "base64url")),
+      ])
+      const authData = Buffer.concat([
+        rpHash,
+        Buffer.from([0x45]), // user present, user verified, attested credential data
+        u32(counter),
+        Buffer.alloc(16), // aaguid
+        Buffer.from([0, id.length]),
+        id,
+        cose,
+      ])
+      const attestation = Buffer.concat([
+        Buffer.from([0xa3]),
+        text("fmt"),
+        text("none"),
+        text("attStmt"),
+        Buffer.from([0xa0]),
+        text("authData"),
+        Buffer.from([0x59, authData.length >> 8, authData.length & 255]),
+        authData,
+      ])
+      return {
+        id: b64url(id),
+        rawId: b64url(id),
+        type: "public-key",
+        authenticatorAttachment: "platform",
+        response: {
+          clientDataJSON: b64url(clientData("webauthn.create", challenge)),
+          attestationObject: b64url(attestation),
+          transports: ["internal"],
+        },
+      }
+    },
+    authenticate(challenge: string) {
+      const authData = Buffer.concat([rpHash, Buffer.from([0x05]), u32(++counter)])
+      const data = clientData("webauthn.get", challenge)
+      return {
+        id: b64url(id),
+        rawId: b64url(id),
+        type: "public-key",
+        authenticatorAttachment: "platform",
+        response: {
+          clientDataJSON: b64url(data),
+          authenticatorData: b64url(authData),
+          signature: b64url(sign("sha256", Buffer.concat([authData, sha256(data)]), privateKey)),
+        },
+      }
+    },
+  }
+}
+
+test("a passkey added once signed in signs in without a password", async () => {
+  const { call, internal, signUp } = await setup()
+  const device = softAuthenticator()
+
+  // Only someone signed in can add one
+  expect((await call("stranger", "/api/auth/passkey/generate-register-options")).status).toBe(401)
+
+  await signUp("ann", "Ann Cook")
+  const ann = (await internal("ann", "/internal/session")).data.session
+  const options = await call("ann", "/api/auth/passkey/generate-register-options")
+  expect(options.status).toBe(200)
+  expect(options.data.rp).toEqual({ name: "Crumb", id: "localhost" })
+  const added = await call("ann", "/api/auth/passkey/verify-registration", {
+    response: device.register(options.data.challenge),
+    name: "Ann's phone",
+  })
+  expect(added.status).toBe(200)
+  const list = await call("ann", "/api/auth/passkey/list-user-passkeys")
+  expect(list.data.map((p: { name: string }) => p.name)).toEqual(["Ann's phone"])
+
+  // On another device: no cookies, just the passkey
+  const challenge = await call("phone", "/api/auth/passkey/generate-authenticate-options")
+  expect(challenge.status).toBe(200)
+  const signedIn = await call("phone", "/api/auth/passkey/verify-authentication", {
+    response: device.authenticate(challenge.data.challenge),
+  })
+  expect(signedIn.status).toBe(200)
+  const phone = (await internal("phone", "/internal/session")).data.session
+  expect(phone.user.id).toBe(ann.user.id)
+  expect(phone.household.id).toBe(ann.household.id)
+
+  // A challenge is good once
+  const replay = await call("phone", "/api/auth/passkey/verify-authentication", {
+    response: device.authenticate(challenge.data.challenge),
+  })
+  expect(replay.status).toBe(400)
+
+  // Removed, it no longer signs anyone in
+  const removed = await call("ann", "/api/auth/passkey/delete-passkey", { id: list.data[0].id })
+  expect(removed.status).toBe(200)
+  const again = await call("thief", "/api/auth/passkey/generate-authenticate-options")
+  const refused = await call("thief", "/api/auth/passkey/verify-authentication", {
+    response: device.authenticate(again.data.challenge),
+  })
+  expect(refused.status).toBe(401)
+  expect((await internal("thief", "/internal/session")).data.session).toBeNull()
+})
+
 test("Google and Apple are offered when their keys are set", async () => {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" })
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString()
@@ -198,7 +328,7 @@ test("people can download their data and delete their account", async () => {
   expect((await internal("nobody", "/internal/export", {})).status).toBe(401)
   const data = (await internal("ann", "/internal/export", {})).data
   expect(data.account).toMatchObject({ name: "Ann", email: "ann@example.com" })
-  expect(data.signInMethods).toEqual({ password: true, linked: [] })
+  expect(data.signInMethods).toEqual({ password: true, linked: [], passkeys: [] })
   expect(data.households).toEqual([
     expect.objectContaining({ externalId: ann.household.id, name: "Ann's kitchen", role: "owner" }),
   ])
@@ -222,7 +352,22 @@ test("people can download their data and delete their account", async () => {
   })
   expect(signIn.status).toBe(401)
 
-  // Cat had hers to herself: it goes with her
+  // Cat had hers to herself: it goes with her, and so does her passkey
+  const device = softAuthenticator()
+  const options = await call("cat", "/api/auth/passkey/generate-register-options")
+  await call("cat", "/api/auth/passkey/verify-registration", {
+    response: device.register(options.data.challenge),
+    name: "Cat's phone",
+  })
+  const exported = (await internal("cat", "/internal/export", {})).data
+  expect(exported.signInMethods.passkeys).toEqual([
+    expect.objectContaining({ name: "Cat's phone" }),
+  ])
   const catGone = await internal("cat", "/internal/delete-account", { password: "long enough" })
   expect(catGone.data.deletedHouseholds).toEqual([cat.household.id])
+  const challenge = await call("thief", "/api/auth/passkey/generate-authenticate-options")
+  const refused = await call("thief", "/api/auth/passkey/verify-authentication", {
+    response: device.authenticate(challenge.data.challenge),
+  })
+  expect(refused.status).toBe(401)
 })

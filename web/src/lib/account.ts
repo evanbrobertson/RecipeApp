@@ -4,7 +4,11 @@
  * Better Auth (AUTH_MODE=hosted, the same paths proxied to the auth service). The pages
  * only use this, so they don't care which.
  */
-import { api } from "./api"
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser"
+import { ApiError, api } from "./api"
 
 export type Mode = "password" | "accounts" | "hosted"
 
@@ -90,6 +94,13 @@ export type ConnectedApp = {
 
 export type Credentials = { name?: string; email: string; password: string }
 
+export type Passkey = {
+  id: string
+  name: string
+  /** Unix seconds. */
+  createdAt: number
+}
+
 let status: Promise<Status> | null = null
 
 /** How this Crumb signs people in, and who's signed in (fetched once per page). */
@@ -127,6 +138,23 @@ export interface Accounts {
   socialStart(provider: Provider, to: SocialIntent): Promise<string>
   signInMethods(): Promise<SignInMethods>
   unlink(provider: Provider): Promise<void>
+  /** Hosted: passkeys, when this browser can use them. */
+  passkeys?: Passkeys
+}
+
+export interface Passkeys {
+  supported(): boolean
+  /** Whether the browser can offer passkeys in the email field's autofill. */
+  autofill(): Promise<boolean>
+  /**
+   * Signs in with a passkey; `autofill` waits for one picked from the email field. Resolves
+   * false when the person cancelled (or another ceremony took over).
+   */
+  signIn(opts?: { autofill?: boolean }): Promise<boolean>
+  list(): Promise<Passkey[]>
+  /** Resolves false when the person cancelled. */
+  add(name: string): Promise<boolean>
+  remove(p: Passkey): Promise<void>
 }
 
 /** Crumb's own accounts (AUTH_MODE=accounts). */
@@ -218,6 +246,111 @@ const own: Accounts = {
   },
   async unlink(provider) {
     await api(`/api/auth/identities/${provider}`, { method: "DELETE" })
+  },
+}
+
+/** "Firefox on Linux", roughly: enough to tell one's devices (and passkeys) apart. */
+export function deviceName(agent: string | null) {
+  if (!agent) return "Unknown device"
+  const browser = /Edg\//.test(agent)
+    ? "Edge"
+    : /Firefox\//.test(agent)
+      ? "Firefox"
+      : /Chrome\//.test(agent)
+        ? "Chrome"
+        : /Safari\//.test(agent)
+          ? "Safari"
+          : /okhttp|Android/.test(agent)
+            ? "Crumb app"
+            : "Browser"
+  const system = /iPhone|iPad/.test(agent)
+    ? "iOS"
+    : /Android/.test(agent)
+      ? "Android"
+      : /Mac OS X/.test(agent)
+        ? "macOS"
+        : /Windows/.test(agent)
+          ? "Windows"
+          : /Linux/.test(agent)
+            ? "Linux"
+            : ""
+  return system ? `${browser} on ${system}` : browser
+}
+
+/** The person closed the prompt, or a newer ceremony (the button, over autofill) replaced it. */
+const cancelled = (err: unknown) =>
+  err instanceof Error && (err.name === "NotAllowedError" || err.name === "AbortError")
+
+/**
+ * Better Auth's passkey plugin. The WebAuthn helper only loads when a passkey is used, so it
+ * stays off the sign-in page's critical path.
+ */
+const passkeys: Passkeys = {
+  supported() {
+    return typeof window !== "undefined" && "PublicKeyCredential" in window
+  },
+  async autofill() {
+    if (!passkeys.supported()) return false
+    const { browserSupportsWebAuthnAutofill } = await import("@simplewebauthn/browser")
+    return browserSupportsWebAuthnAutofill()
+  },
+  async signIn({ autofill = false } = {}) {
+    const { startAuthentication } = await import("@simplewebauthn/browser")
+    const optionsJSON = await api<PublicKeyCredentialRequestOptionsJSON>(
+      "/api/auth/passkey/generate-authenticate-options",
+    )
+    let response
+    try {
+      response = await startAuthentication({ optionsJSON, useBrowserAutofill: autofill })
+    } catch (err) {
+      if (cancelled(err)) return false
+      throw err
+    }
+    const { clientExtensionResults: _, ...body } = response
+    await api("/api/auth/passkey/verify-authentication", {
+      method: "POST",
+      body: { response: body },
+    })
+    return true
+  },
+  async list() {
+    type Row = { id: string; name?: string | null; createdAt: string }
+    const rows = await api<Row[]>("/api/auth/passkey/list-user-passkeys")
+    return rows
+      .map((r) => ({ id: r.id, name: r.name || "Passkey", createdAt: secs(r.createdAt) }))
+      .sort((a, b) => b.createdAt - a.createdAt)
+  },
+  async add(name) {
+    const { startRegistration } = await import("@simplewebauthn/browser")
+    let optionsJSON: PublicKeyCredentialCreationOptionsJSON
+    try {
+      optionsJSON = await api("/api/auth/passkey/generate-register-options")
+    } catch (err) {
+      // Better Auth wants a sign-in from the last day before adding a way to sign in
+      if (err instanceof ApiError && err.status === 403) {
+        throw new ApiError("For safety, sign out and back in, then add the passkey.", 403)
+      }
+      throw err
+    }
+    let response
+    try {
+      response = await startRegistration({ optionsJSON })
+    } catch (err) {
+      if (cancelled(err)) return false
+      if (err instanceof Error && err.name === "InvalidStateError") {
+        throw new Error("This device already has a passkey for Crumb", { cause: err })
+      }
+      throw err
+    }
+    const { clientExtensionResults: _, ...body } = response
+    await api("/api/auth/passkey/verify-registration", {
+      method: "POST",
+      body: { response: body, name },
+    })
+    return true
+  },
+  async remove(p) {
+    await api("/api/auth/passkey/delete-passkey", { method: "POST", body: { id: p.id } })
   },
 }
 
@@ -393,6 +526,7 @@ const hosted: Accounts = {
     if (!row) return
     await api("/api/auth/unlink-account", { method: "POST", body: { accountId: row.id } })
   },
+  passkeys,
 }
 
 export function accounts(mode: Mode): Accounts {

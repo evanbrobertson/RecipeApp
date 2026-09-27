@@ -1,6 +1,6 @@
 /**
  * Better Auth for the hosted edition (`AUTH_MODE=hosted`): email + password accounts,
- * sessions, and households as Better Auth organizations (members and email invites).
+ * passkeys, sessions, and households as Better Auth organizations (members and email invites).
  *
  * Crumb's server (Rust) proxies `/api/auth/*` here and asks `/internal/*` (see
  * `server.ts`) who a request is signed in as. It keeps each household's recipes in a
@@ -12,6 +12,7 @@
  * owner and member, and invites are always for members.
  */
 import type { Database } from "bun:sqlite"
+import { passkey } from "@better-auth/passkey"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
 import { organization } from "better-auth/plugins"
@@ -99,6 +100,7 @@ export function authOptions(opts: AuthOptions) {
         "/sign-up/email": { window: 60, max: 5 },
         "/request-password-reset": { window: 60, max: 3 },
         "/sign-in/social": { window: 60, max: 10 },
+        "/passkey/verify-authentication": { window: 60, max: 10 },
       },
     },
     advanced: {
@@ -121,6 +123,13 @@ export function authOptions(opts: AuthOptions) {
       }),
     },
     plugins: [
+      // Passkeys are added once signed in (More → Account) and then sign in without a
+      // password. Scoped to SITE_URL's host, and only ever accepted from that origin.
+      passkey({
+        rpName: "Crumb",
+        rpID: new URL(baseURL).hostname,
+        origin: baseURL,
+      }),
       organization({
         // Kitchens are made by Crumb (see kitchen.ts), and never deleted from the browser:
         // a household's recipe file must not be orphaned

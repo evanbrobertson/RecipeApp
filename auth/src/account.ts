@@ -13,6 +13,7 @@ type Member = { id: string; organizationId: string; userId: string; role: string
 type Org = { id: string; name: string }
 type Account = { providerId: string; password?: string | null; createdAt: Date }
 type Session = { userAgent?: string | null; createdAt: Date; updatedAt: Date }
+type Passkey = { name?: string | null; createdAt: Date; deviceType: string }
 
 const secs = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000)
 
@@ -31,6 +32,10 @@ export async function exportAccount(auth: Auth, headers: Headers): Promise<Respo
     model: "member",
     where: [{ field: "userId", value: user.id }],
     sortBy: { field: "createdAt", direction: "asc" },
+  })
+  const passkeys = await ctx.adapter.findMany<Passkey>({
+    model: "passkey",
+    where: [{ field: "userId", value: user.id }],
   })
   const households = []
   for (const m of members) {
@@ -59,6 +64,7 @@ export async function exportAccount(auth: Auth, headers: Headers): Promise<Respo
       linked: accounts
         .filter((a) => a.providerId !== "credential")
         .map((a) => ({ provider: a.providerId, createdAt: secs(a.createdAt) })),
+      passkeys: passkeys.map((p) => ({ name: p.name ?? null, createdAt: secs(p.createdAt) })),
     },
     households,
     devices: sessions.map((s) => ({
@@ -129,7 +135,9 @@ export async function deleteAccount(
     })
     deletedHouseholds.push(m.organizationId)
   }
-  await ctx.adapter.deleteMany({ model: "member", where: [{ field: "userId", value: user.id }] })
+  for (const model of ["member", "passkey"]) {
+    await ctx.adapter.deleteMany({ model, where: [{ field: "userId", value: user.id }] })
+  }
   await ctx.internalAdapter.deleteUser(user.id)
   return Response.json({ ok: true, deletedHouseholds })
 }

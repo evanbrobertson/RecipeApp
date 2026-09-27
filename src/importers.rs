@@ -1,5 +1,6 @@
 //! Turns uploaded files into recipes. Supports:
-//! - Just the Recipe PDFs (its only export: Print → Save as PDF, one recipe per file)
+//! - Just the Recipe: the Import page bookmarklet's JSON (`web/src/lib/jtr-export.js`), or PDFs
+//!   made with Print → Save as PDF, one recipe per file
 //! - Paprika (.paprikarecipes zip of gzipped JSON, or a single .paprikarecipe)
 //! - schema.org Recipe JSON (Mealie, Tandoor, Nextcloud Cookbook...) and this app's own backup
 //! - Saved web pages (.html) and plain text / Markdown (recipes separated by "---")
@@ -240,7 +241,10 @@ fn with_share_url(r: &Value, mut item: ImportedRecipe) -> ImportedRecipe {
     item
 }
 
-fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
+/// A Crumb backup (`restored`: saved as it was), or the same format from Just the Recipe
+/// (the Import page's bookmarklet, or justtherecipe-export), which is cleaned up and checked
+/// like any other recipe from outside.
+fn from_backup(o: &Map<String, Value>, restored: bool) -> Vec<ImportedRecipe> {
     let Some(list) = o.get("recipes").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -282,7 +286,7 @@ fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    restored: true,
+                    restored,
                     original_url: r
                         .get("originalUrl")
                         .and_then(Value::as_str)
@@ -306,7 +310,7 @@ pub fn from_json_value(data: &Value) -> Vec<ImportedRecipe> {
             if matches!(format, Some("just-the-recipe" | "crumb"))
                 && o.get("recipes").is_some_and(Value::is_array)
             {
-                return from_backup(o);
+                return from_backup(o, format == Some("crumb"));
             }
             if is_paprika(o) {
                 return from_paprika(o).into_iter().collect();
@@ -560,6 +564,9 @@ mod tests {
         let out = from_json_value(&backup);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].cookbooks, vec!["Faves"]);
+        assert!(!out[0].restored, "from outside: cleaned up and checked");
+        let crumb = json!({"format": "crumb", "version": 1, "recipes": [{"title": "A"}]});
+        assert!(from_json_value(&crumb)[0].restored);
 
         let mealie = json!({"name": "Stew", "recipeIngredient": [{"display": "1 onion"}, {"note": "salt"}],
             "recipeInstructions": [{"text": "Simmer"}], "orgURL": "https://m.test/s"});

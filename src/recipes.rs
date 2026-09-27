@@ -372,43 +372,67 @@ pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Reci
 }
 
 /// Saves what a link points at: a recipe page, another Crumb's shared recipe, or another
-/// Crumb's shared cookbook (every recipe in it, into a cookbook of the same name).
+/// Crumb's shared cookbook (every recipe in it, into a cookbook of the same name). A
+/// cooking video waits its turn in the video queue.
 pub async fn import_link(state: &AppState, raw_url: &str) -> AppResult<Imported> {
+    match start_link(state, raw_url).await? {
+        Started::Done(imported) => Ok(imported),
+        Started::Queued(ticket) => {
+            let (recipe, is_new) = ticket.wait().await?;
+            Ok(Imported::Recipe(Box::new(recipe), is_new))
+        }
+    }
+}
+
+/// What [`start_link`] did: saved it, or queued a video to be watched.
+pub enum Started {
+    Done(Imported),
+    Queued(crate::video_jobs::Ticket),
+}
+
+/// [`import_link`] without waiting for a video: a cooking video is queued (429 when the
+/// queue is full) and its ticket returned at once. Anything else is saved as usual and
+/// never waits behind the videos.
+pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
     let url = unwrap_share_link(raw_url);
     {
         let conn = state.db.lock();
         if let Some(id) = find_by_url(&conn, &url)? {
-            return Ok(Imported::Recipe(
+            return Ok(Started::Done(Imported::Recipe(
                 Box::new(require_recipe(&conn, id)?),
                 false,
-            ));
+            )));
         }
     }
     // A cooking video: its caption, or what's said and shown in it
     if crate::video::is_video_url(&url) {
-        let (recipe, is_new) = crate::video::import(state, &url).await?;
-        return Ok(Imported::Recipe(Box::new(recipe), is_new));
+        return state.video_jobs.submit(state, &url).map(Started::Queued);
     }
-    let scraped = crate::scraper::scrape_page(state, &url).await?;
+    import_page(state, &url).await.map(Started::Done)
+}
+
+/// A recipe page, or another Crumb's share.
+async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
+    let scraped = crate::scraper::scrape_page(state, url).await?;
     // Another Crumb's share page: take its export (sections, notes and the original link
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {
         match crate::share::fetch_export(export).await {
             Some(crate::share::Export::Recipe(mut fields)) => {
-                keep_shared_photo(state, &mut fields.image, &url).await;
-                let (recipe, is_new) = save_shared(state, *fields, &url)?;
+                keep_shared_photo(state, &mut fields.image, url).await;
+                let (recipe, is_new) = save_shared(state, *fields, url)?;
                 return Ok(Imported::Recipe(Box::new(recipe), is_new));
             }
             Some(crate::share::Export::Book(mut book)) => {
                 book.recipes = futures_util::stream::iter(book.recipes)
                     .map(|mut item| async {
-                        keep_shared_photo(state, &mut item.fields.image, &url).await;
+                        keep_shared_photo(state, &mut item.fields.image, url).await;
                         item
                     })
                     .buffered(4)
                     .collect()
                     .await;
-                return save_shared_book(state, book, &url).map(Imported::Book);
+                return save_shared_book(state, book, url).map(Imported::Book);
             }
             None => {}
         }

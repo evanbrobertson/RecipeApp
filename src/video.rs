@@ -6,6 +6,8 @@
 //!
 //! Every tool is optional: without `yt-dlp` the caption is read from the page itself, and
 //! without Wee Chef only a caption that is a whole recipe can be saved.
+//!
+//! Imports wait their turn in [`crate::video_jobs`], which runs [`import`] on its workers.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -16,7 +18,6 @@ use regex::Regex;
 use scraper::{Html, Selector};
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
@@ -44,9 +45,6 @@ const FFMPEG_TIMEOUT: Duration = Duration::from_secs(120);
 const WHISPER_TIMEOUT: Duration = Duration::from_secs(420);
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
-
-/// One video is downloaded and read at a time: transcription uses every core it's given.
-static WORK: Semaphore = Semaphore::const_new(1);
 
 /// The programs a video import can use. Found at start (see [`VideoTools::from_env`]).
 #[derive(Debug, Clone, Default)]
@@ -400,7 +398,9 @@ struct Watched {
 async fn watch(state: &AppState, meta: &VideoMeta) -> Option<Watched> {
     let tools = &state.config.video;
     let (yt_dlp, ffmpeg) = (tools.yt_dlp.as_ref()?, tools.ffmpeg.as_ref()?);
-    let _turn = WORK.acquire().await.ok()?;
+    // The heavy part holds one of the workers' permits, which headless Chromium shares
+    let _turn = state.video_jobs.heavy.acquire().await.ok()?;
+    let threads = Threads::for_config(&state.config);
     let dir = tempfile::tempdir().ok()?;
     let host = crate::telemetry::host_of(&meta.url);
 
@@ -432,11 +432,11 @@ async fn watch(state: &AppState, meta: &VideoMeta) -> Option<Watched> {
     let downloaded_ms = started.elapsed().as_millis();
 
     let transcript = match &tools.whisper {
-        Some((cli, model)) => transcribe(ffmpeg, cli, model, &video, dir.path()).await,
+        Some((cli, model)) => transcribe(ffmpeg, cli, model, &video, dir.path(), threads).await,
         None => None,
     };
     let transcribed_ms = started.elapsed().as_millis();
-    let frames = frames(ffmpeg, &video, dir.path(), meta.duration).await;
+    let frames = frames(ffmpeg, &video, dir.path(), meta.duration, threads).await;
     tracing::info!(
         "[video] {host}: downloaded in {downloaded_ms} ms, {} words heard by {transcribed_ms} ms, {} frames by {} ms",
         transcript
@@ -446,6 +446,30 @@ async fn watch(state: &AppState, meta: &VideoMeta) -> Option<Watched> {
         started.elapsed().as_millis()
     );
     Some(Watched { transcript, frames })
+}
+
+/// The CPU a job may use: the cores split between the workers, so jobs running together
+/// share the machine rather than oversubscribe it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Threads {
+    pub ffmpeg: usize,
+    pub whisper: usize,
+}
+
+impl Threads {
+    pub fn for_config(config: &crate::config::Config) -> Self {
+        let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+        Self::split(cores, config.video_workers, config.whisper_threads)
+    }
+
+    /// `cores` shared by `workers`; `whisper` (`WHISPER_THREADS`) overrides whisper's share.
+    pub fn split(cores: usize, workers: usize, whisper: Option<usize>) -> Self {
+        let share = (cores / workers.max(1)).max(1);
+        Self {
+            ffmpeg: share,
+            whisper: whisper.unwrap_or(share.min(8)).max(1),
+        }
+    }
 }
 
 /// The file yt-dlp wrote (its extension depends on the format it picked).
@@ -467,11 +491,14 @@ async fn transcribe(
     model: &Path,
     video: &Path,
     dir: &Path,
+    threads: Threads,
 ) -> Option<String> {
     let wav = dir.join("audio.wav");
     run(
         Command::new(ffmpeg)
-            .args(["-nostdin", "-v", "error", "-i"])
+            .args(["-nostdin", "-v", "error", "-threads"])
+            .arg(threads.ffmpeg.to_string())
+            .arg("-i")
             .arg(video)
             .args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-t"])
             .arg(MAX_AUDIO_SECONDS.to_string())
@@ -484,16 +511,13 @@ async fn transcribe(
     let english_only = model
         .file_name()
         .is_some_and(|n| n.to_string_lossy().contains(".en."));
-    let threads = std::thread::available_parallelism()
-        .map_or(2, |n| n.get())
-        .min(8);
     let out = run(
         Command::new(whisper)
             .arg("-m")
             .arg(model)
             .arg("-f")
             .arg(&wav)
-            .args(["-nt", "-np", "-t", &threads.to_string(), "-l"])
+            .args(["-nt", "-np", "-t", &threads.whisper.to_string(), "-l"])
             .arg(if english_only { "en" } else { "auto" }),
         WHISPER_TIMEOUT,
     )
@@ -515,7 +539,13 @@ pub fn clean_transcript(raw: &str) -> Option<String> {
 }
 
 /// Stills from across the video, near-duplicates dropped, at most [`MAX_FRAMES`].
-async fn frames(ffmpeg: &Path, video: &Path, dir: &Path, duration: Option<f64>) -> Vec<Photo> {
+async fn frames(
+    ffmpeg: &Path,
+    video: &Path,
+    dir: &Path,
+    duration: Option<f64>,
+    threads: Threads,
+) -> Vec<Photo> {
     let frames_dir = dir.join("frames");
     if std::fs::create_dir(&frames_dir).is_err() {
         return Vec::new();
@@ -525,8 +555,12 @@ async fn frames(ffmpeg: &Path, video: &Path, dir: &Path, duration: Option<f64>) 
     let filter = format!("fps=1/{every:.2},scale='min({FRAME_WIDTH},iw)':-2");
     let result = run(
         Command::new(ffmpeg)
-            .args(["-nostdin", "-v", "error", "-i"])
+            .args(["-nostdin", "-v", "error", "-threads"])
+            .arg(threads.ffmpeg.to_string())
+            .arg("-i")
             .arg(video)
+            .args(["-threads"])
+            .arg(threads.ffmpeg.to_string())
             .args(["-vf", &filter, "-frames:v"])
             .arg(SAMPLED_FRAMES.to_string())
             .args(["-q:v", "4"])
@@ -784,6 +818,37 @@ mod tests {
         assert_eq!(picked.len(), 12);
         assert!(picked.iter().all(|p| p.media_type == "image/jpeg"));
         assert!(pick_frames(vec![b"not a jpeg".to_vec()], 12).is_empty());
+    }
+
+    #[test]
+    fn splits_the_cores_between_workers() {
+        assert_eq!(
+            Threads::split(8, 1, None),
+            Threads {
+                ffmpeg: 8,
+                whisper: 8
+            }
+        );
+        assert_eq!(
+            Threads::split(8, 2, None),
+            Threads {
+                ffmpeg: 4,
+                whisper: 4
+            }
+        );
+        assert_eq!(
+            Threads::split(2, 4, None),
+            Threads {
+                ffmpeg: 1,
+                whisper: 1
+            }
+        );
+        assert_eq!(
+            Threads::split(32, 1, None).whisper,
+            8,
+            "whisper gains little past 8"
+        );
+        assert_eq!(Threads::split(8, 2, Some(3)).whisper, 3);
     }
 
     #[test]

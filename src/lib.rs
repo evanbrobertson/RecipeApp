@@ -30,6 +30,7 @@ pub mod suggestions;
 pub mod telemetry;
 pub mod text_parser;
 pub mod video;
+pub mod video_jobs;
 pub mod web;
 
 use std::sync::Arc;
@@ -73,10 +74,17 @@ pub struct AppState {
     pub queued: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Unknown share tokens asked for, per client address (see `share::Misses`).
     pub share_misses: Arc<share::Misses>,
+    /// Video imports waiting and running, across households (see [`video_jobs`]).
+    pub video_jobs: Arc<video_jobs::VideoJobs>,
 }
 
 impl AppState {
-    pub fn new(db: db::Db, config: config::Config, browser: browser::Browser) -> Self {
+    pub fn new(db: db::Db, config: config::Config, mut browser: browser::Browser) -> Self {
+        let video_jobs = Arc::new(video_jobs::VideoJobs::new(video_jobs::Limits::from_config(
+            &config,
+        )));
+        // Headless Chromium shares the videos' heavy-work budget
+        browser.share_budget(video_jobs.heavy.clone());
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -125,6 +133,7 @@ impl AppState {
             checks: Arc::default(),
             queued: home.queued,
             share_misses: Arc::default(),
+            video_jobs,
         }
     }
 }

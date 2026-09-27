@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
             routing::get(list_recipes).post(create_recipe),
         )
         .route("/api/recipes/import", routing::post(import_recipe))
+        .route("/api/import/jobs/{id}", routing::get(import_job))
         .route(
             "/api/recipes/import/photos",
             routing::post(import_photos)
@@ -381,16 +382,25 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
     Ok((status, Json(recipes::with_is_new(&recipe, is_new))).into_response())
 }
 
-async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Json<Value>> {
+/// A link or pasted text. A cooking video answers 202 at once with its job (see
+/// [`import_job`]): `{jobId, status, position?}`.
+async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
     let (recipe, is_new) = if let Some(url) = body.get("url") {
         let url = url
             .as_str()
             .filter(|u| crate::model::is_valid_url(u))
             .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
-        match recipes::import_link(&state, url).await? {
-            recipes::Imported::Recipe(recipe, is_new) => (*recipe, is_new),
-            recipes::Imported::Book(book) => return Ok(Json(book_imported(&book))),
+        match recipes::start_link(&state, url).await? {
+            recipes::Started::Done(recipes::Imported::Recipe(recipe, is_new)) => (*recipe, is_new),
+            recipes::Started::Done(recipes::Imported::Book(book)) => {
+                return Ok(Json(book_imported(&book)).into_response());
+            }
+            recipes::Started::Queued(ticket) => {
+                let mut job = ticket.status().to_json(&ticket.id);
+                job["jobId"] = json!(ticket.id);
+                return Ok((StatusCode::ACCEPTED, Json(job)).into_response());
+            }
         }
     } else if let Some(text) = body.get("text") {
         let text = text
@@ -409,9 +419,21 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
     } else {
         return Err(AppError::bad_request("Paste a link or the recipe text"));
     };
-    Ok(Json(
-        json!({"id": recipe.id, "title": recipe.title, "isNew": is_new}),
-    ))
+    Ok(Json(json!({"id": recipe.id, "title": recipe.title, "isNew": is_new})).into_response())
+}
+
+/// Where a video import is: `queued` (with its `position`, 1 = next), `running`, `done`
+/// (with the `recipe`: `{id, title, isNew}`) or `failed` (with `statusCode` and `message`).
+/// Only the household that queued it can see it.
+async fn import_job(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    state
+        .video_jobs
+        .status(state.household, &id)
+        .map(|status| Json(status.to_json(&id)))
+        .ok_or_else(|| AppError::not_found("That import has finished or expired"))
 }
 
 /// A shared cookbook saved from another Crumb, as the Add page shows it: "Added 12 recipes

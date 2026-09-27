@@ -86,7 +86,7 @@ private network; don't give it a public domain.
 
    | Variable               | Value                                                                    |
    | ---------------------- | ------------------------------------------------------------------------ |
-   | `SITE_URL`             | Crumb's public URL, e.g. `https://crumb.example.com` (cookies and links) |
+   | `SITE_URL`             | Crumb's public URL, e.g. `https://crumb.example.com` (cookies, links and passkeys) |
    | `BETTER_AUTH_SECRET`   | A long random secret (`openssl rand -base64 32`)                         |
    | `AUTH_INTERNAL_SECRET` | Another long random secret, also set on Crumb's service                  |
    | `EMAIL_FROM`           | Optional. The sender, e.g. `Crumb <hello@crumb.example.com>`             |
@@ -97,6 +97,9 @@ private network; don't give it a public domain.
 4. **On Crumb's service**, set `AUTH_MODE=hosted`, `AUTH_SERVICE_URL=http://crumb-auth.railway.internal:3100`
    and the same `AUTH_INTERNAL_SECRET`. Crumb's own volume keeps each household's recipes
    (`households/{id}/recipes.db`) and the ids that link them to Better Auth (`accounts.db`).
+
+Passkeys belong to `SITE_URL`'s domain: ones made on dev don't work on stable, and moving to another domain means
+everyone signs in with their password and adds them again.
 
 Every household starts with an empty box. To give the recipes already in `recipes.db` to one account, set
 `HOSTED_HOME_OWNER` to its email before it first signs in.

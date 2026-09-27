@@ -1,7 +1,9 @@
 //! Headless Chromium fallback for sites that block plain HTTP fetches.
 //!
 //! Chromium is installed in the Docker image; locally set CHROMIUM_PATH or it's skipped.
-//! Only one page loads at a time to keep memory in check on a small instance. The browser
+//! Only one page loads at a time to keep memory in check on a small instance, and it takes
+//! a permit of the heavy-work budget video imports use (see [`crate::video_jobs`]), so the
+//! two never stack beyond it. The browser
 //! is driven over the DevTools protocol directly (a handful of commands), which keeps the
 //! binary small compared with a full CDP client.
 
@@ -10,12 +12,12 @@ use regex::Regex;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -81,9 +83,14 @@ const BLOCKED: [&str; 18] = [
     "*.woff2", "*.ttf", "*.otf", "*.mp4", "*.webm", "*.mp3", "*.m3u8", "*.mov",
 ];
 
+/// Longest a page load waits for the heavy-work budget before giving up.
+const BUDGET_WAIT: Duration = Duration::from_secs(90);
+
 pub struct Browser {
     executable: Option<PathBuf>,
     lock: Mutex<()>,
+    /// The heavy-work budget shared with video imports (None: only `lock` limits it).
+    budget: Option<Arc<Semaphore>>,
 }
 
 impl Browser {
@@ -100,6 +107,7 @@ impl Browser {
         Self {
             executable,
             lock: Mutex::new(()),
+            budget: None,
         }
     }
 
@@ -107,7 +115,13 @@ impl Browser {
         Self {
             executable: None,
             lock: Mutex::new(()),
+            budget: None,
         }
+    }
+
+    /// Each page load takes a permit of `budget` too.
+    pub fn share_budget(&mut self, budget: Arc<Semaphore>) {
+        self.budget = Some(budget);
     }
 
     pub fn available(&self) -> bool {
@@ -120,6 +134,15 @@ impl Browser {
             .executable
             .as_deref()
             .ok_or("Chromium is not installed")?;
+        let _permit = match &self.budget {
+            Some(budget) => Some(
+                tokio::time::timeout(BUDGET_WAIT, budget.acquire())
+                    .await
+                    .map_err(|_| "The server is busy watching a video. Try again in a minute.")?
+                    .map_err(|e| e.to_string())?,
+            ),
+            None => None,
+        };
         let _guard = self.lock.lock().await;
         let timeout = Duration::from_secs(40);
         tokio::time::timeout(timeout + Duration::from_secs(5), run(exe, url, timeout))

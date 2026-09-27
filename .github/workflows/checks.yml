@@ -45,7 +45,7 @@ jobs:
       - run: scripts/release/version.test.sh
 
   web:
-    name: Web (astro check, oxlint, build)
+    name: Web (astro check, bun test, oxlint, build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -65,6 +65,7 @@ jobs:
           restore-keys: bun-web-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - run: bun run test
       - run: bun run lint
       - run: bun run build
 
