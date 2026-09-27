@@ -1,8 +1,11 @@
 ---
 import Icon from "../components/Icon.astro"
-import { ChevronDown } from "lucide"
+import { BookmarkPlus, ChevronDown, Copy } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import ImportTools from "../islands/ImportTools.svelte"
+import { bookmarklet } from "../lib/jtr-export.js"
+
+const exporter = bookmarklet()
 ---
 
 <Layout title="Import" section="more" data>
@@ -26,10 +29,73 @@ import ImportTools from "../islands/ImportTools.svelte"
         <span class="flex-1">Coming from Just the Recipe?</span>
         <Icon icon={ChevronDown} class="text-ink-muted size-5 transition group-open:rotate-180" />
       </summary>
-      <p class="text-ink-muted pb-3">
-        Paste each recipe's <em>Share</em> link above, upload PDFs made with{" "}
-        <em>Print → Save as PDF</em>, or paste the text on <a href="/add" class="link text-sm">Add</a>.
-      </p>
+      <div class="text-ink-muted space-y-3 pb-4">
+        <p>
+          Bring everything over at once, with your collections as cookbooks, using the{" "}
+          <em>Crumb export</em> bookmark. It reads your recipes in your own browser, so Crumb never
+          sees your Just the Recipe password.
+        </p>
+        <ol class="list-decimal space-y-2 pl-5">
+          <li>
+            On a computer, drag this button to your bookmarks bar. On a phone, copy it, bookmark any
+            page, then edit that bookmark: name it <em>Crumb export</em> and paste over its address.
+            <span class="mt-2 flex flex-wrap gap-2">
+              <a
+                href={exporter}
+                id="jtr-bookmarklet"
+                class="btn btn-outline btn-sm"
+                data-no-prerender
+                title="Drag to your bookmarks bar"
+              >
+                <Icon icon={BookmarkPlus} /> Crumb export
+              </a>
+              <button type="button" id="jtr-copy" class="btn btn-soft btn-sm">
+                <Icon icon={Copy} /> Copy
+              </button>
+            </span>
+          </li>
+          <li>
+            Open <a href="https://www.justtherecipe.com/" class="link text-sm">justtherecipe.com</a>,
+            sign in and wait for your recipes to show. Then open the bookmark (on Android Chrome, type{" "}
+            <em>Crumb export</em> in the address bar and tap it).
+          </li>
+          <li>
+            It saves <em>just-the-recipe.json</em>. Upload that file above.
+          </li>
+        </ol>
+        <p>
+          For a few recipes, paste each one's <em>Share</em> link above, upload PDFs made with{" "}
+          <em>Print → Save as PDF</em>, or paste the text on <a href="/add" class="link text-sm">Add</a>.
+        </p>
+      </div>
     </details>
   </div>
 </Layout>
+
+<script>
+  import { toast } from "../lib/toast"
+  import { IMPORT_URL } from "../lib/jtr-export.js"
+
+  const link = document.getElementById("jtr-bookmarklet")
+  const copy = document.getElementById("jtr-copy")
+  if (link) {
+    // The finished message links back to this Crumb, wherever it's hosted
+    const here = encodeURIComponent(new URL("/import", location.href).href)
+    link.setAttribute("href", link.getAttribute("href")!.replace(IMPORT_URL, here))
+    link.addEventListener("click", (e) => {
+      e.preventDefault()
+      toast({
+        title: "Drag it to your bookmarks bar",
+        description: "Then open it on justtherecipe.com.",
+      })
+    })
+    copy?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(link.getAttribute("href")!)
+        toast({ title: "Copied", description: "Paste it as a bookmark's address.", tone: "success" })
+      } catch {
+        toast({ title: "Couldn't copy", description: "Your browser blocked it.", tone: "error" })
+      }
+    })
+  }
+</script>
