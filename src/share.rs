@@ -584,7 +584,8 @@ async fn file(
     drop(req);
     match found {
         Found::Recipe(share, recipe) => {
-            recipe_file(&state, &ip, &share, &recipe, &rest, v.as_deref()).await
+            let link = share_url(&origin, &token);
+            recipe_file(&state, &ip, &share, &recipe, &link, &rest, v.as_deref()).await
         }
         Found::Book(share, book) => {
             let (head, tail) = match rest.split_once('/') {
@@ -634,7 +635,9 @@ async fn file(
                     match tail {
                         None => book_recipe_page(&state, &origin, &share, &book, &recipe),
                         Some(tail) => {
-                            recipe_file(&state, &ip, &share, &recipe, tail, v.as_deref()).await
+                            let link = format!("{}/{}", share_url(&origin, &token), recipe.id);
+                            recipe_file(&state, &ip, &share, &recipe, &link, tail, v.as_deref())
+                                .await
                         }
                     }
                 }
@@ -656,19 +659,21 @@ fn book_member(state: &AppState, book_id: i64, raw: &str) -> Option<Recipe> {
     recipes::get_recipe(&conn, id).ok().flatten().map(shown)
 }
 
-/// `crumb.json`, `og.jpg` and `img/{width}` for one shared recipe (alone or in a book).
+/// `crumb.json`, `og.jpg` and `img/{width}` for one shared recipe (alone or in a book), whose
+/// page is at `link`.
 async fn recipe_file(
     state: &AppState,
     ip: &str,
     share: &Share,
     recipe: &Recipe,
+    link: &str,
     rest: &str,
     v: Option<&str>,
 ) -> Response {
     let variant = match rest {
         "crumb.json" => {
             return json_file(
-                &recipes::export_shared(recipe, share.include_notes),
+                &recipes::export_shared(recipe, share.include_notes, link),
                 &recipe.title,
             );
         }
