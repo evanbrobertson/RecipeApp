@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -738,30 +739,38 @@ private fun Dot() {
 
 private data class TimesEntry(val label: String, val icon: ImageVector, val value: String)
 
-/** The times and yield, three to a row, only the fields that have a value (spec §4.6). */
+/**
+ * The times and yield (web `.card` `dl`): as many 88dp-or-wider columns as fit, stretched to
+ * fill the row the way CSS grid's auto-fit does, so two entries share the width in halves.
+ */
 @Composable
 private fun TimesCard(entries: List<TimesEntry>, modifier: Modifier = Modifier) {
     val c = Crumb.colors
-    Card(modifier.fillMaxWidth()) {
-        entries.chunked(3).forEach { row ->
-            Row(Modifier.fillMaxWidth()) {
-                row.forEach { entry ->
-                    Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(entry.icon, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp))
-                            Text(entry.label, style = CrumbText.meta, color = c.inkMuted)
+    Card(modifier.fillMaxWidth(), padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = (maxWidth / 88.dp).toInt().coerceIn(1, entries.size.coerceAtLeast(1))
+            Column {
+                entries.chunked(columns).forEach { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        row.forEach { entry ->
+                            Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(entry.icon, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp))
+                                    Text(entry.label, style = CrumbText.meta, color = c.inkMuted)
+                                }
+                                Text(
+                                    entry.value,
+                                    color = c.ink,
+                                    fontFamily = NunitoSans,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
                         }
-                        Text(
-                            entry.value,
-                            color = c.ink,
-                            fontFamily = NunitoSans,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

@@ -35,6 +35,9 @@ class Importer(
         return ImportOutcome.Saved(r.id, r.title, r.isNew, r.onDevice)
     }
 
+    /** Whether Wee Chef reads photos here; when not, a note with them has no use. */
+    suspend fun readsPhotos(): Boolean = photos.visionAvailable()
+
     suspend fun files(uris: List<Uri>): ImportOutcome.Files =
         ImportOutcome.Files(api.importFiles(uris.map { Incoming.upload(resolver, it) }))
 

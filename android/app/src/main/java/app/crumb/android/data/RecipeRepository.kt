@@ -38,8 +38,6 @@ class RecipeRepository(
         fallback = { cache.cookbook(id) },
     )
 
-    suspend fun importLink(url: String) = api.importUrl(url)
-    suspend fun importText(text: String) = api.importText(text)
     suspend fun markCooked(id: Long): Cooked = api.markCooked(id)
 
     fun photoUrl(recipeId: Long, image: String?, width: Int) = api.photoUrl(recipeId, image, width)

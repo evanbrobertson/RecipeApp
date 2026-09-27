@@ -4,6 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import app.crumb.android.ui.theme.NunitoSans
+import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.Sparkles
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,6 +47,11 @@ fun RecipeCard(
     selectable: Boolean = false,
     selected: Boolean = false,
     onToggle: (Long) -> Unit = {},
+    /** In place of the category and time, e.g. Home's "Yesterday · from a link". */
+    meta: String? = null,
+    /** Why Try next picked it; [aiReason] when Wee Chef wrote it. */
+    reason: String? = null,
+    aiReason: Boolean = false,
     onClick: () -> Unit,
 ) {
     val c = Crumb.colors
@@ -70,8 +79,14 @@ fun RecipeCard(
         }
         VSpace(10.dp)
         Text(recipe.title, style = CrumbText.rowTitle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        val sub = cardSubtitle(recipe)
-        if (sub.isNotEmpty()) {
+        if (reason != null) {
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.Top) {
+                if (aiReason) Icon(Lucide.Sparkles, contentDescription = null, tint = c.primary, modifier = Modifier.padding(top = 3.dp, end = 3.dp).size(14.dp))
+                Text(reason, color = c.inkMuted, fontFamily = NunitoSans, fontSize = 14.sp, lineHeight = 19.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        val sub = meta ?: cardSubtitle(recipe)
+        if (reason == null && sub.isNotEmpty()) {
             Text(
                 sub,
                 style = CrumbText.meta,

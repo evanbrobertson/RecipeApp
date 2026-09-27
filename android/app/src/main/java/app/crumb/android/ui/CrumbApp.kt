@@ -50,7 +50,8 @@ import app.crumb.android.ui.add.AddScreen
 import app.crumb.android.ui.books.CookbookScreen
 import app.crumb.android.ui.books.ShelfScreen
 import app.crumb.android.ui.components.ControlShape
-import app.crumb.android.ui.components.Message
+import app.crumb.android.ui.connect.ConnectScreen
+import app.crumb.android.ui.importer.ImportScreen
 import app.crumb.android.data.Incoming
 import app.crumb.android.ui.components.ToastHost
 import app.crumb.android.ui.components.ToastTone
@@ -59,6 +60,7 @@ import app.crumb.android.timers.TimerDock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import app.crumb.android.ui.home.HomeScreen
+import app.crumb.android.ui.home.showOutcome
 import app.crumb.android.ui.suggestions.ReviewCount
 import app.crumb.android.ui.suggestions.SuggestionsScreen
 import com.composables.icons.lucide.BookOpenText
@@ -139,6 +141,8 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
     // A 401 means the password changed or the session ran out; the cache stays for next time
     val signedOut: () -> Unit = { scope.launch { container.session.signOut() } }
 
+    val crumbNav = remember(nav) { CrumbNav(nav, container, scope, signedOut) }
+
     LaunchedEffect(incoming) {
         val got = incoming ?: return@LaunchedEffect
         if (got.text != null) {
@@ -146,14 +150,13 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
             return@LaunchedEffect
         }
         onSharedUsed()
-        importShared(got, container.importer, nav)
+        importShared(got, container.importer, crumbNav)
     }
 
     val entry by nav.currentBackStackEntryAsState()
     val destination = entry?.destination
     val showTabs = destination?.hasRoute(CookRoute::class) != true
 
-    val crumbNav = remember(nav) { CrumbNav(nav, container, scope, signedOut) }
 
     CompositionLocalProvider(LocalNav provides crumbNav) {
         Scaffold(
@@ -169,14 +172,9 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                 }
                 composable<SuggestionsRoute> { SuggestionsScreen() }
                 composable<MoreRoute> { MoreScreen() }
-                composable<AddRoute> {
-                    AddScreen(
-                        shared = shared,
-                        onSharedUsed = onSharedUsed,
-                        onSaved = { recipeId, cookbookId ->
-                            if (cookbookId != null) crumbNav.cookbook(cookbookId) else crumbNav.recipe(recipeId)
-                        },
-                    )
+                composable<AddRoute> { backStack ->
+                    val routeText = backStack.toRoute<AddRoute>().text
+                    AddScreen(shared = shared ?: routeText, onSharedUsed = onSharedUsed)
                 }
                 composable<RecipeRoute> { backStack ->
                     val route = backStack.toRoute<RecipeRoute>()
@@ -188,8 +186,8 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                 composable<PrepRoute> { PrepScreen(it.toRoute<PrepRoute>().id) }
                 composable<EditRoute> { backStack -> EditScreen(backStack.toRoute<EditRoute>().id) }
                 composable<NewRecipeRoute> { backStack -> NewRecipeScreen(backStack.toRoute<NewRecipeRoute>().title) }
-                composable<ImportRoute> { Message("Import recipes", "Coming together.") }
-                composable<ConnectRoute> { Message("Connect to Claude", "Coming together.") }
+                composable<ImportRoute> { backStack -> ImportScreen(backStack.toRoute<ImportRoute>().links) }
+                composable<ConnectRoute> { ConnectScreen() }
                 composable<BookRoute> { backStack ->
                     CookbookScreen(
                         id = backStack.toRoute<BookRoute>().id,
@@ -317,36 +315,15 @@ private fun ReviewBadge(text: String, modifier: Modifier = Modifier) {
 }
 
 /** Photos or files shared into Crumb: saved straight away, with the web's toasts. */
-private suspend fun importShared(incoming: Incoming, importer: app.crumb.android.data.Importer, nav: NavHostController) {
+private suspend fun importShared(incoming: Incoming, importer: app.crumb.android.data.Importer, nav: CrumbNav) {
     try {
         if (incoming.photos.isNotEmpty()) {
             val pages = incoming.photos.take(app.crumb.android.data.PhotoImport.MAX_PHOTOS)
             if (incoming.photos.size > pages.size) Toaster.show("Up to ${pages.size} photos", "They should all be one recipe.")
             Toaster.show("Reading ${pages.size} photo${if (pages.size == 1) "" else "s"}…")
-            val saved = importer.photos(pages)
-            if (saved.onDevice) {
-                Toaster.show("Check the amounts", "Photos are read on this device, so a few numbers or words may be off.")
-                nav.navigate(EditRoute(saved.id))
-            } else {
-                if (!saved.isNew) Toaster.show("Already in your recipes")
-                nav.navigate(RecipeRoute(saved.id))
-            }
+            showOutcome(importer.photos(pages), nav)
         }
-        if (incoming.files.isNotEmpty()) {
-            val result = importer.files(incoming.files)
-            val created = result.created
-            result.results.firstOrNull { it.error != null }?.let {
-                Toaster.show("Couldn't read that file", it.error, ToastTone.Error)
-            }
-            when {
-                created.size == 1 -> nav.navigate(RecipeRoute(created.first().id))
-                created.size > 1 -> {
-                    Toaster.show("Imported ${created.size} recipes", tone = ToastTone.Success)
-                    nav.navigate(RecipesRoute())
-                }
-                result.results.all { it.error == null } -> Toaster.show("Already in your recipes")
-            }
-        }
+        if (incoming.files.isNotEmpty()) showOutcome(importer.files(incoming.files), nav)
     } catch (e: Exception) {
         val what = if (incoming.photos.isNotEmpty()) "Couldn't read that photo" else "Couldn't read that file"
         Toaster.show(what, e.friendlyMessage(), ToastTone.Error)

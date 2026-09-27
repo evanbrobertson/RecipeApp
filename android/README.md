@@ -126,8 +126,9 @@ app/src/main/java/app/crumb/android/
 1. ~~Sign in, recipe box with search, recipe, cook mode, cookbooks, Add with Share → Crumb,
    offline reading of what's been opened, CI~~
 2. ~~`crumb-core` through UniFFI~~
-3. Parity with the web's phone layout (in progress): kitchen timers, photo and file import and
-   Share → Crumb for them, the 3D shelf, Home, recipes with filters and select, the recipe page
-   with sharing and Wee Chef checks, cook mode, mise en place, the editor, suggestions, More
+3. ~~Parity with the web's phone layout: kitchen timers, photo and file import and Share →
+   Crumb for them, the 3D shelf, Home with Try next, Add, recipes with filters and select, the
+   recipe page with sharing and Wee Chef checks, cook mode, mise en place, the editor,
+   suggestions, More, Import and Connect~~
 4. Save a recipe or cookbook for offline use, with its photos
 5. Play Store: signing key, listing, privacy policy

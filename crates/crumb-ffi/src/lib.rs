@@ -417,6 +417,28 @@ pub struct SunLocation {
     pub lng: f64,
 }
 
+/// Today's sunrise and sunset, or the sun never setting or rising.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Enum)]
+pub enum SunTimes {
+    /// Unix milliseconds.
+    RiseSet {
+        rise: f64,
+        set: f64,
+    },
+    PolarDay,
+    PolarNight,
+}
+
+/// Sunrise and sunset for the day containing `now_ms` (the More page's "Dark from … until …").
+#[uniffi::export]
+pub fn sun_times(now_ms: f64, location: SunLocation) -> SunTimes {
+    match sun::sun_times(now_ms, location.lat, location.lng) {
+        sun::SunTimes::RiseSet { rise, set } => SunTimes::RiseSet { rise, set },
+        sun::SunTimes::PolarDay => SunTimes::PolarDay,
+        sun::SunTimes::PolarNight => SunTimes::PolarNight,
+    }
+}
+
 /// Whether it's dark at `now_ms` where the cook is, and when that next changes.
 #[uniffi::export]
 pub fn sun_state(now_ms: f64, location: SunLocation) -> SunState {

@@ -57,7 +57,8 @@ class PhotoImport(private val context: Context, private val api: CrumbApi) {
         return PhotoResult(r.id, r.title, r.isNew, onDevice = true)
     }
 
-    private suspend fun visionAvailable(): Boolean =
+    /** Wee Chef can read photos on this server (otherwise the phone reads them itself). */
+    suspend fun visionAvailable(): Boolean =
         vision ?: runCatching { api.connector().vision }.getOrDefault(false).also { vision = it }
 
     /**
