@@ -1153,6 +1153,7 @@ async fn ask_jev(
     let url = format!("{}/v1/systemone", ts.base_url);
     let mut attempt = 0;
     loop {
+        let span = crate::telemetry::AiSpan::start("typesafe", &ts.model, "check", None);
         let res = state
             .http
             .post(&url)
@@ -1163,7 +1164,23 @@ async fn ask_jev(
             .await;
         let retry = match res {
             Ok(res) if res.status().is_success() => {
-                let v: Value = res.json().await.map_err(|e| format!("bad reply: {e}"))?;
+                let v: Value = match res.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        span.failed(crate::telemetry::ai_error_type(&e));
+                        return Err(format!("bad reply: {e}"));
+                    }
+                };
+                let input_tokens = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                span.answered(
+                    v["model"].as_str(),
+                    crate::telemetry::AiUsage {
+                        input: input_tokens,
+                        output: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
+                        ..Default::default()
+                    },
+                    None,
+                );
                 let answers = v
                     .get("answers")
                     .and_then(Value::as_object)
@@ -1177,6 +1194,7 @@ async fn ask_jev(
             }
             Ok(res) => {
                 let status = res.status().as_u16();
+                span.failed(&format!("http_{status}"));
                 let text = res.text().await.unwrap_or_default();
                 let err = format!("HTTP {status}: {}", crate::telemetry::api_error_text(&text));
                 if !(status == 429 || status >= 500) {
@@ -1184,7 +1202,10 @@ async fn ask_jev(
                 }
                 err
             }
-            Err(e) => format!("request failed: {e}"),
+            Err(e) => {
+                span.failed(crate::telemetry::ai_error_type(&e));
+                format!("request failed: {e}")
+            }
         };
         if attempt >= 2 {
             return Err(retry);
