@@ -31,3 +31,5 @@ byte-for-byte reproducible. Keep U+2150–215F in `UNICODES` when changing the s
 Every other glyph matches Google's own file: advances, kerning and outlines are identical at every
 weight, so the fallback's `size-adjust` and overrides still line up. If a rebuild changes vertical
 metrics or widths, re-check the fallback in `app.css`.
+
+![Every fraction before and after, in Nunito Sans](images/nunito-fractions.png)
