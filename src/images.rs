@@ -535,6 +535,58 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("bad base64 in data URI: {e}"))
 }
 
+/// The type of a photo that may be kept in a recipe itself, by its first bytes: JPEG, PNG
+/// or WebP, whatever it's labelled.
+fn photo_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// Whether `image` is a photo kept in the recipe itself (older photo imports, or one saved
+/// from another Crumb's share): a base64 `data:image/(jpeg|png|webp)` URI whose bytes are
+/// that, no bigger than the resizer takes. Any other `data:` URI isn't one.
+pub fn is_embedded_photo(image: &str) -> bool {
+    let Some(meta) = image
+        .get(..image.find(',').unwrap_or(0))
+        .and_then(|m| m.strip_prefix("data:"))
+    else {
+        return false;
+    };
+    let named = meta.split(';').next().unwrap_or("").to_ascii_lowercase();
+    matches!(named.as_str(), "image/jpeg" | "image/png" | "image/webp")
+        && decode_data_uri(image).is_ok_and(|b| photo_type(&b).is_some())
+}
+
+/// A photo's bytes as a `data:` URI to keep in the recipe, when they're a JPEG, PNG or WebP
+/// no bigger than the resizer takes.
+pub fn embed(bytes: &[u8]) -> Option<String> {
+    let kind = photo_type(bytes).filter(|_| bytes.len() <= MAX_SOURCE_BYTES)?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:{kind};base64,{b64}"))
+}
+
+/// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
+/// None when it can't be had or isn't a JPEG, PNG or WebP.
+pub async fn fetch_to_embed(http: &reqwest::Client, url: &str) -> Option<String> {
+    match load_source(http, url, None).await {
+        Ok(bytes) => embed(&bytes),
+        Err(err) => {
+            tracing::info!(
+                "[img] {}: couldn't fetch a photo to keep: {err}",
+                crate::telemetry::host_of(url)
+            );
+            None
+        }
+    }
+}
+
 /// Decodes with the size guards and applies EXIF orientation.
 fn decode(bytes: &[u8]) -> Result<DynamicImage, String> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
@@ -682,6 +734,26 @@ mod tests {
         );
         assert!(decode_data_uri("data:text/plain;base64,aGk=").is_err());
         assert!(decode_data_uri("data:image/svg+xml,<svg/>").is_err());
+    }
+
+    #[test]
+    fn only_jpeg_png_and_webp_photos_are_kept_in_a_recipe() {
+        let png = png(4, 4);
+        let uri = embed(&png).unwrap();
+        assert!(uri.starts_with("data:image/png;base64,"));
+        assert!(is_embedded_photo(&uri));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        // Labelled as one of the three, and really one of them (the label may be off)
+        assert!(is_embedded_photo(&format!("data:image/jpeg;base64,{b64}")));
+        assert!(!is_embedded_photo(&format!("data:image/gif;base64,{b64}")));
+        assert!(!is_embedded_photo(&format!("data:text/html;base64,{b64}")));
+        assert!(!is_embedded_photo("data:image/png;base64,AA"));
+        assert!(!is_embedded_photo("data:image/svg+xml;base64,PHN2Zy8+"));
+        assert!(!is_embedded_photo("https://example.com/a.png"));
+        assert!(!is_embedded_photo("javascript:alert(1)"));
+        assert_eq!(embed(b"<svg/>"), None);
+        let webp = resize_to_webp(&png, 160).unwrap();
+        assert!(embed(&webp).unwrap().starts_with("data:image/webp;base64,"));
     }
 
     #[test]

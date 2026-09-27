@@ -4963,3 +4963,190 @@ async fn a_big_shared_book_says_it_shows_the_first_500() {
     assert_eq!(doc["cookbooks"][0]["recipeCount"], 501);
     assert_eq!(doc["note"], "Showing the first 500 recipes");
 }
+
+#[tokio::test]
+async fn photos_kept_in_a_recipe_survive_shares_backups_and_json_files() {
+    use base64::Engine;
+    let photo = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png_bytes(64, 40))
+    );
+    let a = TestApp::new(None);
+    let (_, r) = a
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Photo Pie", None, "")),
+        )
+        .await;
+    let id = r["id"].as_i64().unwrap();
+    set_image(&a, id, &photo);
+    let image_of = |t: &TestApp, id: &Value| -> String {
+        t.state
+            .db
+            .lock()
+            .query_row(
+                "SELECT image FROM recipes WHERE id = ?1",
+                [id.as_i64().unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+
+    // A backup and the recipe's own .json read back with the photo, as it was
+    for uri in [
+        "/api/export",
+        &format!("/api/recipes/{id}/export?format=json"),
+    ] {
+        let (_, _, file) = a.send(get(uri)).await;
+        let c = TestApp::new(None);
+        let got = import_file_json(&c, &file).await;
+        assert_eq!(got["created"].as_array().unwrap().len(), 1, "{uri}: {got}");
+        assert_eq!(image_of(&c, &got["created"][0]["id"]), photo, "{uri}");
+    }
+
+    // A share's export links to the share's copy of the photo instead of carrying it
+    let (_, s) = a
+        .json("POST", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    let (_, _, export) = a
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s["url"].as_str().unwrap())
+        )))
+        .await;
+    let export: Value = serde_json::from_str(&export).unwrap();
+    let linked = export["recipes"][0]["image"].as_str().unwrap();
+    assert!(
+        linked.contains("/img/1200?v=") && !linked.contains("data:"),
+        "{linked}"
+    );
+
+    // Another Crumb saving the share keeps the photo itself (the share can be stopped)
+    let origin = serve_app(&a).await;
+    let link = format!("{origin}{}", share_path(s["url"].as_str().unwrap()));
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let kept = image_of(&b, &saved["id"]);
+    assert!(kept.starts_with("data:image/webp;base64,"), "{kept}");
+    let (status, _, _) = send_raw(
+        &b,
+        get(&format!("/img/{}/320", saved["id"].as_i64().unwrap())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // So does saving a shared cookbook holding it
+    let (_, book) = a
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Pies"})))
+        .await;
+    a.json(
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", book["id"]),
+        Some(json!({"recipeIds": [id]})),
+    )
+    .await;
+    let (_, bs) = a
+        .json(
+            "POST",
+            &format!("/api/cookbooks/{}/share", book["id"]),
+            None,
+        )
+        .await;
+    let book_link = format!("{origin}{}", book_path(bs["url"].as_str().unwrap()));
+    let e = TestApp::new(None);
+    let (status, saved) = e
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": book_link})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, got) = e
+        .json(
+            "GET",
+            &format!("/api/cookbooks/{}", saved["cookbook"]["id"]),
+            None,
+        )
+        .await;
+    let kept = image_of(&e, &got["recipes"][0]["id"]);
+    assert!(kept.starts_with("data:image/webp;base64,"), "{kept}");
+
+    // Sharing it on from there links to that box's own share, never to the first one
+    let (_, s2) = b
+        .json(
+            "POST",
+            &format!("/api/recipes/{}/share", saved_id(&b)),
+            None,
+        )
+        .await;
+    let (_, _, export) = b
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s2["url"].as_str().unwrap())
+        )))
+        .await;
+    let export: Value = serde_json::from_str(&export).unwrap();
+    let linked = export["recipes"][0]["image"].as_str().unwrap();
+    assert!(!linked.contains(&token_of(&link)), "{linked}");
+    assert!(
+        linked.contains(&token_of(s2["url"].as_str().unwrap())),
+        "{linked}"
+    );
+}
+
+/// The id of the only recipe in a box.
+fn saved_id(t: &TestApp) -> i64 {
+    t.state
+        .db
+        .lock()
+        .query_row("SELECT id FROM recipes", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_share_photo_that_cant_be_had_is_dropped_not_kept_as_a_link() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let origin_slot = std::sync::Arc::new(std::sync::OnceLock::<String>::new());
+    let o = origin_slot.clone();
+    let token = "abcdefghijklmnopqrstuv";
+    let routes = axum::Router::new()
+        .route(
+            &format!("/s/{token}"),
+            route(|| async { Html(fake_share_page("/s/abcdefghijklmnopqrstuv/crumb.json")) }),
+        )
+        .route(
+            &format!("/s/{token}/crumb.json"),
+            route(move || {
+                let o = o.clone();
+                async move {
+                    let origin = o.get().unwrap();
+                    fake_export(
+                        "Gone Pie",
+                        "https://food.test/pie",
+                        &format!("{origin}/s/{token}/img/1200?v=1"),
+                    )
+                }
+            }),
+        );
+    let origin = serve(routes).await;
+    origin_slot.set(origin.clone()).unwrap();
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/{token}")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, got) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(got["image"], Value::Null, "{got}");
+}
