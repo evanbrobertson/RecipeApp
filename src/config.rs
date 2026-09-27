@@ -139,8 +139,24 @@ impl TypesafeConfig {
     }
 }
 
+/// How people sign in (`AUTH_MODE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMode {
+    /// One shared `APP_PASSWORD` (or none) for the one recipe box: the default.
+    Password,
+    /// Accounts with an email and password, in households (see `crate::accounts`).
+    Accounts,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// `AUTH_MODE`: `password` (the default) or `accounts`.
+    pub auth_mode: AuthMode,
+    /// With accounts, whether anyone may make an account (and a household of their own):
+    /// `SIGNUP=open`. Off by default: only the first account (the setup) is made.
+    pub open_signup: bool,
+    /// With accounts, where `accounts.db` is (next to the database). None = in memory.
+    pub accounts_db: Option<PathBuf>,
     /// Password for the web UI and the Claude connector. None = no auth (local dev only).
     pub app_password: Option<String>,
     /// The AI API, when a key is configured.
@@ -164,6 +180,9 @@ pub struct Config {
     /// Where resized recipe photos are kept (`img-cache/` next to the database).
     /// None = resize on every request.
     pub image_cache: Option<PathBuf>,
+    /// Where households other than the home one keep their databases (`households/` next
+    /// to the database). None = in memory.
+    pub households_dir: Option<PathBuf>,
     pub host: String,
     pub port: u16,
 }
@@ -171,6 +190,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            auth_mode: AuthMode::Password,
+            open_signup: false,
+            accounts_db: None,
             app_password: None,
             llm: None,
             suggest_model: None,
@@ -182,6 +204,7 @@ impl Default for Config {
             trust_proxy_headers: false,
             web_dist: PathBuf::from("web/dist"),
             image_cache: None,
+            households_dir: None,
             host: "0.0.0.0".into(),
             port: 3000,
         }
@@ -250,7 +273,23 @@ fn llm_from_env() -> Option<LlmConfig> {
 impl Config {
     pub fn from_env() -> Self {
         let d = Config::default();
+        let auth_mode = match env(&["AUTH_MODE"])
+            .map(|m| m.to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("password") => AuthMode::Password,
+            Some("accounts") => AuthMode::Accounts,
+            Some(other) => {
+                tracing::warn!("Unknown AUTH_MODE \"{other}\" (use password or accounts)");
+                AuthMode::Password
+            }
+        };
         Self {
+            auth_mode,
+            open_signup: env(&["SIGNUP"]).is_some_and(|v| v.eq_ignore_ascii_case("open")),
+            accounts_db: Some(crate::accounts::accounts_db_path(
+                &crate::db::database_path(),
+            )),
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),
@@ -262,6 +301,9 @@ impl Config {
             trust_proxy_headers: env(&["RAILWAY_ENVIRONMENT"]).is_some(),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),
             image_cache: Some(crate::db::image_cache_dir(&crate::db::database_path())),
+            households_dir: Some(crate::households::households_dir(
+                &crate::db::database_path(),
+            )),
             host: env(&["HOST"]).unwrap_or(d.host),
             port: env(&["PORT"])
                 .and_then(|p| p.parse().ok())
@@ -269,8 +311,13 @@ impl Config {
         }
     }
 
+    /// Whether signing in is needed: always with accounts, else when there's a password.
     pub fn auth_enabled(&self) -> bool {
-        self.app_password.is_some()
+        self.accounts() || self.app_password.is_some()
+    }
+
+    pub fn accounts(&self) -> bool {
+        self.auth_mode == AuthMode::Accounts
     }
 
     /// Public origin of the app, used for OAuth metadata and the connector URL.

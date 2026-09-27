@@ -2,7 +2,6 @@
 //! Add `https://<your-app>/mcp` as a custom connector in Claude.
 
 use axum::body::Bytes;
-use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
@@ -36,14 +35,15 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn handle(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     method: axum::http::Method,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let origin = state.config.public_origin(&headers);
 
-    if !crate::oauth::has_valid_access_token(&state, &headers) {
+    let household = crate::oauth::access_household(&state, &headers);
+    let Some(household) = household else {
         let mut res = (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "unauthorized", "error_description": "Connect this app to Claude to get a token"})),
@@ -55,7 +55,11 @@ async fn handle(
             res.headers_mut().insert(header::WWW_AUTHENTICATE, v);
         }
         return res;
-    }
+    };
+    let state = match state.for_household(household) {
+        Ok(state) => state,
+        Err(err) => return err.into_response(),
+    };
 
     // Stateless server: no standalone SSE stream or sessions to terminate
     if method != axum::http::Method::POST {

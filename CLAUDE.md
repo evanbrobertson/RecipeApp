@@ -45,6 +45,8 @@ src/
   lib.rs          # AppState, router, layers
   config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
+  households.rs   # One SQLite file per household; Scoped extractor gives a handler its household's state
+  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, sessions, share index); account_api.rs
   model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
@@ -92,6 +94,9 @@ web/src/
 - **Parallel builds:** `CRUMB_OUT_DIR=./dist-name bun run build` writes to its own folder (git-ignored).
 - **DB compatibility:** timestamps are unix seconds, JSON columns are text; the production DB on the
   Railway volume must keep working.
+- **Households:** handlers that touch recipes take `Scoped`, never `State<AppState>`: its `db` is the signed-in
+  household's file (`households/{id}/recipes.db`, or the original database for household 1). Anything cached in
+  memory or on disk per box must be keyed by `state.household`.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
