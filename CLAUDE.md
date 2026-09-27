@@ -17,7 +17,9 @@ in a clean UI. Also a remote MCP connector for Claude.
   HTML/microdata fallback, headless Chromium over CDP for sites that still block or need JavaScript
 - **Videos:** TikTok / Instagram Reels / YouTube Shorts links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
-  (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else
+  (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
+  `src/video_jobs.rs`: `VIDEO_WORKERS` at once (a heavy-work budget Chromium shares), `VIDEO_QUEUE_MAX` waiting,
+  429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job
 - **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
@@ -64,6 +66,7 @@ src/
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   video.rs        # Cooking videos: caption, else download + whisper transcript + frames for Wee Chef
+  video_jobs.rs   # Their queue: worker pool, bounded wait, job status for the Add box, heavy-work budget
   scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test

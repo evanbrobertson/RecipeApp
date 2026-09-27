@@ -6215,3 +6215,76 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
     assert_eq!(s["household"]["id"], bobs, "the same box as before");
 }
+
+#[tokio::test]
+async fn a_video_link_is_queued_and_polled() {
+    use crumb::video_jobs::{Limits, VideoJobs, WAIT_LIMIT};
+    let mut t = TestApp::new(None);
+    // The video pipeline stood in for: each job waits a moment, then saves a recipe
+    t.state.video_jobs = std::sync::Arc::new(VideoJobs::with_runner(
+        Limits {
+            workers: 1,
+            queue_max: 1,
+            wait_limit: WAIT_LIMIT,
+        },
+        |state, url| {
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let fields = crumb::model::RecipeFields {
+                    title: "Garlic noodles".into(),
+                    url: Some(url),
+                    ingredients: vec![crumb::model::Section::unnamed(vec!["noodles".into()])],
+                    ..Default::default()
+                };
+                crumb::recipes::create_recipe(&state.db.lock(), fields, "video")
+            })
+        },
+    ));
+    let video = |n: u32| json!({"url": format!("https://www.tiktok.com/@chef/video/{n}")});
+
+    let (status, first) = t.json("POST", "/api/recipes/import", Some(video(1))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = first["jobId"].as_str().unwrap().to_string();
+    assert_eq!(first["status"], "queued");
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let (_, running) = t
+        .json("GET", &format!("/api/import/jobs/{job}"), None)
+        .await;
+    assert_eq!(running["status"], "running");
+
+    // One more may wait; the next is refused at once, in the API's error shape
+    let (status, second) = t.json("POST", "/api/recipes/import", Some(video(2))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(second["position"], 1);
+    let (status, full) = t.json("POST", "/api/recipes/import", Some(video(3))).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(full["statusCode"], 429);
+    assert!(full["message"].as_str().unwrap().contains("Wee Chef"));
+
+    // Other links never wait behind the videos
+    let (status, text) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"text": "Toast\n\nIngredients\n1 slice bread\n\nMethod\n1. Toast it."})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(text["isNew"], true);
+
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let (_, done) = t
+        .json("GET", &format!("/api/import/jobs/{job}"), None)
+        .await;
+    assert_eq!(done["status"], "done");
+    assert_eq!(done["recipe"]["title"], "Garlic noodles");
+    assert_eq!(done["recipe"]["isNew"], true);
+
+    // The saved video is found again without queueing
+    let (status, again) = t.json("POST", "/api/recipes/import", Some(video(1))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["isNew"], false);
+
+    let (status, _) = t.json("GET", "/api/import/jobs/nope", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

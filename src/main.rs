@@ -49,7 +49,12 @@ async fn serve() -> Result<(), BoxError> {
         }
     );
 
-    tracing::info!("{}", config.video.describe());
+    tracing::info!(
+        "{}; {} at once, {} may wait",
+        config.video.describe(),
+        config.video_workers,
+        config.video_queue_max
+    );
 
     let addr = format!("{}:{}", config.host, config.port);
     let service = NormalizePathLayer::trim_trailing_slash()

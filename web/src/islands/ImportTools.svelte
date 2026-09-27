@@ -8,7 +8,7 @@
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { api, errorMessage } from "../lib/api"
   import { bookImportedTitle } from "../lib/format"
-  import type { BookImported } from "../lib/recipe"
+  import { importRecipe } from "../lib/importLink"
   import { importPhotos, isPhoto, MAX_PHOTOS, shrink } from "../lib/photos"
   import { autosize } from "../lib/autosize"
   import { toast } from "../lib/toast"
@@ -46,12 +46,9 @@
         const job = jobs[cursor++]!
         job.state = "working"
         try {
-          const res = await api<{
-            id: number
-            title: string
-            isNew: boolean
-            cookbook?: BookImported
-          }>("/api/recipes/import", { method: "POST", body: { url: job.url } })
+          // A cooking video waits its turn on the server; its place shows as the message
+          const res = await importRecipe({ url: job.url }, (s) => (job.message = s))
+          job.message = undefined
           if (res.cookbook) {
             Object.assign(job, {
               state: res.cookbook.added ? "saved" : "duplicate",
@@ -215,7 +212,11 @@
             {#if job.state === "duplicate" && !job.href?.startsWith("/cookbooks/")}
               <p class="meta">Already saved</p>
             {/if}
-            {#if job.message}<p class="text-error text-[13px]">{job.message}</p>{/if}
+            {#if job.message}
+              <p class={["text-[13px]", job.state === "failed" ? "text-error" : "text-ink-muted"]}>
+                {job.message}
+              </p>
+            {/if}
           </div>
         </li>
       {/each}

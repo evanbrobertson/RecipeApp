@@ -289,6 +289,20 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
 - **Cooking videos:** a TikTok, Instagram Reel or YouTube Short is read from its caption when that's the whole
   recipe. Otherwise `yt-dlp` downloads it, whisper.cpp transcribes what the cook says on the server itself, and
   `ffmpeg` takes stills for on-screen text; Wee Chef reads all three together. Without an AI key only captions work.
+  Videos wait in one queue shared by every household: `VIDEO_WORKERS` of them are watched at once (each gets its
+  share of the cores), up to `VIDEO_QUEUE_MAX` more wait, and past that an import is refused with "try again in a
+  minute". One still waiting after 10 minutes gives up. The Add box shows its place ("Queued (2nd)…") and opens
+  the recipe when it's saved; links that aren't videos never wait behind them. Headless Chromium shares the same
+  budget, so the two never stack. Each video peaks at about 400 MB, so size the machine by workers:
+
+  | `VIDEO_WORKERS` | Memory to plan for | CPU |
+  | --------------- | ------------------ | --- |
+  | 1 (default)     | ≈ 0.5 GB           | 1–2 vCPU |
+  | 2               | ≈ 1 GB             | 2–4 vCPU |
+  | 4               | ≈ 2 GB             | 4–8 vCPU |
+
+  The `[video]` log lines and Sentry's `queue.process` spans show the wait and the queue's depth: when videos
+  often wait, raise `VIDEO_WORKERS` (and the plan's memory with it).
 - **Caching:** hashed assets under `/_astro/` are cached for a year and served precompressed (brotli/gzip).
   HTML is never cached.
 
@@ -349,6 +363,9 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |
+| `VIDEO_WORKERS`     | No         | Videos watched at once, default `1` (≈ 400 MB each at their peak; see the sizing table above) |
+| `VIDEO_QUEUE_MAX`   | No         | Videos that may wait beyond those, default 4 per worker; past that imports get a 429 |
+| `WHISPER_THREADS`   | No         | Threads per transcription, default the cores split between the workers (at most 8) |
 | `SENTRY_DSN`        | No         | Report errors and traces to Sentry (server and browser). Unset: nothing is sent |
 | `SENTRY_ENVIRONMENT` | No        | Environment name in Sentry, default `production` (the hosted app uses `dev` and `stable`) |
 | `SENTRY_RELEASE`    | No         | Release name; set in the Docker image by CI, default `crumb@<version>`        |
