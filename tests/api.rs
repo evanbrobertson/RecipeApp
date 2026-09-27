@@ -6077,9 +6077,50 @@ async fn fake_auth() -> (String, FakeAuth) {
             .body(axum::body::Body::from(r#"{"ok":true}"#))
             .unwrap()
     }
+    async fn providers() -> axum::Json<Value> {
+        axum::Json(json!({"providers": ["google", "apple"]}))
+    }
+    /// Bob's data and deletion (his own kitchen goes with him); anyone else is refused.
+    async fn account(
+        axum::extract::Path(action): axum::extract::Path<String>,
+        headers: axum::http::HeaderMap,
+        body: axum::body::Bytes,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let bob = headers
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|c| c.contains("crumb.session_token=bob"));
+        if !bob {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(json!({"message": "Not signed in"})),
+            )
+                .into_response();
+        }
+        let body: Value = serde_json::from_slice(&body).unwrap_or_default();
+        match action.as_str() {
+            "export" => axum::Json(json!({
+                "account": {"name": "Bob", "email": "bob@example.com"},
+                "households": [
+                    {"externalId": "org-bob", "name": "Bob's kitchen", "role": "owner"},
+                    {"externalId": "org-new", "name": "Never opened", "role": "member"},
+                ],
+            }))
+            .into_response(),
+            _ if body["password"] != "pw" => (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(json!({"message": "password: Incorrect password"})),
+            )
+                .into_response(),
+            _ => axum::Json(json!({"ok": true, "deletedHouseholds": ["org-bob"]})).into_response(),
+        }
+    }
     let routes = axum::Router::new()
         .route("/internal/session", get(session))
         .route("/internal/member", get(member))
+        .route("/internal/providers", get(providers))
+        .route("/internal/{action}", axum::routing::post(account))
         .route("/api/auth/{*rest}", any(better_auth))
         .with_state(fake.clone());
     (serve(routes).await, fake)
@@ -6214,6 +6255,483 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     assert_eq!(list[0]["title"], "Bob's Pie", "back in his own box");
     let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
     assert_eq!(s["household"]["id"], bobs, "the same box as before");
+}
+
+/// A stand-in for Google's token endpoint: the code is the ID token's claims (base64url
+/// JSON), so a test says who signs in. Answers 400 unless the secret and PKCE verifier came.
+async fn fake_google() -> String {
+    use axum::routing::post;
+    async fn token(body: axum::body::Bytes) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let form: std::collections::HashMap<String, String> =
+            serde_urlencoded::from_bytes(&body).unwrap();
+        if form.get("client_secret").map(String::as_str) != Some("g-secret")
+            || form.get("code_verifier").is_none_or(|v| v.len() < 43)
+            || form.get("grant_type").map(String::as_str) != Some("authorization_code")
+        {
+            return (StatusCode::BAD_REQUEST, "{\"error\":\"invalid_grant\"}").into_response();
+        }
+        axum::Json(json!({"id_token": format!("e30.{}.sig", form["code"])})).into_response()
+    }
+    serve(axum::Router::new().route("/token", post(token))).await
+}
+
+fn google_app(fake: &str, open_signup: bool) -> TestApp {
+    let fake = fake.to_string();
+    TestApp::with_config(move |c| {
+        c.auth_mode = crumb::config::AuthMode::Accounts;
+        c.open_signup = open_signup;
+        c.social = vec![crumb::social::Provider {
+            auth_url: format!("{fake}/auth"),
+            token_url: format!("{fake}/token"),
+            ..crumb::social::Provider::google("g-client", "g-secret")
+        }];
+    })
+}
+
+/// Signs in with (fake) Google as `sub` / `email`: starts with `start` (and `cookie`, when
+/// signed in), comes back, and answers (where it sent the browser, the new session cookie).
+async fn with_google(
+    t: &TestApp,
+    start: Value,
+    cookie: Option<&str>,
+    sub: &str,
+    email: &str,
+) -> (String, Option<String>) {
+    use base64::Engine;
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/social/google/start")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
+    }
+    let (status, headers, text) = t
+        .send(req.body(Body::from(start.to_string())).unwrap())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let social = headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let body: Value = serde_json::from_str(&text).unwrap();
+    let url = url::Url::parse(body["url"].as_str().unwrap()).unwrap();
+    let param = |k: &str| {
+        url.query_pairs()
+            .find(|(q, _)| q == k)
+            .map(|(_, v)| v.into_owned())
+            .unwrap()
+    };
+    assert_eq!(param("client_id"), "g-client");
+    assert_eq!(param("code_challenge_method"), "S256");
+    assert!(param("redirect_uri").ends_with("/api/auth/social/google/callback"));
+    let claims = json!({
+        "iss": "https://accounts.google.com", "aud": "g-client",
+        "exp": crumb::model::now_secs() + 600, "nonce": param("nonce"),
+        "sub": sub, "email": email, "email_verified": true, "name": "Carl Cook",
+    });
+    let code = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+    let q = serde_urlencoded::to_string([("code", code), ("state", param("state"))]).unwrap();
+    let cookies = match cookie {
+        Some(c) => format!("{social}; {c}"),
+        None => social,
+    };
+    let req = Request::builder()
+        .uri(format!("/api/auth/social/google/callback?{q}"))
+        .header(header::COOKIE, cookies)
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = t.send(req).await;
+    assert_eq!(status, StatusCode::FOUND);
+    let session = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap().to_string())
+        .find(|c| c.starts_with("crumb_session=") && !c.ends_with('='));
+    (
+        headers[header::LOCATION].to_str().unwrap().to_string(),
+        session,
+    )
+}
+
+#[tokio::test]
+async fn accounts_sign_in_with_google() {
+    let fake = fake_google().await;
+    let t = google_app(&fake, false);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    let (_, s) = t.json("GET", "/api/auth/status", None).await;
+    assert_eq!(s["providers"], json!(["google"]));
+
+    // Sign-up is closed: a stranger's Google account doesn't get in
+    let (to, session) = with_google(&t, json!({}), None, "g-bob", "bob@example.com").await;
+    assert_eq!((to.as_str(), session), ("/login?error=signup_closed", None));
+    // Nor does a Google account with Ann's address that she hasn't linked
+    let (to, session) = with_google(&t, json!({}), None, "g-eve", "ann@example.com").await;
+    assert_eq!((to.as_str(), session), ("/login?error=email_taken", None));
+
+    // Ann links hers (any address), then signs in with it
+    let (to, _) = with_google(
+        &t,
+        json!({"intent": "link"}),
+        Some(&ann),
+        "g-ann",
+        "ann.cook@gmail.test",
+    )
+    .await;
+    assert_eq!(to, "/more/account?linked=google");
+    let methods = signed(&t, &ann, "GET", "/api/auth/identities", None).await;
+    assert_eq!(methods["password"], true);
+    assert_eq!(methods["linked"][0]["provider"], "google");
+    assert_eq!(methods["linked"][0]["email"], "ann.cook@gmail.test");
+    assert_eq!(methods["available"], json!(["google"]));
+    let (to, session) = with_google(
+        &t,
+        json!({"next": "/recipes"}),
+        None,
+        "g-ann",
+        "ann.cook@gmail.test",
+    )
+    .await;
+    assert_eq!(to, "/recipes");
+    let s = signed(&t, &session.unwrap(), "GET", "/api/auth/status", None).await;
+    assert_eq!(s["user"]["email"], "ann@example.com");
+    // Nobody else can link the same Google account
+    let (_, cy, _) = auth_post(
+        &t,
+        "/api/auth/invite/accept",
+        json!({"token": invite(&t, &ann).await.0, "name": "Cy", "email": "cy@example.com", "password": "long enough"}),
+    )
+    .await;
+    let (to, _) = with_google(
+        &t,
+        json!({"intent": "link"}),
+        cy.as_deref(),
+        "g-ann",
+        "x@y.z",
+    )
+    .await;
+    assert_eq!(to, "/more/account?error=already_linked");
+
+    // An invite lets a new Google account in, straight into Ann's kitchen
+    let (token, _) = invite(&t, &ann).await;
+    let (to, carl) = with_google(
+        &t,
+        json!({"intent": "invite", "invite": token}),
+        None,
+        "g-carl",
+        "carl@example.com",
+    )
+    .await;
+    assert_eq!(to, "/");
+    let carl = carl.unwrap();
+    let s = signed(&t, &carl, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["household"]["id"], 1);
+    assert_eq!(s["user"]["name"], "Carl Cook");
+    // Used up
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/auth/social/google/start",
+            Some(json!({"intent": "invite", "invite": token})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::GONE);
+    // Carl has no password, so Google is his only way in and can't be unlinked
+    let methods = signed(&t, &carl, "GET", "/api/auth/identities", None).await;
+    assert_eq!(methods["password"], false);
+    let (status, _) = call(
+        &t,
+        "DELETE",
+        "/api/auth/identities/google",
+        None,
+        Some(&carl),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // Nor does his empty password let anyone in
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "carl@example.com", "password": ""}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK);
+    // Ann has a password, so she can
+    signed(&t, &ann, "DELETE", "/api/auth/identities/google", None).await;
+
+    // A state this browser didn't start is refused, and so is a used one
+    let req = Request::builder()
+        .uri("/api/auth/social/google/callback?code=x&state=made-up")
+        .header(header::COOKIE, "crumb_social=other")
+        .body(Body::empty())
+        .unwrap();
+    let (_, headers, _) = t.send(req).await;
+    assert_eq!(headers[header::LOCATION], "/login?error=expired");
+    // Apple's form post becomes the same GET
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/social/google/callback")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("code=c1&state=s1&extra=no"))
+        .unwrap();
+    let (status, headers, _) = t.send(req).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/api/auth/social/google/callback?code=c1&state=s1"
+    );
+    // Not set up: nothing to start
+    let (status, _) = t
+        .json("POST", "/api/auth/social/apple/start", Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn accounts_connected_apps_export_and_deletion() {
+    let t = accounts_app(None, true);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+    )
+    .await;
+    let (_, bob, _) = auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    let bob = bob.unwrap();
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+    )
+    .await;
+    let bobs = signed(&t, &bob, "GET", "/api/auth/status", None).await["household"]["id"]
+        .as_i64()
+        .unwrap();
+    // Bob joins Ann's kitchen too (and his session moves there)
+    let (token, _) = invite(&t, &ann).await;
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/auth/invite/accept",
+        Some(json!({"token": token})),
+    )
+    .await;
+
+    // Connected apps: each person sees their own
+    let claude = connect_claude(&t, &ann).await;
+    let apps = signed(&t, &ann, "GET", "/api/connections", None).await;
+    assert_eq!(apps.as_array().unwrap().len(), 1);
+    assert_eq!(apps[0]["name"], "Claude");
+    assert_eq!(
+        apps[0]["household"],
+        json!({"id": 1, "name": "Ann's kitchen"})
+    );
+    assert!(apps[0]["connectedAt"].as_i64().unwrap() > 0);
+    assert_eq!(
+        signed(&t, &bob, "GET", "/api/connections", None).await,
+        json!([])
+    );
+    let id = apps[0]["id"].as_str().unwrap().to_string();
+    let (status, _) = call(
+        &t,
+        "DELETE",
+        &format!("/api/connections/{id}"),
+        None,
+        Some(&bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not Bob's to disconnect");
+    assert_eq!(mcp_search(&t, &claude).await.0, StatusCode::OK);
+    signed(&t, &ann, "DELETE", &format!("/api/connections/{id}"), None).await;
+    assert_eq!(mcp_search(&t, &claude).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        signed(&t, &ann, "GET", "/api/connections", None).await,
+        json!([])
+    );
+    let (status, _) = t.json("GET", "/api/connections", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Bob's data: his account and both his households, recipes and all
+    let (status, headers, text) = t
+        .send(
+            Request::builder()
+                .uri("/api/account/export")
+                .header(header::COOKIE, &bob)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("crumb-account-")
+    );
+    let data: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(data["account"]["email"], "bob@example.com");
+    assert_eq!(data["signInMethods"]["password"], true);
+    let households = data["households"].as_array().unwrap();
+    assert_eq!(households.len(), 2);
+    let named = |name: &str| households.iter().find(|h| h["name"] == name).unwrap();
+    assert_eq!(
+        named("Bob's kitchen")["recipes"]["recipes"][0]["title"],
+        "Bob's Pie"
+    );
+    assert_eq!(named("Ann's kitchen")["role"], "member");
+    assert_eq!(
+        named("Ann's kitchen")["recipes"]["recipes"][0]["title"],
+        "Ann's Soup"
+    );
+    assert!(!data["devices"].as_array().unwrap().is_empty());
+
+    // Deleting needs the password
+    let (status, _) = call(
+        &t,
+        "POST",
+        "/api/account/delete",
+        Some(json!({"password": "wrong"})),
+        Some(&ann),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Ann goes: Bob keeps her kitchen, as its owner, recipes and all
+    let claude = connect_claude(&t, &ann).await;
+    signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/account/delete",
+        Some(json!({"password": "correct horse"})),
+    )
+    .await;
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some(&ann)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(mcp_search(&t, &claude).await.0, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ann@example.com", "password": "correct horse"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let h = signed(&t, &bob, "GET", "/api/auth/household", None).await;
+    assert_eq!(
+        (h["id"].as_i64(), h["role"].as_str()),
+        (Some(1), Some("owner"))
+    );
+    let list = signed(&t, &bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list[0]["title"], "Ann's Soup");
+
+    // Bob goes too: both households were his alone, so they go with him
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/account/delete",
+        Some(json!({"password": "another pass"})),
+    )
+    .await;
+    let home: i64 = t
+        .state
+        .db
+        .lock()
+        .query_row("SELECT count(*) FROM recipes", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(home, 0, "the home box is emptied");
+    let accounts = t.state.accounts.as_ref().unwrap();
+    assert_eq!(accounts.household_name(bobs).unwrap(), None);
+    assert!(accounts.needs_setup().unwrap(), "nobody is left");
+    let fresh = t.state.households.get(bobs).unwrap();
+    let left: i64 = fresh
+        .db
+        .lock()
+        .query_row("SELECT count(*) FROM recipes", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0, "Bob's own box is gone");
+}
+
+#[tokio::test]
+async fn hosted_accounts_export_and_delete_through_better_auth() {
+    let (url, _) = fake_auth().await;
+    let t = TestApp::with_config(|c| {
+        c.auth_mode = crumb::config::AuthMode::Hosted;
+        c.auth_service_url = Some(url);
+        c.auth_internal_secret = Some("shh".into());
+    });
+    let bob = "crumb.session_token=bob";
+    let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["providers"], json!(["google", "apple"]));
+    let bobs = s["household"]["id"].as_i64().unwrap();
+    signed(
+        &t,
+        bob,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+    )
+    .await;
+
+    // The service's account, with Bob's recipes added (a household never opened has none)
+    let data = signed(&t, bob, "GET", "/api/account/export", None).await;
+    assert_eq!(data["account"]["email"], "bob@example.com");
+    assert_eq!(data["households"][0]["id"], bobs);
+    assert_eq!(
+        data["households"][0]["recipes"]["recipes"][0]["title"],
+        "Bob's Pie"
+    );
+    assert_eq!(data["households"][1]["id"], Value::Null);
+    assert_eq!(data["households"][1].get("recipes"), None);
+
+    // The service's refusal comes back as it was
+    let (status, body) = call(
+        &t,
+        "POST",
+        "/api/account/delete",
+        Some(json!({"password": "no"})),
+        Some(bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["message"], "password: Incorrect password");
+    signed(
+        &t,
+        bob,
+        "POST",
+        "/api/account/delete",
+        Some(json!({"password": "pw"})),
+    )
+    .await;
+    let accounts = t.state.accounts.as_ref().unwrap();
+    assert_eq!(accounts.household_name(bobs).unwrap(), None);
+    assert_eq!(accounts.find_hosted_household("org-bob").unwrap(), None);
 }
 
 #[tokio::test]

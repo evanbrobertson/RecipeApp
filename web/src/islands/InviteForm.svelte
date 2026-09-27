@@ -1,12 +1,14 @@
 <script lang="ts">
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { onMount } from "svelte"
+  import SocialButtons from "../components/SocialButtons.svelte"
   import {
     type Accounts,
     type InvitePreview,
     type Status,
     accounts,
     authStatus,
+    socialError,
   } from "../lib/account"
   import { errorMessage } from "../lib/api"
   import { flash } from "../lib/toast"
@@ -28,7 +30,11 @@
   let email = $state("")
   let password = $state("")
   let loading = $state(false)
-  let error = $state("")
+  let error = $state(
+    socialError(
+      typeof location === "undefined" ? null : new URLSearchParams(location.search).get("error"),
+    ) ?? "",
+  )
   let checkEmail = $state(false)
 
   const hosted = $derived(status?.mode === "hosted")
@@ -111,7 +117,7 @@
   {#if signedIn}
     <p class="text-ink-muted mb-5 text-sm">
       Signed in as {status?.user?.email}. Your own recipes stay where they are; you can switch
-      between households on the More page.
+      between households under More → Account.
     </p>
     {#if error}<p class="text-error mb-3 text-sm" role="alert">{error}</p>{/if}
     <button
@@ -124,6 +130,11 @@
       Join {preview?.householdName ?? "the household"}
     </button>
   {:else}
+    <SocialButtons
+      mode={status!.mode}
+      providers={status?.providers}
+      to={{ intent: "invite", invite: token }}
+    />
     <div class="mb-4 flex gap-2" role="tablist" aria-label="Your account">
       <button
         type="button"

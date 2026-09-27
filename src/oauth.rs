@@ -71,6 +71,8 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/oauth/token", routing::post(token).options(preflight))
         .route("/oauth/revoke", routing::post(revoke).options(preflight))
+        .route("/api/connections", routing::get(connections))
+        .route("/api/connections/{client}", routing::delete(disconnect))
 }
 
 fn cors(mut res: Response) -> Response {
@@ -274,6 +276,8 @@ pub struct Owner {
     pub household_id: crate::households::HouseholdId,
 }
 
+/// Issues a token. `granted` is when the person approved the connection (now, for a code),
+/// carried from token to token so the connected apps list can say since when.
 fn issue(
     state: &AppState,
     kind: Kind,
@@ -281,13 +285,14 @@ fn issue(
     challenge: Option<&str>,
     redirect: Option<&str>,
     owner: Option<Owner>,
+    granted: i64,
 ) -> Result<String, AppError> {
     let token = random_token(32);
     let now = now_secs();
     state.db.lock().execute(
         "INSERT INTO oauth_tokens (hash, kind, client_id, code_challenge, redirect_uri, expires_at,
-           created_at, user_id, household_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           created_at, user_id, household_id, granted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             sha256_hex(&token),
             kind.as_str(),
@@ -297,7 +302,8 @@ fn issue(
             now + kind.lifetime(),
             now,
             owner.map(|o| o.user_id),
-            owner.map(|o| o.household_id)
+            owner.map(|o| o.household_id),
+            granted
         ],
     )?;
     Ok(token)
@@ -326,6 +332,7 @@ struct TokenRow {
     code_challenge: Option<String>,
     redirect_uri: Option<String>,
     owner: Option<Owner>,
+    granted: i64,
 }
 
 /// Looks up an unexpired token of the given kind and deletes it (single use).
@@ -333,7 +340,8 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
     let conn = state.db.lock();
     let row = conn
         .query_row(
-            "SELECT hash, client_id, code_challenge, redirect_uri, user_id, household_id
+            "SELECT hash, client_id, code_challenge, redirect_uri, user_id, household_id,
+                    coalesce(granted_at, created_at)
              FROM oauth_tokens WHERE hash = ?1 AND kind = ?2 AND expires_at > ?3",
             params![sha256_hex(token), kind.as_str(), now_secs()],
             |r| {
@@ -343,6 +351,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
                     code_challenge: r.get(2)?,
                     redirect_uri: r.get(3)?,
                     owner: owner_of(r.get(4)?, r.get(5)?),
+                    granted: r.get(6)?,
                 })
             },
         )
@@ -414,6 +423,7 @@ fn token_response(
     state: &AppState,
     client_id: &str,
     owner: Option<Owner>,
+    granted: i64,
 ) -> Result<Value, AppError> {
     // Opportunistically purge expired rows
     state.db.lock().execute(
@@ -421,10 +431,10 @@ fn token_response(
         [now_secs()],
     )?;
     Ok(json!({
-        "access_token": issue(state, Kind::Access, client_id, None, None, owner)?,
+        "access_token": issue(state, Kind::Access, client_id, None, None, owner, granted)?,
         "token_type": "Bearer",
         "expires_in": Kind::Access.lifetime(),
-        "refresh_token": issue(state, Kind::Refresh, client_id, None, None, owner)?,
+        "refresh_token": issue(state, Kind::Refresh, client_id, None, None, owner, granted)?,
         "scope": "recipes",
     }))
 }
@@ -473,7 +483,7 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "PKCE verification failed",
                 )));
             }
-            token_response(&state, &row.client_id, row.owner)
+            token_response(&state, &row.client_id, row.owner, row.granted)
         }
         Some("refresh_token") => {
             let Some(refresh) = get_str(&m, "refresh_token") else {
@@ -490,7 +500,7 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "Refresh token is invalid or expired",
                 )));
             };
-            token_response(&state, &row.client_id, row.owner)
+            token_response(&state, &row.client_id, row.owner, row.granted)
         }
         _ => {
             return no_store(cors(
@@ -519,6 +529,113 @@ async fn revoke(State(state): State<AppState>, headers: HeaderMap, body: Bytes) 
         );
     }
     cors(Json(json!({})).into_response())
+}
+
+// ─── Connected apps ─────────────────────────────────────────────────────────
+
+/// Which connectors a request may see and disconnect: with accounts, the signed-in
+/// person's (`user_id = ?`); with one password, the box's (no owner). None: signed out.
+fn whose(state: &AppState, signed: Option<&crate::auth::SignedIn>) -> Option<Option<i64>> {
+    match (&state.accounts, signed) {
+        (None, _) => Some(None),
+        (Some(_), Some(s)) => Some(Some(s.0.user_id)),
+        (Some(_), None) => None,
+    }
+}
+
+/// The apps (Claude, mostly) connected to Crumb, one row per app and household: `[{id,
+/// name, household: {id, name} | null, connectedAt, renewedAt}]`, newest first.
+async fn connections(
+    State(state): State<AppState>,
+    signed: Option<axum::Extension<crate::auth::SignedIn>>,
+) -> Result<Json<Value>, AppError> {
+    let Some(user) = whose(&state, signed.as_deref()) else {
+        return Err(AppError::new(401, "Not signed in"));
+    };
+    Ok(Json(json!(connected_apps(&state, user)?)))
+}
+
+/// The apps connected for a person (None: the one-password box), as [`connections`] lists them.
+pub fn connected_apps(state: &AppState, user: Option<i64>) -> Result<Vec<Value>, AppError> {
+    type Row = (String, Option<String>, Option<i64>, i64, i64);
+    let rows: Vec<Row> = {
+        let conn = state.households.home().db.lock();
+        let mut stmt = conn.prepare(
+            "SELECT t.client_id, c.name, t.household_id,
+                    min(coalesce(t.granted_at, t.created_at)), max(t.created_at)
+             FROM oauth_tokens t LEFT JOIN oauth_clients c ON c.id = t.client_id
+             WHERE t.kind IN ('access', 'refresh') AND t.expires_at > ?1
+               AND t.user_id IS ?2
+             GROUP BY t.client_id, t.household_id
+             ORDER BY 4 DESC, t.client_id",
+        )?;
+        stmt.query_map(params![now_secs(), user], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, household, connected, renewed)| {
+            let household = household.map(|h| {
+                let name = state
+                    .accounts
+                    .as_ref()
+                    .and_then(|a| a.household_name(h).ok().flatten());
+                json!({"id": h, "name": name})
+            });
+            json!({
+                "id": id,
+                "name": name.filter(|n| !n.is_empty()).unwrap_or_else(|| "An app".into()),
+                "household": household,
+                "connectedAt": connected,
+                "renewedAt": renewed,
+            })
+        })
+        .collect())
+}
+
+/// Disconnects an app: every token it holds for this person (or, with one password, the
+/// box) stops working at once. It has to be approved again to reconnect.
+async fn disconnect(
+    State(state): State<AppState>,
+    signed: Option<axum::Extension<crate::auth::SignedIn>>,
+    axum::extract::Path(client): axum::extract::Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let Some(user) = whose(&state, signed.as_deref()) else {
+        return Err(AppError::new(401, "Not signed in"));
+    };
+    let n = state.db.lock().execute(
+        "DELETE FROM oauth_tokens WHERE client_id = ?1 AND user_id IS ?2",
+        params![client, user],
+    )?;
+    if n == 0 {
+        return Err(AppError::not_found("That app isn't connected"));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Deletes every connector token a person approved (their account is going).
+pub fn forget_user(state: &AppState, user: i64) -> Result<(), AppError> {
+    state
+        .households
+        .home()
+        .db
+        .lock()
+        .execute("DELETE FROM oauth_tokens WHERE user_id = ?1", [user])?;
+    Ok(())
+}
+
+/// Deletes the connector tokens that work on a household (it's being deleted).
+pub fn forget_household(
+    state: &AppState,
+    household: crate::households::HouseholdId,
+) -> Result<(), AppError> {
+    state.households.home().db.lock().execute(
+        "DELETE FROM oauth_tokens WHERE household_id = ?1",
+        [household],
+    )?;
+    Ok(())
 }
 
 // ─── Consent screen ─────────────────────────────────────────────────────────
@@ -740,6 +857,7 @@ async fn authorize(
                 Some(&params.code_challenge),
                 Some(&params.redirect_uri),
                 owner,
+                now_secs(),
             ) {
                 Ok(code) => code,
                 Err(err) => return err.into_response(),

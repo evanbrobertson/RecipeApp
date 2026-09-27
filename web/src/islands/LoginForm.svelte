@@ -1,8 +1,9 @@
 <script lang="ts">
   import KeyRound from "@lucide/svelte/icons/key-round"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
-  import { onMount, tick } from "svelte"
-  import { type Status, accounts as client, authStatus } from "../lib/account"
+import { onMount, tick } from "svelte"
+  import SocialButtons from "../components/SocialButtons.svelte"
+  import { type Status, accounts as client, authStatus, socialError } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
 
   /**
@@ -18,7 +19,12 @@
   let password = $state("")
   let appPassword = $state("")
   let loading = $state(false)
-  let error = $state("")
+  /** A Google or Apple sign-in that came back with an error says why. */
+  let error = $state(
+    socialError(
+      typeof location === "undefined" ? null : new URLSearchParams(location.search).get("error"),
+    ) ?? "",
+  )
   /** Hosted, with email: the new account must confirm its address first. */
   let checkEmail = $state(false)
 
@@ -62,10 +68,14 @@
     passkeys!.signIn().then(signedIn, failed)
   }
 
-  function goNext() {
+  /** Where to go once signed in: only same-origin paths ("//host" would be an open redirect). */
+  function nextPath() {
     const target = new URLSearchParams(location.search).get("next") ?? "/"
-    // Only allow same-origin paths ("//host" would be an open redirect)
-    location.href = target.startsWith("/") && !target.startsWith("//") ? target : "/"
+    return target.startsWith("/") && !target.startsWith("//") ? target : "/"
+  }
+
+  function goNext() {
+    location.href = nextPath()
   }
 
   async function submit(e: SubmitEvent) {
@@ -112,6 +122,13 @@
   </p>
 {:else}
 <p class="text-ink-muted mb-5">{intro}</p>
+{#if status && accounts && kind !== "setup"}
+  <SocialButtons
+    mode={status.mode}
+    providers={status.providers}
+    to={{ intent: "login", next: nextPath() }}
+  />
+{/if}
 <form class="space-y-4" onsubmit={submit}>
   {#if kind !== "login"}
     <div>

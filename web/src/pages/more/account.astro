@@ -1,0 +1,23 @@
+---
+import Icon from "../../components/Icon.astro"
+import { ArrowLeft } from "lucide"
+import Layout from "../../layouts/Layout.astro"
+import AccountPage from "../../islands/AccountPage.svelte"
+---
+
+<Layout title="Account" section="more">
+  <div class="mx-auto flex max-w-[600px] flex-col gap-8">
+    <div>
+      <a href="/more" class="btn btn-ghost mb-3 -ml-3 px-3"><Icon icon={ArrowLeft} /> More</a>
+      <h1 class="page-title">Account</h1>
+      <p class="text-ink-muted mt-2">How you sign in, your household and connected apps.</p>
+    </div>
+
+    <AccountPage client:only="svelte">
+      <div slot="fallback" class="space-y-8">
+        <div class="skeleton rounded-ui h-40"></div>
+        <div class="skeleton rounded-ui h-28"></div>
+      </div>
+    </AccountPage>
+  </div>
+</Layout>

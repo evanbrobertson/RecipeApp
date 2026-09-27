@@ -7,8 +7,10 @@ import { Database } from "bun:sqlite"
 import { timingSafeEqual } from "node:crypto"
 import { getMigrations } from "better-auth/db/migration"
 import { type Auth, authOptions, createAuth } from "./auth"
+import { deleteAccount, exportAccount } from "./account"
 import { crumbSession, isMember } from "./kitchen"
 import { type Mailer, mailerFromEnv } from "./mailer"
+import { type Social, socialFromEnv } from "./social"
 
 export type AppOptions = {
   dbPath: string
@@ -16,12 +18,19 @@ export type AppOptions = {
   secret: string
   internalSecret: string
   mailer: Mailer
+  social?: Social
 }
 
 export async function createApp(opts: AppOptions) {
   const db = new Database(opts.dbPath, { create: true })
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")
-  const options = { db, baseURL: opts.baseURL, secret: opts.secret, mailer: opts.mailer }
+  const options = {
+    db,
+    baseURL: opts.baseURL,
+    secret: opts.secret,
+    mailer: opts.mailer,
+    social: opts.social,
+  }
   // Better Auth owns this database's schema: create and add what's missing on every start
   const { runMigrations } = await getMigrations(authOptions(options))
   await runMigrations()
@@ -42,7 +51,7 @@ async function handle(auth: Auth, opts: AppOptions, req: Request): Promise<Respo
   if (url.pathname.startsWith("/internal/")) {
     if (!allowed(req, opts.internalSecret)) return new Response("Forbidden", { status: 403 })
     try {
-      return await internal(auth, url, req)
+      return await internal(auth, opts, url, req)
     } catch (err) {
       console.error("[internal]", err)
       return Response.json({ message: "Couldn't check the session" }, { status: 500 })
@@ -51,8 +60,24 @@ async function handle(auth: Auth, opts: AppOptions, req: Request): Promise<Respo
   return new Response("Not found", { status: 404 })
 }
 
-async function internal(auth: Auth, url: URL, req: Request): Promise<Response> {
+async function internal(
+  auth: Auth,
+  opts: AppOptions,
+  url: URL,
+  req: Request,
+): Promise<Response> {
   switch (url.pathname) {
+    case "/internal/providers":
+      return Response.json({ providers: opts.social?.ids ?? [] })
+    // The browser's cookies, forwarded: everything kept about who they're signed in as
+    case "/internal/export":
+      return await exportAccount(auth, req.headers)
+    // The same, and `{password}`: deletes them (see account.ts)
+    case "/internal/delete-account": {
+      const body = (await req.json().catch(() => ({}))) as { password?: unknown }
+      const password = typeof body.password === "string" ? body.password : ""
+      return await deleteAccount(auth, req.headers, password)
+    }
     // The browser's cookies, forwarded: who they're signed in as, and where (`?create=0`:
     // without making a kitchen for someone in no household yet)
     case "/internal/session": {
@@ -89,6 +114,7 @@ if (import.meta.main) {
     secret: required("BETTER_AUTH_SECRET"),
     internalSecret: required("AUTH_INTERNAL_SECRET"),
     mailer: mailerFromEnv(),
+    social: socialFromEnv(),
   })
   const server = Bun.serve({
     hostname: process.env.HOST ?? "::",

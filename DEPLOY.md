@@ -91,6 +91,8 @@ private network; don't give it a public domain.
    | `AUTH_INTERNAL_SECRET` | Another long random secret, also set on Crumb's service                  |
    | `EMAIL_FROM`           | Optional. The sender, e.g. `Crumb <hello@crumb.example.com>`             |
    | `SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Optional. Amazon SES; with them, emails are sent and new accounts confirm their email |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional. Sign in with Google; redirect URL `{SITE_URL}/api/auth/callback/google` |
+   | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | Optional. Sign in with Apple (Services ID, team, key id, `.p8` PEM); redirect URL `{SITE_URL}/api/auth/callback/apple` |
 
 4. **On Crumb's service**, set `AUTH_MODE=hosted`, `AUTH_SERVICE_URL=http://crumb-auth.railway.internal:3100`
    and the same `AUTH_INTERNAL_SECRET`. Crumb's own volume keeps each household's recipes

@@ -13,7 +13,7 @@
   import UserMinus from "@lucide/svelte/icons/user-minus"
   import UserPlus from "@lucide/svelte/icons/user-plus"
   import UserRound from "@lucide/svelte/icons/user-round"
-  import { onMount } from "svelte"
+  import { type Snippet, onMount } from "svelte"
   import {
     type Accounts,
     type Device,
@@ -32,7 +32,9 @@
   /**
    * With accounts (self-hosted or hosted): who's signed in and their devices, and their
    * household: its members, invites, leaving, and the other households they're in.
+   * `children` goes between the two (the account page's sign-in methods).
    */
+  let { children }: { children?: Snippet } = $props()
   let status = $state<Status | null>(null)
   let client = $state<Accounts | null>(null)
   let devices = $state<Device[]>([])
@@ -321,6 +323,8 @@
       {/if}
     </div>
   </section>
+
+  {@render children?.()}
 
   {#if household}
     <section>

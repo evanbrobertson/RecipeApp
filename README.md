@@ -252,10 +252,13 @@ With `AUTH_MODE=accounts`, people sign in with their own email and password inst
 
 - The first visit shows a setup page. The first account owns the recipes that were already in Crumb. When `APP_PASSWORD` is set, the setup asks for it, so a stranger can't claim your box.
 - With `SIGNUP=open`, anyone can make an account, which gets a new, empty recipe box.
-- The More page lists the devices you're signed in on and lets you sign any of them out.
-- The owner invites people from the More page: **Invite someone** makes a link to copy and send (no email needed). A link works once, for a week, and can be cancelled. Whoever opens it makes an account, or signs in to theirs, and joins the household, even when sign-up is closed.
-- The More page also lists the household's members. The owner can rename the household and remove members; members can leave. Someone who is removed or leaves keeps their account and gets an empty box of their own. Someone in more than one household can switch between them.
+- Account settings live on **More → Account**: your sign-in methods, the devices you're signed in on (sign any of them out), your household, the apps connected to Crumb, your data, and signing out.
+- With Google or Apple keys set (see [Sign in with Google and Apple](#sign-in-with-google-and-apple)), people can also sign in with them, and link or unlink them from More → Account. A new Google or Apple sign-in whose email already has an account is refused: sign in with the password, then link it, so nobody takes over an account by its address.
+- **Download my data** gives one JSON file with the account, its devices and connected apps, and every household it's in with its recipes (in the backup format). **Delete account** needs the password (or, without one, the email typed out). A household you share passes to whoever joined it first; one that's only yours is deleted with its recipes. For the household that holds the original database, its recipes are emptied instead.
+- The owner invites people from More → Account: **Invite someone** makes a link to copy and send (no email needed). A link works once, for a week, and can be cancelled. Whoever opens it makes an account, or signs in to theirs, and joins the household, even when sign-up is closed.
+- More → Account also lists the household's members. The owner can rename the household and remove members; members can leave. Someone who is removed or leaves keeps their account and gets an empty box of their own. Someone in more than one household can switch between them.
 - Claude's connector is approved by a signed-in person and works on their household's box. It stops working when that person leaves the household. Connector tokens from before accounts keep working.
+- **Connected apps** (More → Account, in every mode) lists the apps connected to Crumb and disconnects any of them at once.
 - Share links work as before.
 
 The default is `AUTH_MODE=password`, which works as described in [Password](#password).
@@ -266,12 +269,20 @@ The default is `AUTH_MODE=password`, which works as described in [Password](#pas
 
 - Anyone can make an account. Everyone gets a household of their own the first time they open Crumb.
 - With an email provider (Amazon SES), new accounts confirm their email first, and people can reset their password by email. Without one, emails are written to the auth service's log instead.
-- Once signed in, people can add passkeys on the More page, then sign in with one from the sign-in page (or the email field's autofill) without a password. Adding one needs a sign-in from the last day.
-- The owner invites people by email from the More page. An invite works for a week, only for the address it was sent to.
-- Members, leaving, removing, switching households, devices and Claude's connector work as with [Accounts](#accounts).
+- Once signed in, people can add passkeys under More → Account, then sign in with one from the sign-in page (or the email field's autofill) without a password. Adding one needs a sign-in from the last day.
+- The owner invites people by email from More → Account. An invite works for a week, only for the address it was sent to.
+- Members, leaving, removing, switching households, devices, Google and Apple, your data, deleting an account and Claude's connector work as with [Accounts](#accounts). Deleting an account with no password needs a sign-in from the last day.
 - The browser only talks to the Rust server, which passes `/api/auth/*` to the auth service. Only the Rust server can reach the service.
 
 For how to deploy it, refer to [DEPLOY.md](./DEPLOY.md#hosted-edition).
+
+### Sign in with Google and Apple
+
+With accounts or the hosted edition, set these to offer **Continue with Google** and **Continue with Apple** (hosted: on the auth service):
+
+- **Google:** make an OAuth client (web application) in Google Cloud and set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+- **Apple:** in your Apple developer account, make a Services ID with Sign in with Apple, and a key for it. Set `APPLE_CLIENT_ID` (the Services ID), `APPLE_TEAM_ID`, `APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` (the `.p8` file's contents; `\n` for newlines is fine). Crumb signs Apple's short-lived client secret with the key itself.
+- Register the redirect URL with each: `{SITE_URL}/api/auth/social/google/callback` (and `/apple/`) with accounts, `{SITE_URL}/api/auth/callback/google` (and `/apple`) hosted.
 
 ### Self-hosting
 
@@ -343,6 +354,8 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 | `AUTH_SERVICE_URL`  | Hosted     | The auth service's private URL, e.g. `http://crumb-auth.railway.internal:3100` |
 | `AUTH_INTERNAL_SECRET` | Hosted  | A long random secret shared with the auth service                              |
 | `HOSTED_HOME_OWNER` | No         | Hosted: the email whose household gets the recipes already in `DATABASE_PATH` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | No | Accounts: Sign in with Google (hosted: set on the auth service) |
+| `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | No | Accounts: Sign in with Apple (hosted: set on the auth service) |
 | `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `ANTHROPIC_API_KEY` | No         | Turns on Wee Chef (reads pasted text, files and photos, writes "Try next" blurbs and ideas) |
