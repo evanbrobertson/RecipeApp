@@ -12,6 +12,8 @@
   import Moon from "@lucide/svelte/icons/moon"
   import PartyPopper from "@lucide/svelte/icons/party-popper"
   import Sun from "@lucide/svelte/icons/sun"
+  import Volume2 from "@lucide/svelte/icons/volume-2"
+  import VolumeOff from "@lucide/svelte/icons/volume-off"
   import X from "@lucide/svelte/icons/x"
   import { fly } from "svelte/transition"
   import Modal from "../components/Modal.svelte"
@@ -21,6 +23,7 @@
   import { findTimers, ingredientsForStep, parseIngredient, scaleIngredient } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
   import type { Recipe } from "../lib/recipe"
+  import { stepReader } from "../lib/speech.svelte"
   import { getScale, read, setScale, write } from "../lib/storage"
   import { timers as kitchenTimers } from "../lib/timers.svelte"
   import { screenAwake } from "../lib/wakelock.svelte"
@@ -72,6 +75,15 @@
     finished = false
     index = to
   }
+  // Read aloud: each new step is spoken as it comes up (and the current one when switched on)
+  const reader = stepReader()
+  $effect(() => {
+    if (!reader.on) return
+    if (finished) reader.speak("All done. Bon appétit!")
+    else if (step) reader.speak(`Step ${index + 1}. ${step.text}`)
+  })
+  $effect(() => reader.stop)
+
   const next = () => go(index + 1)
   function prev() {
     if (finished) finished = false
@@ -146,6 +158,20 @@
           {/if}
         </p>
       </div>
+      {#if reader.supported}
+        <button
+          type="button"
+          class="btn btn-lg btn-icon on-tile-btn"
+          aria-label="Read steps aloud"
+          aria-pressed={reader.on}
+          title={reader.on ? "Stop reading steps aloud" : "Read steps aloud"}
+          onclick={reader.toggle}
+        >
+          {#if reader.on}<Volume2 class="size-[22px]" />{:else}<VolumeOff
+              class="size-[22px]"
+            />{/if}
+        </button>
+      {/if}
       <button
         type="button"
         class="btn btn-lg btn-icon on-tile-btn"
