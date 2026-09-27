@@ -1,6 +1,7 @@
 <script lang="ts">
+  import KeyRound from "@lucide/svelte/icons/key-round"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
-  import { onMount } from "svelte"
+  import { onMount, tick } from "svelte"
   import { type Status, accounts as client, authStatus } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
 
@@ -23,6 +24,11 @@
 
   const accounts = $derived(status?.mode === "accounts" || status?.mode === "hosted")
   const hosted = $derived(status?.mode === "hosted")
+  /** Hosted sign-in: a passkey instead of the password, when the browser has them. */
+  const passkeys = $derived(
+    kind === "login" && hosted ? client("hosted").passkeys : undefined,
+  )
+  const withPasskey = $derived(!!passkeys?.supported())
   const query = typeof location === "undefined" ? "" : location.search
 
   onMount(async () => {
@@ -32,7 +38,29 @@
     else if (status.setupNeeded && kind !== "setup") location.replace(`/setup${query}`)
     else if (!status.setupNeeded && kind === "setup") location.replace(`/login${query}`)
     else if (kind === "signup" && !status.signupOpen) location.replace(`/login${query}`)
+    else if (passkeys && (await passkeys.autofill())) {
+      // Offer saved passkeys in the email field's autofill (it needs "webauthn" set first)
+      await tick()
+      // False when the button's ceremony took over: that one reports for itself
+      passkeys.signIn({ autofill: true }).then((ok) => ok && goNext(), failed)
+    }
   })
+
+  function signedIn(ok: boolean) {
+    if (ok) goNext()
+    else loading = false
+  }
+
+  function failed(err: unknown) {
+    error = errorMessage(err, "Couldn't sign in with that passkey")
+    loading = false
+  }
+
+  function signInWithPasskey() {
+    loading = true
+    error = ""
+    passkeys!.signIn().then(signedIn, failed)
+  }
 
   function goNext() {
     const target = new URLSearchParams(location.search).get("next") ?? "/"
@@ -108,7 +136,7 @@
         id="email"
         type="email"
         bind:value={email}
-        autocomplete="email"
+        autocomplete={withPasskey ? "email webauthn" : "email"}
         class="input input-lg"
         autofocus={kind === "login"}
         required
@@ -152,6 +180,17 @@
     {action}
   </button>
 </form>
+{#if withPasskey}
+  <button
+    type="button"
+    class="btn btn-outline btn-lg mt-3 w-full"
+    disabled={loading}
+    onclick={signInWithPasskey}
+  >
+    <KeyRound />
+    Sign in with a passkey
+  </button>
+{/if}
 {#if kind === "login" && hosted}
   <p class="mt-4 text-center">
     <a class="text-primary font-bold hover:underline" href="/reset-password">Forgot your password?</a>
