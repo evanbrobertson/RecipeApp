@@ -5,7 +5,7 @@ use serde_json::json;
 
 /// An error that becomes an h3-style JSON body:
 /// `{"statusCode":404,"statusMessage":"Recipe not found","message":"Recipe not found"}`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppError {
     pub status: StatusCode,
     pub message: String,

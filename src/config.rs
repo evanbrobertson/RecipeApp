@@ -195,6 +195,15 @@ pub struct Config {
     pub image_cache: Option<PathBuf>,
     /// yt-dlp, ffmpeg and whisper.cpp for recipes from cooking videos (`src/video.rs`).
     pub video: crate::video::VideoTools,
+    /// How many videos are downloaded and read at once (`VIDEO_WORKERS`, default 1). Each
+    /// needs about 400 MB at its peak, so this is what to raise on a bigger machine.
+    pub video_workers: usize,
+    /// How many more may wait for a worker (`VIDEO_QUEUE_MAX`, default 4 per worker); past
+    /// that an import is refused with a 429.
+    pub video_queue_max: usize,
+    /// Threads per whisper.cpp run (`WHISPER_THREADS`); default the cores split between
+    /// the workers.
+    pub whisper_threads: Option<usize>,
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
@@ -223,6 +232,9 @@ impl Default for Config {
             web_dist: PathBuf::from("web/dist"),
             image_cache: None,
             video: crate::video::VideoTools::default(),
+            video_workers: 1,
+            video_queue_max: 4,
+            whisper_threads: None,
             households_dir: None,
             host: "0.0.0.0".into(),
             port: 3000,
@@ -235,6 +247,21 @@ fn env(keys: &[&str]) -> Option<String> {
         .filter_map(|k| std::env::var(k).ok())
         .map(|v| v.trim().to_string())
         .find(|v| !v.is_empty())
+}
+
+/// A whole number of at least `min` (a typo is warned about and ignored).
+fn count(keys: &[&str], min: usize) -> Option<usize> {
+    let raw = env(keys)?;
+    match raw.parse::<usize>() {
+        Ok(n) if n >= min => Some(n),
+        _ => {
+            tracing::warn!(
+                "{} should be a whole number of at least {min}, not \"{raw}\"",
+                keys[0]
+            );
+            None
+        }
+    }
 }
 
 fn switched_off(key: &str) -> bool {
@@ -304,6 +331,7 @@ impl Config {
                 AuthMode::Password
             }
         };
+        let video_workers = count(&["VIDEO_WORKERS"], 1).unwrap_or(d.video_workers);
         Self {
             auth_mode,
             open_signup: env(&["SIGNUP"]).is_some_and(|v| v.eq_ignore_ascii_case("open")),
@@ -325,6 +353,9 @@ impl Config {
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),
             image_cache: Some(crate::db::image_cache_dir(&crate::db::database_path())),
             video: crate::video::VideoTools::from_env(),
+            video_workers,
+            video_queue_max: count(&["VIDEO_QUEUE_MAX"], 0).unwrap_or(4 * video_workers),
+            whisper_threads: count(&["WHISPER_THREADS"], 1),
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),

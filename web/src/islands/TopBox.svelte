@@ -99,7 +99,7 @@
   import { api, errorMessage } from "../lib/api"
   import { autosize } from "../lib/autosize"
   import { bookImportedTitle } from "../lib/format"
-  import type { BookImported } from "../lib/recipe"
+  import { importRecipe } from "../lib/importLink"
   import { importPhotos, isPhoto, MAX_PHOTOS, shrink, visionAvailable } from "../lib/photos"
   import { flash, toast } from "../lib/toast"
 
@@ -183,8 +183,8 @@
   )
   const summary = $derived.by(() => {
     if (saving && mode === "photo") return progress
-    if (saving && mode === "link" && isVideo)
-      return "Watching the video… this can take a minute or two"
+    if (saving && mode === "link" && (progress || isVideo))
+      return progress || "Watching the video… this can take a minute or two"
     if (saving) return mode === "link" ? "Fetching… tricky sites take ~20s" : "Reading…"
     if (mode === "photo")
       return pages.length ? detected.summary : `Up to ${MAX_PHOTOS} pages of one recipe`
@@ -384,10 +384,9 @@
   async function importBody(body: { url: string } | { text: string }, what: string) {
     saving = true
     try {
-      const res = await api<{ id: number; isNew: boolean; cookbook?: BookImported }>(
-        "/api/recipes/import",
-        { method: "POST", body },
-      )
+      progress = ""
+      // A cooking video waits its turn in the server's queue: say where it is
+      const res = await importRecipe(body, (s) => (progress = s))
       // Another Crumb's shared cookbook: every recipe in it, into a cookbook of that name
       if (res.cookbook) {
         flash({
@@ -398,6 +397,7 @@
         return
       }
       if (!res.isNew) flash({ title: "Already in your recipes" })
+      else if (res.fromVideo) flash({ title: "Saved from the video", tone: "success" })
       location.href = `/recipes/${res.id}`
     } catch (err) {
       toast({ title: `Couldn't ${what}`, description: errorMessage(err), tone: "error" })
