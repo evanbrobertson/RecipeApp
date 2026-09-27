@@ -27,6 +27,10 @@ use crate::model::now_secs;
 pub const SESSION_SECS: i64 = 60 * 60 * 24 * 90;
 /// A session's `last_seen_at` is only written this often, not on every request.
 const TOUCH_EVERY_SECS: i64 = 60 * 60;
+/// How long an invite link works.
+pub const INVITE_SECS: i64 = 60 * 60 * 24 * 7;
+/// Pending invites a household may have at once.
+const MAX_PENDING_INVITES: i64 = 20;
 const MIN_PASSWORD: usize = 8;
 const MAX_PASSWORD: usize = 256;
 
@@ -72,7 +76,31 @@ const SCHEMA: &str = "
   CREATE TABLE IF NOT EXISTS share_tokens (
     token_hash text PRIMARY KEY NOT NULL,
     household_id integer NOT NULL REFERENCES households(id) ON DELETE CASCADE
-  );";
+  );
+
+  -- One-time links an owner hands someone to join their household (only the hash is kept)
+  CREATE TABLE IF NOT EXISTS invitations (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    token_hash text NOT NULL,
+    household_id integer NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    role text NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+    created_by integer REFERENCES users(id) ON DELETE SET NULL,
+    created_at integer NOT NULL,
+    expires_at integer NOT NULL,
+    accepted_at integer,
+    accepted_by integer REFERENCES users(id) ON DELETE SET NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS invitations_token_unique ON invitations (token_hash);
+  CREATE INDEX IF NOT EXISTS invitations_household_idx ON invitations (household_id);
+
+  -- The hosted edition (AUTH_MODE=hosted): people are Better Auth users, known here only by
+  -- a local id for the connector tokens they approve
+  CREATE TABLE IF NOT EXISTS hosted_users (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    external_id text NOT NULL,
+    created_at integer NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS hosted_users_external_unique ON hosted_users (external_id);";
 
 /// A signed-in person, and the household the session works on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -97,6 +125,45 @@ pub struct SessionInfo {
     pub created_at: i64,
     pub last_seen_at: i64,
     pub current: bool,
+}
+
+/// Someone in a household, for the members list.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    pub user_id: i64,
+    pub name: String,
+    pub email: String,
+    pub role: String,
+    pub joined_at: i64,
+}
+
+/// A household someone belongs to, for switching between them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    pub id: HouseholdId,
+    pub name: String,
+    pub role: String,
+}
+
+/// An invite link that hasn't been used yet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Invite {
+    pub id: i64,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+}
+
+/// What an invite link's page shows before it's accepted.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvitePreview {
+    pub household_name: String,
+    pub invited_by: Option<String>,
+    pub expires_at: i64,
 }
 
 /// `accounts.db`, next to the home database.
@@ -132,6 +199,17 @@ impl Accounts {
              PRAGMA foreign_keys = ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
+        // Hosted households are Better Auth organizations: `external_id` is the organization's
+        let has_external: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('households') WHERE name = 'external_id'")?
+            .exists([])?;
+        if !has_external {
+            conn.execute_batch("ALTER TABLE households ADD COLUMN external_id text;")?;
+        }
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS households_external_unique
+               ON households (external_id) WHERE external_id IS NOT NULL;",
+        )?;
         Ok(Self(Arc::new(Mutex::new(conn))))
     }
 
@@ -412,6 +490,434 @@ impl Accounts {
             params![current.user_id, current.id],
         )?)
     }
+
+    /// A new invite link to the signed-in owner's household: its token (shown once, only
+    /// its hash is kept) and the invite.
+    pub fn create_invite(&self, signed: &Session) -> AppResult<(String, Invite)> {
+        require_owner(signed)?;
+        let token = random_token(24);
+        let now = now_secs();
+        let conn = self.lock();
+        // Used and expired links are only kept until the next one is made
+        conn.execute(
+            "DELETE FROM invitations WHERE household_id = ?1
+               AND (accepted_at IS NOT NULL OR expires_at <= ?2)",
+            params![signed.household_id, now],
+        )?;
+        let pending: i64 = conn.query_row(
+            "SELECT count(*) FROM invitations WHERE household_id = ?1",
+            [signed.household_id],
+            |r| r.get(0),
+        )?;
+        if pending >= MAX_PENDING_INVITES {
+            return Err(AppError::new(
+                429,
+                "There are a lot of unused invites. Cancel some first.",
+            ));
+        }
+        conn.execute(
+            "INSERT INTO invitations (token_hash, household_id, role, created_by, created_at,
+               expires_at)
+             VALUES (?1, ?2, 'member', ?3, ?4, ?5)",
+            params![
+                sha256_hex(&token),
+                signed.household_id,
+                signed.user_id,
+                now,
+                now + INVITE_SECS
+            ],
+        )?;
+        let invite = Invite {
+            id: conn.last_insert_rowid(),
+            created_by: Some(signed.name.clone()),
+            created_at: now,
+            expires_at: now + INVITE_SECS,
+        };
+        Ok((token, invite))
+    }
+
+    /// The owner's household's invite links that can still be used, newest first.
+    pub fn invites(&self, signed: &Session) -> AppResult<Vec<Invite>> {
+        require_owner(signed)?;
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, u.name, i.created_at, i.expires_at FROM invitations i
+             LEFT JOIN users u ON u.id = i.created_by
+             WHERE i.household_id = ?1 AND i.accepted_at IS NULL AND i.expires_at > ?2
+             ORDER BY i.created_at DESC, i.id DESC",
+        )?;
+        let rows = stmt.query_map(params![signed.household_id, now_secs()], |r| {
+            Ok(Invite {
+                id: r.get(0)?,
+                created_by: r.get(1)?,
+                created_at: r.get(2)?,
+                expires_at: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Stops an invite link of the owner's household. False when there's no such invite.
+    pub fn cancel_invite(&self, signed: &Session, id: i64) -> AppResult<bool> {
+        require_owner(signed)?;
+        let n = self.lock().execute(
+            "DELETE FROM invitations WHERE id = ?1 AND household_id = ?2 AND accepted_at IS NULL",
+            params![id, signed.household_id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// What an invite link opens, while it can still be used.
+    pub fn preview_invite(&self, token: &str) -> AppResult<Option<InvitePreview>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT h.name, u.name, i.expires_at FROM invitations i
+                 JOIN households h ON h.id = i.household_id
+                 LEFT JOIN users u ON u.id = i.created_by
+                 WHERE i.token_hash = ?1 AND i.accepted_at IS NULL AND i.expires_at > ?2",
+                params![sha256_hex(token), now_secs()],
+                |r| {
+                    Ok(InvitePreview {
+                        household_name: r.get(0)?,
+                        invited_by: r.get(1)?,
+                        expires_at: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Joins `user` to the household an invite link is for, using up the link. Someone
+    /// already in it just gets its id back (and the link stays unused).
+    pub fn accept_invite(&self, token: &str, user: i64) -> AppResult<HouseholdId> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let household = join_by_invite(&tx, token, user)?;
+        tx.commit()?;
+        Ok(household)
+    }
+
+    /// A new account that joins the household an invite link is for (and gets no household
+    /// of its own), whether or not sign-up is open: the account's id and the household's.
+    pub async fn sign_up_invited(
+        &self,
+        token: &str,
+        email: &str,
+        name: &str,
+        password: &str,
+    ) -> AppResult<(i64, HouseholdId)> {
+        let (email, name) = (valid_email(email)?, valid_name(name)?);
+        if self.preview_invite(token)?.is_none() {
+            return Err(invite_gone());
+        }
+        let hash = hash_password(password).await?;
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let user = insert_user(&tx, &email, &name, &hash, now_secs())?;
+        let household = join_by_invite(&tx, token, user)?;
+        tx.commit()?;
+        Ok((user, household))
+    }
+
+    /// Everyone in the signed-in household, owners first.
+    pub fn members(&self, signed: &Session) -> AppResult<Vec<Member>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT u.id, u.name, u.email, m.role, m.created_at FROM household_members m
+             JOIN users u ON u.id = m.user_id
+             WHERE m.household_id = ?1
+             ORDER BY m.role = 'owner' DESC, m.created_at, u.id",
+        )?;
+        let rows = stmt.query_map([signed.household_id], |r| {
+            Ok(Member {
+                user_id: r.get(0)?,
+                name: r.get(1)?,
+                email: r.get(2)?,
+                role: r.get(3)?,
+                joined_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The owner takes a member out of their household. The member's sessions there move to
+    /// another household of theirs (a new, empty one if they have none), and connectors they
+    /// approved for it stop working (see `oauth::access_household`).
+    pub fn remove_member(&self, signed: &Session, user: i64) -> AppResult<()> {
+        require_owner(signed)?;
+        if user == signed.user_id {
+            return Err(AppError::bad_request("You can't remove yourself"));
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let role: Option<String> = tx
+            .query_row(
+                "SELECT role FROM household_members WHERE household_id = ?1 AND user_id = ?2",
+                params![signed.household_id, user],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match role.as_deref() {
+            None => return Err(AppError::not_found("Member not found")),
+            Some("owner") => return Err(AppError::new(403, "An owner can't be removed")),
+            Some(_) => {}
+        }
+        move_out(&tx, user, signed.household_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A member leaves the signed-in household; their sessions carry on in another household
+    /// of theirs (a new, empty one if they have none), which is returned. Owners can't leave.
+    pub fn leave(&self, signed: &Session) -> AppResult<HouseholdId> {
+        if signed.role == "owner" {
+            return Err(AppError::new(
+                403,
+                "The owner can't leave their own household",
+            ));
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let next = move_out(&tx, signed.user_id, signed.household_id)?;
+        tx.commit()?;
+        Ok(next)
+    }
+
+    /// Every household a person is in, the first joined first.
+    pub fn memberships(&self, user: i64) -> AppResult<Vec<Membership>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT h.id, h.name, m.role FROM household_members m
+             JOIN households h ON h.id = m.household_id
+             WHERE m.user_id = ?1 ORDER BY m.created_at, h.id",
+        )?;
+        let rows = stmt.query_map([user], |r| {
+            Ok(Membership {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                role: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Points the signed-in session at another of the person's households.
+    pub fn switch_household(&self, signed: &Session, household: HouseholdId) -> AppResult<()> {
+        let n = self.lock().execute(
+            "UPDATE sessions SET household_id = ?1 WHERE id = ?2 AND EXISTS (
+               SELECT 1 FROM household_members WHERE user_id = ?3 AND household_id = ?1)",
+            params![household, signed.id, signed.user_id],
+        )?;
+        if n == 0 {
+            return Err(AppError::new(403, "Not a member of that household"));
+        }
+        Ok(())
+    }
+
+    /// The local id for a hosted (Better Auth) user, made on first sight.
+    pub fn hosted_user(&self, external: &str) -> AppResult<i64> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO hosted_users (external_id, created_at) VALUES (?1, ?2)",
+            params![external, now_secs()],
+        )?;
+        Ok(conn.query_row(
+            "SELECT id FROM hosted_users WHERE external_id = ?1",
+            [external],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// The local id (and so the recipe file) for a hosted household (a Better Auth
+    /// organization), made on first sight and renamed when its name changes. Household 1,
+    /// the database Crumb already had, only ever goes to the organization `claim_home` names
+    /// (see `Config::hosted_home_owner`); every other organization starts with an empty box.
+    pub fn hosted_household(
+        &self,
+        external: &str,
+        name: &str,
+        claim_home: bool,
+    ) -> AppResult<HouseholdId> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let now = now_secs();
+        // Keep id 1 from ever being handed out by AUTOINCREMENT
+        tx.execute(
+            "INSERT OR IGNORE INTO households (id, name, created_at) VALUES (?1, 'Home', ?2)",
+            params![HOME, now],
+        )?;
+        let found: Option<(HouseholdId, String)> = tx
+            .query_row(
+                "SELECT id, name FROM households WHERE external_id = ?1",
+                [external],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let id = match found {
+            Some((id, old)) => {
+                if old != name {
+                    tx.execute(
+                        "UPDATE households SET name = ?1 WHERE id = ?2",
+                        params![name, id],
+                    )?;
+                }
+                id
+            }
+            None => {
+                let claimed = claim_home
+                    && tx.execute(
+                        "UPDATE households SET external_id = ?1, name = ?2
+                         WHERE id = ?3 AND external_id IS NULL",
+                        params![external, name, HOME],
+                    )? > 0;
+                if claimed {
+                    HOME
+                } else {
+                    tx.execute(
+                        "INSERT INTO households (name, created_at, external_id) VALUES (?1, ?2, ?3)",
+                        params![name, now, external],
+                    )?;
+                    tx.last_insert_rowid()
+                }
+            }
+        };
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// The Better Auth ids behind a hosted user and household, to ask the auth service
+    /// whether one is still in the other. None when either isn't a hosted one.
+    pub fn hosted_ids(
+        &self,
+        user: i64,
+        household: HouseholdId,
+    ) -> AppResult<Option<(String, String)>> {
+        let conn = self.lock();
+        let user: Option<String> = conn
+            .query_row(
+                "SELECT external_id FROM hosted_users WHERE id = ?1",
+                [user],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let household: Option<String> = conn
+            .query_row(
+                "SELECT external_id FROM households WHERE id = ?1",
+                [household],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(user.zip(household))
+    }
+
+    /// Renames the signed-in owner's household.
+    pub fn rename_household(&self, signed: &Session, name: &str) -> AppResult<String> {
+        require_owner(signed)?;
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            return Err(AppError::bad_request("name: Name is required"));
+        }
+        if name.chars().count() > 80 {
+            return Err(AppError::bad_request(
+                "name: Name is too long (80 characters max)",
+            ));
+        }
+        self.lock().execute(
+            "UPDATE households SET name = ?1 WHERE id = ?2",
+            params![name, signed.household_id],
+        )?;
+        Ok(name)
+    }
+}
+
+fn require_owner(signed: &Session) -> AppResult<()> {
+    if signed.role != "owner" {
+        return Err(AppError::new(403, "Only the household's owner can do that"));
+    }
+    Ok(())
+}
+
+fn invite_gone() -> AppError {
+    AppError::new(
+        410,
+        "This invite has expired or was already used. Ask for a new one.",
+    )
+}
+
+/// Adds `user` to an invite's household and uses the invite up (see
+/// [`Accounts::accept_invite`]).
+fn join_by_invite(tx: &rusqlite::Transaction, token: &str, user: i64) -> AppResult<HouseholdId> {
+    let now = now_secs();
+    let found: Option<(i64, HouseholdId, String)> = tx
+        .query_row(
+            "SELECT id, household_id, role FROM invitations
+             WHERE token_hash = ?1 AND accepted_at IS NULL AND expires_at > ?2",
+            params![sha256_hex(token), now],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((invite, household, role)) = found else {
+        return Err(invite_gone());
+    };
+    let joined = tx.execute(
+        "INSERT OR IGNORE INTO household_members (household_id, user_id, role, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![household, user, role, now],
+    )?;
+    if joined > 0 {
+        tx.execute(
+            "UPDATE invitations SET accepted_at = ?1, accepted_by = ?2 WHERE id = ?3",
+            params![now, user, invite],
+        )?;
+    }
+    Ok(household)
+}
+
+/// Takes `user` out of `household`, moving their sessions there to another household of
+/// theirs, or a new one of their own so they can still sign in. Returns where they went.
+fn move_out(
+    tx: &rusqlite::Transaction,
+    user: i64,
+    household: HouseholdId,
+) -> AppResult<HouseholdId> {
+    tx.execute(
+        "DELETE FROM household_members WHERE household_id = ?1 AND user_id = ?2",
+        params![household, user],
+    )?;
+    let other: Option<HouseholdId> = tx
+        .query_row(
+            "SELECT household_id FROM household_members WHERE user_id = ?1
+             ORDER BY created_at, household_id LIMIT 1",
+            [user],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let next = match other {
+        Some(h) => h,
+        None => {
+            let name: String =
+                tx.query_row("SELECT name FROM users WHERE id = ?1", [user], |r| r.get(0))?;
+            let now = now_secs();
+            tx.execute(
+                "INSERT INTO households (name, created_at) VALUES (?1, ?2)",
+                params![household_name(&name), now],
+            )?;
+            let own = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO household_members (household_id, user_id, role, created_at)
+                 VALUES (?1, ?2, 'owner', ?3)",
+                params![own, user, now],
+            )?;
+            own
+        }
+    };
+    tx.execute(
+        "UPDATE sessions SET household_id = ?1 WHERE user_id = ?2 AND household_id = ?3",
+        params![next, user, household],
+    )?;
+    Ok(next)
 }
 
 fn insert_user(

@@ -146,6 +146,9 @@ pub enum AuthMode {
     Password,
     /// Accounts with an email and password, in households (see `crate::accounts`).
     Accounts,
+    /// The hosted edition: accounts and households (organizations) live in Better Auth,
+    /// the `auth/` service, which the server asks and proxies to (see `crate::hosted`).
+    Hosted,
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +160,16 @@ pub struct Config {
     pub open_signup: bool,
     /// With accounts, where `accounts.db` is (next to the database). None = in memory.
     pub accounts_db: Option<PathBuf>,
+    /// Hosted: the auth service's internal URL (`AUTH_SERVICE_URL`), e.g.
+    /// `http://crumb-auth.railway.internal:3100`.
+    pub auth_service_url: Option<String>,
+    /// Hosted: the secret shared with the auth service for its `/internal/*` endpoints
+    /// (`AUTH_INTERNAL_SECRET`).
+    pub auth_internal_secret: Option<String>,
+    /// Hosted: the email whose own household gets the database Crumb already had
+    /// (household 1) when it's first seen (`HOSTED_HOME_OWNER`). Unset, every household
+    /// starts empty and the old database is left alone.
+    pub hosted_home_owner: Option<String>,
     /// Password for the web UI and the Claude connector. None = no auth (local dev only).
     pub app_password: Option<String>,
     /// The AI API, when a key is configured.
@@ -195,6 +208,9 @@ impl Default for Config {
             auth_mode: AuthMode::Password,
             open_signup: false,
             accounts_db: None,
+            auth_service_url: None,
+            auth_internal_secret: None,
+            hosted_home_owner: None,
             app_password: None,
             llm: None,
             suggest_model: None,
@@ -282,8 +298,9 @@ impl Config {
         {
             None | Some("password") => AuthMode::Password,
             Some("accounts") => AuthMode::Accounts,
+            Some("hosted") => AuthMode::Hosted,
             Some(other) => {
-                tracing::warn!("Unknown AUTH_MODE \"{other}\" (use password or accounts)");
+                tracing::warn!("Unknown AUTH_MODE \"{other}\" (use password, accounts or hosted)");
                 AuthMode::Password
             }
         };
@@ -293,6 +310,9 @@ impl Config {
             accounts_db: Some(crate::accounts::accounts_db_path(
                 &crate::db::database_path(),
             )),
+            auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
+            auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),
+            hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),
@@ -317,11 +337,17 @@ impl Config {
 
     /// Whether signing in is needed: always with accounts, else when there's a password.
     pub fn auth_enabled(&self) -> bool {
-        self.accounts() || self.app_password.is_some()
+        self.auth_mode != AuthMode::Password || self.app_password.is_some()
     }
 
+    /// Self-hosted accounts (`AUTH_MODE=accounts`).
     pub fn accounts(&self) -> bool {
         self.auth_mode == AuthMode::Accounts
+    }
+
+    /// The hosted edition (`AUTH_MODE=hosted`).
+    pub fn hosted(&self) -> bool {
+        self.auth_mode == AuthMode::Hosted
     }
 
     /// Public origin of the app, used for OAuth metadata and the connector URL.

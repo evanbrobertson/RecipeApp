@@ -1,5 +1,5 @@
-# Pull request gates: the shared checks, plus a Docker build (no push) when the change
-# touches something only the image build exercises. See docs/RELEASING.md.
+# Pull request gates: the shared checks, plus Docker builds (no push) of the Crumb and auth
+# images when the change touches something only an image build exercises. See docs/RELEASING.md.
 name: PR
 
 on:
@@ -40,7 +40,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           files=$(git diff --name-only "$BASE...$HEAD")
-          if grep -qxE 'Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|web/package\.json|web/bun\.lock|web/astro\.config\.mjs' <<<"$files"; then
+          if grep -qxE 'Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|web/package\.json|web/bun\.lock|web/astro\.config\.mjs|\.github/workflows/pr\.yml' <<<"$files"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -56,3 +56,50 @@ jobs:
           provenance: false
           # Read master's layer cache; never write it from a pull request
           cache-from: type=gha,scope=image
+
+  docker-auth:
+    name: Auth image build (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # A quick build (Bun, no compile step); only when the service or this workflow changes
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE...$HEAD")
+          if grep -qE '^auth/|^\.github/workflows/pr\.yml$' <<<"$files"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Auth service unchanged; skipping its image build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: auth
+          push: false
+          provenance: false
+          # Load it, so the smoke test below can start it
+          load: true
+          tags: crumb-auth:pr
+          cache-from: type=gha,scope=auth-image
+      # The image starts, migrates an empty database and answers its health check
+      - if: steps.changed.outputs.build == 'true'
+        run: |
+          docker run -d --name auth -p 3100:3100 -e SITE_URL=http://localhost:3000 \
+            -e BETTER_AUTH_SECRET=ci-secret-ci-secret-ci-secret-ci-secret \
+            -e AUTH_INTERNAL_SECRET=ci -e AUTH_DB_PATH=/tmp/auth.db crumb-auth:pr
+          for _ in $(seq 30); do
+            curl -fsS http://localhost:3100/health && exit 0
+            sleep 1
+          done
+          docker logs auth
+          exit 1

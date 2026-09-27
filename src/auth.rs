@@ -128,7 +128,7 @@ const PUBLIC_PREFIXES: [&str; 6] = [
     "/mcp",
     "/s/",
 ];
-const PUBLIC_PATHS: [&str; 15] = [
+const PUBLIC_PATHS: [&str; 19] = [
     "/login",
     "/api/auth/login",
     // Accounts: first-run setup and sign-up (both refuse when they don't apply)
@@ -137,6 +137,12 @@ const PUBLIC_PATHS: [&str; 15] = [
     "/api/auth/status",
     "/api/auth/setup",
     "/api/auth/signup",
+    // Accounts: an invite link's page, and joining with it (signed in or not)
+    "/invite",
+    "/api/auth/invite/preview",
+    "/api/auth/invite/accept",
+    // Hosted: where a password reset email's link lands
+    "/reset-password",
     "/api/health",
     "/robots.txt",
     "/manifest.webmanifest",
@@ -182,11 +188,18 @@ impl axum::extract::FromRequestParts<AppState> for SignedIn {
     }
 }
 
-/// The live accounts session for a request's cookie (None without accounts).
-pub fn session(state: &AppState, headers: &HeaderMap) -> Option<crate::accounts::Session> {
+/// The live accounts session for a request's cookie (None without accounts): ours with
+/// `AUTH_MODE=accounts`, Better Auth's (see [`crate::hosted`]) with `hosted`.
+pub async fn session(state: &AppState, headers: &HeaderMap) -> Option<crate::accounts::Session> {
     let accounts = state.accounts.as_ref()?;
-    let token = cookie_value(headers, COOKIE)?;
-    match accounts.session(&token) {
+    let found = match &state.hosted {
+        Some(hosted) => hosted.session(accounts, headers).await,
+        None => {
+            let token = cookie_value(headers, COOKIE)?;
+            accounts.session(&token)
+        }
+    };
+    match found {
         Ok(found) => found,
         Err(err) => {
             tracing::warn!("[auth] couldn't read a session: {}", err.message);
@@ -196,9 +209,9 @@ pub fn session(state: &AppState, headers: &HeaderMap) -> Option<crate::accounts:
 }
 
 /// Whether the request is signed in, however this install signs people in.
-pub fn signed_in(state: &AppState, headers: &HeaderMap) -> bool {
+pub async fn signed_in(state: &AppState, headers: &HeaderMap) -> bool {
     if state.accounts.is_some() {
-        session(state, headers).is_some()
+        session(state, headers).await.is_some()
     } else {
         is_logged_in(&state.config, headers)
     }
@@ -224,7 +237,11 @@ pub async fn require_login(
 ) -> Response {
     let path = req.uri().path();
     if let Some(accounts) = &state.accounts {
-        if let Some(signed) = session(&state, req.headers()) {
+        // Hosted: public pages and Better Auth's routes never look the session up, since
+        // that makes a kitchen for someone in no household (who may be about to accept an
+        // invite instead). Handlers that want it ask for themselves.
+        let skip = state.hosted.is_some() && (is_public(path) || path.starts_with("/api/auth/"));
+        if !skip && let Some(signed) = session(&state, req.headers()).await {
             let scoped = match state.for_household(signed.household_id) {
                 Ok(scoped) => scoped,
                 Err(err) => return err.into_response(),
@@ -233,13 +250,14 @@ pub async fn require_login(
             req.extensions_mut().insert(SignedIn(signed));
             return next.run(req).await;
         }
-        if is_public(path) {
+        // Hosted: Better Auth's own routes (signing in, up, resets) check for themselves
+        if is_public(path) || (state.hosted.is_some() && path.starts_with("/api/auth/")) {
             return next.run(req).await;
         }
         if path.starts_with("/api/") {
             return AppError::new(401, "Not signed in").into_response();
         }
-        let page = if accounts.needs_setup().unwrap_or(false) {
+        let page = if state.hosted.is_none() && accounts.needs_setup().unwrap_or(false) {
             "/setup"
         } else {
             "/login"

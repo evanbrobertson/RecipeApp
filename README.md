@@ -253,10 +253,24 @@ With `AUTH_MODE=accounts`, people sign in with their own email and password inst
 - The first visit shows a setup page. The first account owns the recipes that were already in Crumb. When `APP_PASSWORD` is set, the setup asks for it, so a stranger can't claim your box.
 - With `SIGNUP=open`, anyone can make an account, which gets a new, empty recipe box.
 - The More page lists the devices you're signed in on and lets you sign any of them out.
-- Claude's connector is approved by a signed-in person and works on their household's box. Connector tokens from before accounts keep working.
+- The owner invites people from the More page: **Invite someone** makes a link to copy and send (no email needed). A link works once, for a week, and can be cancelled. Whoever opens it makes an account, or signs in to theirs, and joins the household, even when sign-up is closed.
+- The More page also lists the household's members. The owner can rename the household and remove members; members can leave. Someone who is removed or leaves keeps their account and gets an empty box of their own. Someone in more than one household can switch between them.
+- Claude's connector is approved by a signed-in person and works on their household's box. It stops working when that person leaves the household. Connector tokens from before accounts keep working.
 - Share links work as before.
 
 The default is `AUTH_MODE=password`, which works as described in [Password](#password).
+
+### Hosted edition
+
+`AUTH_MODE=hosted` is for running Crumb for many unrelated households. Accounts, sessions and households live in [Better Auth](https://www.better-auth.com), in a small service in [`auth/`](./auth) (Bun) with its own database, beside the Rust server. Households are Better Auth organizations; each one's recipes are still a separate SQLite file, so no request can reach another household's box.
+
+- Anyone can make an account. Everyone gets a household of their own the first time they open Crumb.
+- With an email provider (Amazon SES), new accounts confirm their email first, and people can reset their password by email. Without one, emails are written to the auth service's log instead.
+- The owner invites people by email from the More page. An invite works for a week, only for the address it was sent to.
+- Members, leaving, removing, switching households, devices and Claude's connector work as with [Accounts](#accounts).
+- The browser only talks to the Rust server, which passes `/api/auth/*` to the auth service. Only the Rust server can reach the service.
+
+For how to deploy it, refer to [DEPLOY.md](./DEPLOY.md#hosted-edition).
 
 ### Self-hosting
 
@@ -282,6 +296,7 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
 src/        Rust server (API, MCP, OAuth, scraper, importers, page serving)
 tests/      Rust integration tests
 web/        Astro frontend (pages, Svelte islands, styles, icons)
+auth/       Better Auth service for the hosted edition (Bun)
 ```
 
 ## Quick start
@@ -308,8 +323,11 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 | Variable            | Required   | Description                                                                   |
 | ------------------- | ---------- | ----------------------------------------------------------------------------- |
 | `APP_PASSWORD`      | Production | Password for the web app and for approving the Claude connector               |
-| `AUTH_MODE`         | No         | `password` (default): one shared password. `accounts`: email sign-in and households |
-| `SIGNUP`            | No         | With accounts, `open` lets anyone make an account. Off by default             |
+| `AUTH_MODE`         | No         | `password` (default): one shared password. `accounts`: email sign-in and households. `hosted`: the same through Better Auth (`auth/`) |
+| `SIGNUP`            | No         | With accounts, `open` lets anyone make an account. Off by default (invites still work) |
+| `AUTH_SERVICE_URL`  | Hosted     | The auth service's private URL, e.g. `http://crumb-auth.railway.internal:3100` |
+| `AUTH_INTERNAL_SECRET` | Hosted  | A long random secret shared with the auth service                              |
+| `HOSTED_HOME_OWNER` | No         | Hosted: the email whose household gets the recipes already in `DATABASE_PATH` |
 | `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `ANTHROPIC_API_KEY` | No         | Turns on Wee Chef (reads pasted text, files and photos, writes "Try next" blurbs and ideas) |

@@ -49,7 +49,8 @@ src/
   config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
   households.rs   # One SQLite file per household; Scoped extractor gives a handler its household's state
-  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, sessions, share index); account_api.rs
+  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, invites, sessions, share index); account_api.rs
+  hosted.rs       # AUTH_MODE=hosted: asks the Better Auth service (auth/) who's signed in, proxies /api/auth/*
   model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
@@ -65,12 +66,13 @@ src/
   video.rs        # Cooking videos: caption, else download + whisper transcript + frames for Wee Chef
   scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
 tests/api.rs      # Router integration tests against a temp DB
+auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
   islands/               # Svelte islands (one per interactive page/section)
   components/            # Shared Svelte + Astro components
-  lib/                   # api, storage, toast, timers, ingredients (scaling/mise), books
+  lib/                   # api, account (both account modes), storage, toast, timers, ingredients, books
 ```
 
 ## Key Patterns
@@ -101,6 +103,9 @@ web/src/
 - **Households:** handlers that touch recipes take `Scoped`, never `State<AppState>`: its `db` is the signed-in
   household's file (`households/{id}/recipes.db`, or the original database for household 1). Anything cached in
   memory or on disk per box must be keyed by `state.household`.
+- **Account modes:** `password` (one `APP_PASSWORD`), `accounts` (Rust-owned users, households, invite links) and
+  `hosted` (Better Auth in `auth/`, households = organizations, mapped to local ids in `accounts.db`). The web
+  talks to either through `web/src/lib/account.ts`; handlers get the signed-in user via `auth::session`/`SignedIn`.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400

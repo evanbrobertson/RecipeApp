@@ -5686,3 +5686,532 @@ async fn accounts_share_links_open_the_right_box_and_old_connectors_keep_working
     let (status, _, _) = t.send(get(&path)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// An owner's invite link, as `/api/auth/invites` hands it out: (its token, its id).
+async fn invite(t: &TestApp, owner: &str) -> (String, i64) {
+    let made = signed(t, owner, "POST", "/api/auth/invites", None).await;
+    let url = made["url"].as_str().unwrap();
+    let (_, token) = url.split_once("/invite#").expect("token in the fragment");
+    (token.to_string(), made["id"].as_i64().unwrap())
+}
+
+#[tokio::test]
+async fn accounts_invite_people_into_a_household() {
+    let t = accounts_app(None, false);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+    )
+    .await;
+
+    // Only signed-in owners make links; anyone can look one up
+    let (status, _) = t.json("POST", "/api/auth/invites", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (token, _) = invite(&t, &ann).await;
+    let (status, preview) = t
+        .json(
+            "POST",
+            "/api/auth/invite/preview",
+            Some(json!({"token": token})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["householdName"], "Ann's kitchen");
+    assert_eq!(preview["invitedBy"], "Ann");
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/auth/invite/preview",
+            Some(json!({"token": "made-up"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::GONE);
+
+    // Sign-up is closed, but an invite makes an account in Ann's household
+    let (status, bob, body) = auth_post(
+        &t,
+        "/api/auth/invite/accept",
+        json!({"token": token, "name": "Bob", "email": "bob@example.com", "password": "another pass"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let bob = bob.unwrap();
+    let list = signed(&t, &bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list[0]["title"], "Ann's Soup", "Bob sees the shared box");
+    let h = signed(&t, &bob, "GET", "/api/auth/household", None).await;
+    assert_eq!(h["role"], "member");
+    assert_eq!(h["members"].as_array().unwrap().len(), 2);
+    assert_eq!(h["members"][0]["name"], "Ann", "owner first");
+    assert_eq!(h["invites"], json!([]), "members don't see invites");
+    // One use only
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/invite/accept",
+        json!({"token": token, "name": "Eve", "email": "eve@example.com", "password": "sneaky pass"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::GONE);
+    // Members can't invite or remove
+    let (status, _) = call(&t, "POST", "/api/auth/invites", None, Some(&bob)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Someone with a box of their own joins with a second link and can switch between them
+    let open = accounts_app(None, true);
+    let (_, ann2, _) = auth_post(
+        &open,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann2 = ann2.unwrap();
+    let (_, cat, _) = auth_post(
+        &open,
+        "/api/auth/signup",
+        json!({"email": "cat@example.com", "name": "Cat", "password": "meow meow"}),
+    )
+    .await;
+    let cat = cat.unwrap();
+    let cats_own = signed(&open, &cat, "GET", "/api/auth/household", None).await["id"].clone();
+    let (token2, id2) = invite(&open, &ann2).await;
+    let (token3, _) = invite(&open, &ann2).await;
+    let pending = signed(&open, &ann2, "GET", "/api/auth/household", None).await;
+    assert_eq!(pending["invites"].as_array().unwrap().len(), 2);
+    signed(
+        &open,
+        &ann2,
+        "DELETE",
+        &format!("/api/auth/invites/{id2}"),
+        None,
+    )
+    .await;
+    let (status, _) = open
+        .json(
+            "POST",
+            "/api/auth/invite/preview",
+            Some(json!({"token": token2})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::GONE, "cancelled");
+    signed(
+        &open,
+        &cat,
+        "POST",
+        "/api/auth/invite/accept",
+        Some(json!({"token": token3})),
+    )
+    .await;
+    let h = signed(&open, &cat, "GET", "/api/auth/household", None).await;
+    assert_eq!(h["id"], 1, "this session moved into Ann's household");
+    assert_eq!(h["households"].as_array().unwrap().len(), 2);
+    signed(
+        &open,
+        &cat,
+        "POST",
+        "/api/auth/household/switch",
+        Some(json!({"id": cats_own})),
+    )
+    .await;
+    let s = signed(&open, &cat, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["household"]["name"], "Cat's kitchen");
+    let (status, _) = call(
+        &open,
+        "POST",
+        "/api/auth/household/switch",
+        Some(json!({"id": 999})),
+        Some(&cat),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Signing in on the invite page joins too
+    let (token4, _) = invite(&t, &ann).await;
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/invite/accept",
+        json!({"token": token4, "email": "bob@example.com", "password": "wrong pass"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Removing Bob: his session moves to a new, empty box of his own
+    let h = signed(&t, &ann, "GET", "/api/auth/household", None).await;
+    let bob_id = h["members"][1]["userId"].as_i64().unwrap();
+    let ann_id = h["members"][0]["userId"].as_i64().unwrap();
+    let (status, _) = call(
+        &t,
+        "DELETE",
+        &format!("/api/auth/members/{ann_id}"),
+        None,
+        Some(&ann),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "not yourself");
+    let (status, _) = call(&t, "POST", "/api/auth/household/leave", None, Some(&ann)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "owners stay");
+    signed(
+        &t,
+        &ann,
+        "DELETE",
+        &format!("/api/auth/members/{bob_id}"),
+        None,
+    )
+    .await;
+    let list = signed(&t, &bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list, json!([]));
+    let s = signed(&t, &bob, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["household"]["name"], "Bob's kitchen");
+    assert_eq!(s["household"]["role"], "owner");
+
+    // He can come back with the unused link, then leave on his own
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/auth/invite/accept",
+        Some(json!({"token": token4})),
+    )
+    .await;
+    let list = signed(&t, &bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list[0]["title"], "Ann's Soup");
+    let left = signed(&t, &bob, "POST", "/api/auth/household/leave", None).await;
+    assert_ne!(left["household"], 1);
+    let list = signed(&t, &bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list, json!([]));
+
+    // Owners rename their household
+    let renamed = signed(
+        &t,
+        &ann,
+        "PATCH",
+        "/api/auth/household",
+        Some(json!({"name": "  The   Cooks "})),
+    )
+    .await;
+    assert_eq!(renamed["name"], "The Cooks");
+}
+
+/// Approves Claude's connector as whoever `cookie` signs in, and returns its access token.
+async fn connect_claude(t: &TestApp, cookie: &str) -> String {
+    use base64::Engine;
+    use sha2::Digest;
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "Claude", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]})),
+        )
+        .await;
+    let client_id = client["client_id"].as_str().unwrap().to_string();
+    let verifier = "a-very-long-code-verifier-string-with-enough-entropy-1234567890";
+    let challenge =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier));
+    let redirect = "https://claude.ai/api/mcp/auth_callback";
+    let form = serde_urlencoded::to_string([
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+        ("state", "xyz"),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+        ("action", "allow"),
+    ])
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/oauth/authorize")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form))
+        .unwrap();
+    let (status, headers, _) = t.send(req).await;
+    assert_eq!(status, StatusCode::FOUND);
+    let location = url::Url::parse(headers[header::LOCATION].to_str().unwrap()).unwrap();
+    let code = location
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let form = serde_urlencoded::to_string([
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("code_verifier", verifier),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+    ])
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/oauth/token")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form))
+        .unwrap();
+    let (_, _, text) = t.send(req).await;
+    let tokens: Value = serde_json::from_str(&text).unwrap();
+    tokens["access_token"].as_str().unwrap().to_string()
+}
+
+async fn mcp_search(t: &TestApp, token: &str) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "search_recipes", "arguments": {}}})
+            .to_string(),
+        ))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    (status, text)
+}
+
+/// What the fake auth service was sent: (path, X-Real-IP, X-Forwarded-For).
+type Seen3 = std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>, Option<String>)>>>;
+
+/// A stand-in for the Better Auth service (`auth/`): two people, each signed in by a
+/// cookie naming them, and Bob's membership of Ann's kitchen switchable.
+#[derive(Clone, Default)]
+struct FakeAuth {
+    bob_in_anns: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    seen: Seen3,
+}
+
+async fn fake_auth() -> (String, FakeAuth) {
+    use axum::extract::{Query, State};
+    use axum::routing::{any, get};
+    let fake = FakeAuth::default();
+    async fn session(
+        State(f): State<FakeAuth>,
+        Query(q): Query<std::collections::HashMap<String, String>>,
+        headers: axum::http::HeaderMap,
+    ) -> axum::Json<Value> {
+        // Cat is in no household: one is only made when asked to
+        let create = q.get("create").map(String::as_str) != Some("0");
+        assert_eq!(headers["x-crumb-internal"], "shh");
+        let cookie = headers
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let who = cookie
+            .split(';')
+            .filter_map(|p| p.trim().split_once('='))
+            .find(|(k, _)| k.ends_with("crumb.session_token"))
+            .map(|(_, v)| v.to_string());
+        let bob_there = f.bob_in_anns.load(std::sync::atomic::Ordering::SeqCst);
+        let session = match who.as_deref() {
+            Some("ann") => json!({
+                "user": {"id": "u-ann", "email": "Ann@Example.com", "name": "Ann", "emailVerified": true},
+                "household": {"id": "org-ann", "name": "Ann's kitchen", "role": "owner"},
+            }),
+            Some("bob") if bob_there => json!({
+                "user": {"id": "u-bob", "email": "bob@example.com", "name": "Bob", "emailVerified": true},
+                "household": {"id": "org-ann", "name": "Ann's kitchen", "role": "member"},
+            }),
+            Some("bob") => json!({
+                "user": {"id": "u-bob", "email": "bob@example.com", "name": "Bob", "emailVerified": true},
+                "household": {"id": "org-bob", "name": "Bob's kitchen", "role": "owner"},
+            }),
+            Some("cat") => json!({
+                "user": {"id": "u-cat", "email": "cat@example.com", "name": "Cat", "emailVerified": true},
+                "household": if create {
+                    json!({"id": "org-cat", "name": "Cat's kitchen", "role": "owner"})
+                } else {
+                    Value::Null
+                },
+            }),
+            _ => Value::Null,
+        };
+        axum::Json(json!({ "session": session }))
+    }
+    async fn member(
+        State(f): State<FakeAuth>,
+        Query(q): Query<std::collections::HashMap<String, String>>,
+    ) -> axum::Json<Value> {
+        let member = match (q["user"].as_str(), q["household"].as_str()) {
+            ("u-ann", "org-ann") | ("u-bob", "org-bob") => true,
+            ("u-bob", "org-ann") => f.bob_in_anns.load(std::sync::atomic::Ordering::SeqCst),
+            _ => false,
+        };
+        axum::Json(json!({ "member": member }))
+    }
+    async fn better_auth(
+        State(f): State<FakeAuth>,
+        req: axum::http::Request<axum::body::Body>,
+    ) -> axum::response::Response {
+        let h = |n: &str| {
+            req.headers()
+                .get(n)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        };
+        let path = req.uri().path().to_string();
+        f.seen
+            .lock()
+            .unwrap()
+            .push((path.clone(), h("x-real-ip"), h("x-forwarded-for")));
+        if path == "/api/auth/organization/remove-member" {
+            f.bob_in_anns
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        axum::response::Response::builder()
+            .status(200)
+            .header(
+                header::SET_COOKIE,
+                "crumb.session_token=ann; Path=/; HttpOnly",
+            )
+            .header(header::SET_COOKIE, "crumb.session_data=x; Path=/; HttpOnly")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"ok":true}"#))
+            .unwrap()
+    }
+    let routes = axum::Router::new()
+        .route("/internal/session", get(session))
+        .route("/internal/member", get(member))
+        .route("/api/auth/{*rest}", any(better_auth))
+        .with_state(fake.clone());
+    (serve(routes).await, fake)
+}
+
+#[tokio::test]
+async fn hosted_asks_better_auth_who_is_signed_in() {
+    let (url, fake) = fake_auth().await;
+    let t = TestApp::with_config(|c| {
+        c.auth_mode = crumb::config::AuthMode::Hosted;
+        c.auth_service_url = Some(url);
+        c.auth_internal_secret = Some("shh".into());
+        c.hosted_home_owner = Some("ann@example.com".into());
+    });
+    // A recipe from before, in the database Crumb already had
+    t.state
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO recipes (title, ingredients, instructions, created_at, updated_at)
+             VALUES ('Old Faithful', '[]', '[]', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let (status, _) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers, _) = t.send(get("/recipes")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/login?next=")
+    );
+    // Crumb's own account routes step aside for Better Auth's
+    let (status, _) = t
+        .json("POST", "/api/auth/setup", Some(json!({"email": "x@y.z"})))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Signing in goes through to the service, cookies and all
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/sign-in/email")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-for", "6.6.6.6")
+        .body(Body::from(r#"{"email":"ann@example.com","password":"pw"}"#))
+        .unwrap();
+    let (status, headers, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(headers.get_all(header::SET_COOKIE).iter().count(), 2);
+    let seen = fake.seen.lock().unwrap().clone();
+    assert_eq!(seen[0].0, "/api/auth/sign-in/email");
+    assert_eq!(
+        seen[0].2, None,
+        "the client's forwarded-for isn't passed on"
+    );
+
+    // Ann's household is the one that was here (HOSTED_HOME_OWNER)
+    let ann = "tz=UTC; crumb.session_token=ann";
+    let list = signed(&t, ann, "GET", "/api/recipes", None).await;
+    assert_eq!(list[0]["title"], "Old Faithful");
+    let s = signed(&t, ann, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["mode"], "hosted");
+    assert_eq!(s["household"]["id"], 1);
+    assert_eq!(s["household"]["name"], "Ann's kitchen");
+
+    // Bob's own household is a new, empty box
+    let bob = "__Secure-crumb.session_token=bob";
+    let list = signed(&t, bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list, json!([]));
+    signed(
+        &t,
+        bob,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+    )
+    .await;
+    let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
+    let bobs = s["household"]["id"].as_i64().unwrap();
+    assert!(bobs > 1);
+    let (status, _) = call(
+        &t,
+        "GET",
+        "/api/recipes",
+        None,
+        Some("crumb.session_token=eve"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Bob joins Ann's kitchen (the service says so from his next lookup)
+    fake.bob_in_anns
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/organization/accept-invitation")
+                .header(header::COOKIE, bob)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let list = signed(&t, bob, "GET", "/api/recipes", None).await;
+    assert_eq!(
+        list[0]["title"], "Old Faithful",
+        "a proxied change isn't cached over"
+    );
+
+    // A connector Bob approves there stops working once he's removed
+    let token = connect_claude(&t, bob).await;
+    let (status, text) = mcp_search(&t, &token).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(text.contains("Old Faithful"), "{text}");
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/organization/remove-member")
+                .header(header::COOKIE, ann)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = mcp_search(&t, &token).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let list = signed(&t, bob, "GET", "/api/recipes", None).await;
+    assert_eq!(list[0]["title"], "Bob's Pie", "back in his own box");
+    let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["household"]["id"], bobs, "the same box as before");
+}

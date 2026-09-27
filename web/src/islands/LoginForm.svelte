@@ -1,20 +1,15 @@
 <script lang="ts">
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { onMount } from "svelte"
+  import { type Status, accounts as client, authStatus } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
 
   /**
-   * Signing in, and with accounts (AUTH_MODE=accounts) the first-run setup and sign-up.
-   * With one password it's the password box it always was; /api/auth/status says which.
+   * Signing in, and with accounts (AUTH_MODE=accounts or hosted) the first-run setup and
+   * sign-up. With one password it's the password box it always was; /api/auth/status says
+   * which.
    */
   let { kind = "login" }: { kind?: "login" | "setup" | "signup" } = $props()
-
-  type Status = {
-    mode: "password" | "accounts"
-    setupNeeded?: boolean
-    setupNeedsAppPassword?: boolean
-    signupOpen?: boolean
-  }
 
   let status = $state<Status | null>(null)
   let name = $state("")
@@ -23,12 +18,15 @@
   let appPassword = $state("")
   let loading = $state(false)
   let error = $state("")
+  /** Hosted, with email: the new account must confirm its address first. */
+  let checkEmail = $state(false)
 
-  const accounts = $derived(status?.mode === "accounts")
+  const accounts = $derived(status?.mode === "accounts" || status?.mode === "hosted")
+  const hosted = $derived(status?.mode === "hosted")
   const query = typeof location === "undefined" ? "" : location.search
 
   onMount(async () => {
-    status = await api<Status>("/api/auth/status").catch(() => ({ mode: "password" as const }))
+    status = await authStatus()
     // Each form only where it applies
     if (status.mode === "password" && kind !== "login") location.replace(`/login${query}`)
     else if (status.setupNeeded && kind !== "setup") location.replace(`/setup${query}`)
@@ -46,14 +44,20 @@
     e.preventDefault()
     loading = true
     error = ""
-    const body =
-      kind === "login"
-        ? accounts
-          ? { email, password }
-          : { password }
-        : { name, email, password, ...(appPassword ? { appPassword } : {}) }
     try {
-      await api(`/api/auth/${kind}`, { method: "POST", body })
+      if (kind === "login" && accounts) await client(status!.mode).signIn(email, password)
+      else if (kind === "login") await api("/api/auth/login", { method: "POST", body: { password } })
+      else if (kind === "signup") {
+        const made = await client(status!.mode).signUp({ name, email, password })
+        if (made.verify) {
+          checkEmail = true
+          loading = false
+          return
+        }
+      } else {
+        const body = { name, email, password, ...(appPassword ? { appPassword } : {}) }
+        await api("/api/auth/setup", { method: "POST", body })
+      }
       goNext()
     } catch (err) {
       error = errorMessage(err, kind === "login" ? "Couldn't sign in" : "Couldn't make the account")
@@ -73,6 +77,12 @@
   const action = $derived(kind === "login" ? "Sign in" : "Create account")
 </script>
 
+{#if checkEmail}
+  <p class="mb-3 font-bold">Check your email</p>
+  <p class="text-ink-muted">
+    We sent a link to {email}. Open it to confirm your address and your recipe box is ready.
+  </p>
+{:else}
 <p class="text-ink-muted mb-5">{intro}</p>
 <form class="space-y-4" onsubmit={submit}>
   {#if kind !== "login"}
@@ -142,6 +152,12 @@
     {action}
   </button>
 </form>
+{#if kind === "login" && hosted}
+  <p class="mt-4 text-center">
+    <a class="text-primary font-bold hover:underline" href="/reset-password">Forgot your password?</a>
+  </p>
+{/if}
+{/if}
 {#if kind === "login" && status?.signupOpen}
   <p class="text-ink-muted mt-6 text-center">
     New here? <a class="text-primary font-bold hover:underline" href={`/signup${query}`}

@@ -42,7 +42,7 @@ async fn handle(
 ) -> Response {
     let origin = state.config.public_origin(&headers);
 
-    let household = crate::oauth::access_household(&state, &headers);
+    let household = crate::oauth::access_household(&state, &headers).await;
     let Some(household) = household else {
         let mut res = (
             StatusCode::UNAUTHORIZED,

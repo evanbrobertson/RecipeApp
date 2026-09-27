@@ -16,6 +16,7 @@
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
   import AccountSection from "../components/AccountSection.svelte"
+  import { accounts, authStatus } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
   import type { ConnectorInfo, SharedLink } from "../lib/recipe"
@@ -197,7 +198,10 @@
   }
 
   async function signOut() {
-    await api("/api/auth/logout", { method: "POST" }).catch(() => {})
+    const { mode } = await authStatus()
+    await accounts(mode)
+      .signOut()
+      .catch(() => {})
     location.href = "/login"
   }
 </script>

@@ -68,3 +68,33 @@ Claude under **Settings → Connectors → Add custom connector**. Approve with 
   image and briefly uses 200–300 MB of RAM per blocked import. To skip it, set the Docker build arg
   `WITH_CHROMIUM=false` (Railway: add it as a service variable) or set `BROWSER_SCRAPING=off`.
 - The app is meant for one person or household and runs as a single instance. Don't scale it to multiple replicas, because SQLite lives on one volume.
+
+## Hosted edition
+
+The hosted edition (`AUTH_MODE=hosted`) adds a second service, `crumb-auth` ([`auth/`](./auth)), which runs
+[Better Auth](https://www.better-auth.com) for accounts, sessions and households. Railway services can't share a
+volume, so it keeps its own SQLite database on its own volume. Only Crumb's server talks to it, over Railway's
+private network; don't give it a public domain.
+
+1. **Add the service:** New → Docker image → `ghcr.io/evanbrobertson/recipeapp-auth:main` (dev) or `:stable`
+   (production). CI builds it from `auth/` beside the main image on every master commit and promotes it with
+   it (see [docs/RELEASING.md](./docs/RELEASING.md)); set the health check to `/health`. Name it `crumb-auth`,
+   and set the GitHub variable `RAILWAY_AUTH_SERVICE=crumb-auth` so CI redeploys it too. For your own copy
+   without GHCR, deploy from the repo with Settings → **Root Directory** `auth` instead (`auth/railway.json`).
+2. **Attach a volume** to it (any mount path). It stores `auth.db` there.
+3. **Set its variables:**
+
+   | Variable               | Value                                                                    |
+   | ---------------------- | ------------------------------------------------------------------------ |
+   | `SITE_URL`             | Crumb's public URL, e.g. `https://crumb.example.com` (cookies and links) |
+   | `BETTER_AUTH_SECRET`   | A long random secret (`openssl rand -base64 32`)                         |
+   | `AUTH_INTERNAL_SECRET` | Another long random secret, also set on Crumb's service                  |
+   | `EMAIL_FROM`           | Optional. The sender, e.g. `Crumb <hello@crumb.example.com>`             |
+   | `SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Optional. Amazon SES; with them, emails are sent and new accounts confirm their email |
+
+4. **On Crumb's service**, set `AUTH_MODE=hosted`, `AUTH_SERVICE_URL=http://crumb-auth.railway.internal:3100`
+   and the same `AUTH_INTERNAL_SECRET`. Crumb's own volume keeps each household's recipes
+   (`households/{id}/recipes.db`) and the ids that link them to Better Auth (`accounts.db`).
+
+Every household starts with an empty box. To give the recipes already in `recipes.db` to one account, set
+`HOSTED_HOME_OWNER` to its email before it first signs in.
