@@ -5150,3 +5150,82 @@ async fn a_share_photo_that_cant_be_had_is_dropped_not_kept_as_a_link() {
         .await;
     assert_eq!(got["image"], Value::Null, "{got}");
 }
+
+/// Requests as household `id` would make them once signed in: the router's state scoped
+/// to that household, as the login check does.
+async fn as_household(t: &TestApp, id: i64, req: Request<Body>) -> (StatusCode, Value) {
+    let scoped = crumb::Scoped(t.state.for_household(id).unwrap());
+    let svc = NormalizePathLayer::trim_trailing_slash()
+        .layer(app(t.state.clone()).layer(axum::Extension(scoped)));
+    let res = svc.oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+fn json_req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
+    let mut req = Request::builder().method(method).uri(uri);
+    let body = match body {
+        Some(b) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(b.to_string())
+        }
+        None => Body::empty(),
+    };
+    req.body(body).unwrap()
+}
+
+#[tokio::test]
+async fn households_each_have_their_own_box() {
+    let t = TestApp::new(None);
+    let (_, home) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Home Soup", None, "")),
+        )
+        .await;
+    let (status, theirs) = as_household(
+        &t,
+        2,
+        json_req(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Their Pie", None, "")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{theirs}");
+    // Ids are per box, so both are recipe 1: each household sees only its own
+    assert_eq!(home["id"], theirs["id"]);
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["title"], "Home Soup");
+    let (_, list) = as_household(&t, 2, json_req("GET", "/api/recipes", None)).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["title"], "Their Pie");
+    let (_, one) = as_household(&t, 2, json_req("GET", "/api/recipes/1", None)).await;
+    assert_eq!(one["title"], "Their Pie");
+    // Cookbooks, the backup and deletes stay in their box too
+    as_household(
+        &t,
+        2,
+        json_req("POST", "/api/cookbooks", Some(json!({"name": "Theirs"}))),
+    )
+    .await;
+    let (_, books) = t.json("GET", "/api/cookbooks", None).await;
+    assert_eq!(books.as_array().unwrap().len(), 0);
+    let (_, backup) = as_household(&t, 2, json_req("GET", "/api/export", None)).await;
+    assert_eq!(backup["recipes"].as_array().unwrap().len(), 1);
+    assert_eq!(backup["recipes"][0]["title"], "Their Pie");
+    let (status, _) = as_household(&t, 2, json_req("DELETE", "/api/recipes/1", None)).await;
+    assert!(status.is_success());
+    let (_, got) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(
+        got["title"], "Home Soup",
+        "the home box's recipe 1 is untouched"
+    );
+}

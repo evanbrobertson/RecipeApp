@@ -2,7 +2,6 @@
 //! Add `https://<your-app>/mcp` as a custom connector in Claude.
 
 use axum::body::Bytes;
-use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
@@ -36,7 +35,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn handle(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     method: axum::http::Method,
     headers: HeaderMap,
     body: Bytes,

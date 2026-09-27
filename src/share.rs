@@ -339,7 +339,10 @@ pub fn public_routes() -> Router<AppState> {
         .layer(axum::middleware::map_response(public_headers))
 }
 
-async fn list_shares(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
+async fn list_shares(
+    crate::Scoped(state): crate::Scoped,
+    headers: HeaderMap,
+) -> AppResult<Json<Value>> {
     let origin = state.config.public_origin(&headers);
     Ok(Json(json!(list(&state.db.lock(), &origin)?)))
 }
@@ -353,7 +356,7 @@ fn book_target(id: &str) -> AppResult<Target> {
 }
 
 async fn create_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
@@ -361,7 +364,7 @@ async fn create_recipe_share(
 }
 
 async fn create_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
@@ -369,21 +372,21 @@ async fn create_book_share(
 }
 
 async fn stop_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     stop(&state, recipe_target(&id)?)
 }
 
 async fn stop_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     stop(&state, book_target(&id)?)
 }
 
 async fn update_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -392,7 +395,7 @@ async fn update_recipe_share(
 }
 
 async fn update_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,

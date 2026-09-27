@@ -9,6 +9,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod fractions;
+pub mod households;
 pub mod images;
 pub mod importers;
 pub mod llm;
@@ -36,9 +37,16 @@ use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Pr
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+/// Everything a request needs. `db`, `zone`, `ai` and `queued` are one household's (see
+/// [`households`]): the home household's in the router's state, and the signed-in
+/// household's in the state [`Scoped`] hands a handler.
 #[derive(Clone)]
 pub struct AppState {
+    /// Whose box `db` is.
+    pub household: households::HouseholdId,
     pub db: db::Db,
+    /// Every household's box.
+    pub households: Arc<households::Households>,
     pub config: Arc<config::Config>,
     pub http: reqwest::Client,
     pub web: Arc<web::Web>,
@@ -49,8 +57,10 @@ pub struct AppState {
     pub ai: Arc<suggestions::AiState>,
     /// Sized recipe photos: disk cache and failure memory.
     pub images: Arc<images::Images>,
-    /// Wee Chef's import checks: the background queue.
+    /// Wee Chef's import checks: how many run at once, across households.
     pub checks: Arc<checks::Checks>,
+    /// This household's recipes waiting for a check.
+    pub queued: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Unknown share tokens asked for, per client address (see `share::Misses`).
     pub share_misses: Arc<share::Misses>,
 }
@@ -62,8 +72,15 @@ impl AppState {
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .expect("HTTP client");
-        Self {
+        let households = Arc::new(households::Households::new(
             db,
+            config.households_dir.clone(),
+        ));
+        let home = households.home().clone();
+        Self {
+            household: home.id,
+            db: home.db,
+            households,
             web: Arc::new(web::Web::new(config.web_dist.clone())),
             images: Arc::new(images::Images::new(
                 config.image_cache.clone(),
@@ -72,11 +89,58 @@ impl AppState {
             config: Arc::new(config),
             http,
             browser: Arc::new(browser),
-            zone: Arc::default(),
-            ai: Arc::default(),
+            zone: home.zone,
+            ai: home.ai,
             checks: Arc::default(),
+            queued: home.queued,
             share_misses: Arc::default(),
         }
+    }
+}
+
+impl AppState {
+    /// The same state working on household `id`'s box.
+    pub fn for_household(&self, id: households::HouseholdId) -> error::AppResult<Self> {
+        if id == self.household {
+            return Ok(self.clone());
+        }
+        let h = self.households.get(id)?;
+        Ok(Self {
+            household: h.id,
+            db: h.db,
+            zone: h.zone,
+            ai: h.ai,
+            queued: h.queued,
+            ..self.clone()
+        })
+    }
+}
+
+/// The state for the household a request is signed in to: the router's state (the home
+/// household) unless the login check scoped the request to another (see
+/// [`auth::require_login`]). Every handler that reads or writes recipes takes this rather
+/// than `State<AppState>`.
+pub struct Scoped(pub AppState);
+
+impl axum::extract::FromRequestParts<AppState> for Scoped {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<Scoped>()
+                .map_or_else(|| state.clone(), |s| s.0.clone()),
+        ))
+    }
+}
+
+impl Clone for Scoped {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 

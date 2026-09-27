@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{Path as UrlPath, Query};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
@@ -294,7 +294,7 @@ pub fn parse_width(raw: &str) -> Option<u32> {
 }
 
 async fn serve(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     UrlPath((id, width)): UrlPath<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
@@ -336,7 +336,13 @@ pub async fn serve_photo(
     let key = image_key(&image);
     let current = v.is_some_and(|v| v == key);
     let images = &state.images;
-    let source = format!("{id}-{key}");
+    // The home household's names are as they always were; another's carry its id, so
+    // two boxes' recipe 12 never share a cached photo
+    let source = if state.household == crate::households::HOME {
+        format!("{id}-{key}")
+    } else {
+        format!("h{}-{id}-{key}", state.household)
+    };
     let name = format!("{source}-{}", variant.file_suffix());
 
     if images.failed_recently(&source) {

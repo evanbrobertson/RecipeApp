@@ -1,7 +1,7 @@
 //! The JSON API under /api, same routes and shapes as the Nuxt server had.
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
@@ -114,13 +114,13 @@ fn ids_field(body: &Value, key: &str) -> AppResult<Vec<i64>> {
         })
 }
 
-async fn health(State(state): State<AppState>) -> AppResult<Json<Value>> {
+async fn health(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
     state.db.lock().query_row("select 1", [], |_| Ok(()))?;
     Ok(Json(json!({"ok": true})))
 }
 
 async fn login(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
@@ -170,11 +170,11 @@ pub fn connector_info(state: &AppState, headers: &HeaderMap) -> Value {
     })
 }
 
-async fn connector(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
+async fn connector(crate::Scoped(state): crate::Scoped, headers: HeaderMap) -> Json<Value> {
     Json(connector_info(&state, &headers))
 }
 
-async fn export(State(state): State<AppState>) -> AppResult<Response> {
+async fn export(crate::Scoped(state): crate::Scoped) -> AppResult<Response> {
     let backup = recipes::export_backup(&state.db.lock())?;
     let date = chrono::Utc::now().format("%Y-%m-%d");
     let body = serde_json::to_string_pretty(&backup).map_err(AppError::internal)?;
@@ -241,7 +241,7 @@ pub(crate) fn attachment(title: &str, ext: &str) -> Option<HeaderValue> {
 
 /// One recipe as a file: `?format=json` (the backup format, re-importable) or `md`.
 async fn export_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> AppResult<Response> {
@@ -280,7 +280,7 @@ async fn export_recipe(
 /// A cookbook as a file in the backup format (its recipes, in this book only), which
 /// another Crumb's Import reads back into a cookbook of the same name.
 async fn export_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Response> {
     let id = id_param(&id, "id")?;
@@ -309,7 +309,7 @@ async fn export_cookbook(
 
 // Multipart upload of export files (JTR PDFs, Paprika, JSON, HTML, text, zip)
 async fn import_files(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     mut multipart: Multipart,
 ) -> AppResult<Json<Vec<ImportSummary>>> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -344,7 +344,7 @@ async fn import_files(
 }
 
 async fn list_recipes(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Query(q): Query<HashMap<String, String>>,
 ) -> AppResult<Json<Value>> {
     let query = q.get("q").map(String::as_str);
@@ -366,7 +366,7 @@ async fn list_recipes(
     Ok(Json(recipes::to_value(&rows)))
 }
 
-async fn create_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<Response> {
+async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let fields = RecipeFields::from_json(&json_body(&body)?)?.file_category();
     let (recipe, is_new) = recipes::create_recipe(&state.db.lock(), fields, "manual")?;
     let status = if is_new {
@@ -377,7 +377,7 @@ async fn create_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<
     Ok((status, Json(recipes::with_is_new(&recipe, is_new))).into_response())
 }
 
-async fn import_recipe(State(state): State<AppState>, body: Bytes) -> AppResult<Json<Value>> {
+async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Json<Value>> {
     let body = json_body(&body)?;
     let (recipe, is_new) = if let Some(url) = body.get("url") {
         let url = url
@@ -447,7 +447,7 @@ fn upload_error(err: axum::extract::multipart::MultipartError) -> AppError {
 
 // Multipart: 1 to 6 `photo` fields (the pages, in order) and an optional `text` note
 async fn import_photos(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     mut multipart: Multipart,
 ) -> AppResult<Json<Value>> {
     if !crate::llm::available(&state) {
@@ -484,14 +484,14 @@ async fn import_photos(
     ))
 }
 
-async fn bulk_delete(State(state): State<AppState>, body: Bytes) -> AppResult<Json<Value>> {
+async fn bulk_delete(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Json<Value>> {
     let ids = ids_field(&json_body(&body)?, "ids")?;
     let deleted = recipes::delete_recipes(&state.db.lock(), &ids)?;
     Ok(Json(json!({"deleted": deleted})))
 }
 
 async fn get_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let recipe = recipes::require_recipe(&state.db.lock(), id_param(&id, "id")?)?;
@@ -499,7 +499,7 @@ async fn get_recipe(
 }
 
 async fn patch_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
@@ -512,7 +512,7 @@ async fn patch_recipe(
 }
 
 async fn delete_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
@@ -523,7 +523,7 @@ async fn delete_recipe(
 }
 
 async fn recipe_cookbooks(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Vec<i64>>> {
     Ok(Json(recipes::recipe_cookbook_ids(
@@ -556,7 +556,7 @@ fn int_param(
 }
 
 async fn suggestions(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> AppResult<Json<Value>> {
@@ -575,7 +575,7 @@ async fn suggestions(
 }
 
 async fn random_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> AppResult<Json<Value>> {
@@ -596,7 +596,7 @@ async fn random_recipe(
 }
 
 async fn recipe_viewed(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
     let id = id_param(&id, "id")?;
@@ -605,7 +605,7 @@ async fn recipe_viewed(
 }
 
 async fn recipe_cooked(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
@@ -618,7 +618,7 @@ async fn recipe_cooked(
 }
 
 async fn undo_cooked(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> AppResult<Json<Value>> {
@@ -631,13 +631,13 @@ async fn undo_cooked(
     )?)))
 }
 
-async fn list_cookbooks(State(state): State<AppState>) -> AppResult<Json<Value>> {
+async fn list_cookbooks(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
     Ok(Json(recipes::to_value(&recipes::list_cookbooks(
         &state.db.lock(),
     )?)))
 }
 
-async fn create_cookbook(State(state): State<AppState>, body: Bytes) -> AppResult<Response> {
+async fn create_cookbook(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
     let name = cookbook_name(body.get("name").unwrap_or(&Value::Null), "Name is required")?;
     let description = body
@@ -659,7 +659,7 @@ async fn create_cookbook(State(state): State<AppState>, body: Bytes) -> AppResul
 }
 
 async fn get_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let book = recipes::get_cookbook(&state.db.lock(), id_param(&id, "id")?)?;
@@ -667,7 +667,7 @@ async fn get_cookbook(
 }
 
 async fn patch_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
@@ -689,7 +689,7 @@ async fn patch_cookbook(
 }
 
 async fn delete_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     recipes::delete_cookbook(&state.db.lock(), id_param(&id, "id")?)?;
@@ -697,7 +697,7 @@ async fn delete_cookbook(
 }
 
 async fn add_to_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
@@ -708,7 +708,7 @@ async fn add_to_cookbook(
 }
 
 async fn remove_from_cookbook(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path((id, recipe_id)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let conn = state.db.lock();
@@ -723,7 +723,7 @@ async fn remove_from_cookbook(
 // ─── Wee Chef's import checks ───────────────────────────────────────────────
 
 async fn recipe_checks(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
@@ -734,14 +734,14 @@ async fn recipe_checks(
 
 /// "Check with Wee Chef" on the recipe page: re-checks it now; returns its check (pending).
 async fn check_recipe(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     Ok(Json(checks::check_one(&state, id_param(&id, "id")?)?))
 }
 
 async fn undo_checks(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     let id = id_param(&id, "id")?;
@@ -754,23 +754,23 @@ async fn undo_checks(
 }
 
 async fn dismiss_flag(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path((id, flag)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let (id, flag) = (id_param(&id, "id")?, id_param(&flag, "flag")?);
     Ok(Json(checks::dismiss(&state.db.lock(), id, flag)?))
 }
 
-async fn checks_status(State(state): State<AppState>) -> AppResult<Json<Value>> {
+async fn checks_status(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
     Ok(Json(checks::status(&state, &state.db.lock())?))
 }
 
-async fn checks_review(State(state): State<AppState>) -> AppResult<Json<Value>> {
+async fn checks_review(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
     Ok(Json(
         json!({"recipes": checks::to_review(&state.db.lock())?}),
     ))
 }
 
-async fn check_all(State(state): State<AppState>) -> AppResult<Json<Value>> {
+async fn check_all(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
     Ok(Json(checks::check_all(&state)?))
 }

@@ -28,7 +28,7 @@
 //!    `TYPESAFE_API_KEY`.
 
 use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use regex::Regex;
@@ -81,17 +81,16 @@ impl Mode {
     }
 }
 
-/// The queue: a semaphore for concurrency and the recipes already queued or running.
+/// The check queue: a semaphore for concurrency across households (each household keeps
+/// its own set of queued recipes, `AppState::queued`).
 pub struct Checks {
     sem: Semaphore,
-    queued: Mutex<HashSet<i64>>,
 }
 
 impl Default for Checks {
     fn default() -> Self {
         Self {
             sem: Semaphore::new(CONCURRENCY),
-            queued: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -1246,7 +1245,6 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
     let now = now_secs();
     for &id in ids {
         if !state
-            .checks
             .queued
             .lock()
             .map(|mut q| q.insert(id))
@@ -1273,7 +1271,7 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
 }
 
 fn forget(state: &AppState, id: i64) {
-    if let Ok(mut q) = state.checks.queued.lock() {
+    if let Ok(mut q) = state.queued.lock() {
         q.remove(&id);
     }
 }
