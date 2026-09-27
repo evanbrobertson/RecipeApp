@@ -3,11 +3,13 @@
   import Copy from "@lucide/svelte/icons/copy"
   import DoorOpen from "@lucide/svelte/icons/door-open"
   import House from "@lucide/svelte/icons/house"
+  import KeyRound from "@lucide/svelte/icons/key-round"
   import Link from "@lucide/svelte/icons/link"
   import LogOut from "@lucide/svelte/icons/log-out"
   import Mail from "@lucide/svelte/icons/mail"
   import MonitorSmartphone from "@lucide/svelte/icons/monitor-smartphone"
   import Pencil from "@lucide/svelte/icons/pencil"
+  import Trash2 from "@lucide/svelte/icons/trash-2"
   import UserMinus from "@lucide/svelte/icons/user-minus"
   import UserPlus from "@lucide/svelte/icons/user-plus"
   import UserRound from "@lucide/svelte/icons/user-round"
@@ -17,10 +19,12 @@
     type Device,
     type Household,
     type Member,
+    type Passkey,
     type PendingInvite,
     type Status,
     accounts,
     authStatus,
+    deviceName,
   } from "../lib/account"
   import { errorMessage } from "../lib/api"
   import { flash, toast } from "../lib/toast"
@@ -32,9 +36,10 @@
   let status = $state<Status | null>(null)
   let client = $state<Accounts | null>(null)
   let devices = $state<Device[]>([])
+  let passkeys = $state<Passkey[]>([])
   let household = $state<Household | null>(null)
   let busy = $state(false)
-  /** The row asking to confirm: `remove:<member id>` or `leave`. */
+  /** The row asking to confirm: `remove:<member id>`, `passkey:<id>` or `leave`. */
   let confirming = $state<string | null>(null)
   let inviting = $state(false)
   let inviteEmail = $state("")
@@ -45,6 +50,8 @@
 
   const signedIn = $derived(status?.mode !== "password" && !!status?.user)
   const hosted = $derived(status?.mode === "hosted")
+  /** Hosted, in a browser that can make one. */
+  const canPasskey = $derived(!!client?.passkeys?.supported())
   const owner = $derived(household?.role === "owner")
   const others = $derived(household?.households.filter((h) => h.id !== household?.id) ?? [])
 
@@ -52,8 +59,38 @@
     status = await authStatus()
     if (status.mode === "password" || !status.user) return
     client = accounts(status.mode)
-    await Promise.all([loadDevices(), loadHousehold()])
+    await Promise.all([loadDevices(), loadPasskeys(), loadHousehold()])
   })
+
+  async function loadPasskeys() {
+    passkeys = (await client?.passkeys?.list().catch(() => [])) ?? []
+  }
+
+  async function addPasskey() {
+    busy = true
+    try {
+      if (await client!.passkeys!.add(device(navigator.userAgent))) {
+        await loadPasskeys()
+        toast({ title: "Passkey added" })
+      }
+    } catch (err) {
+      toast({ title: errorMessage(err, "Couldn't add the passkey"), tone: "error" })
+    }
+    busy = false
+  }
+
+  async function removePasskey(p: Passkey) {
+    busy = true
+    try {
+      await client!.passkeys!.remove(p)
+      confirming = null
+      await loadPasskeys()
+      toast({ title: "Passkey removed" })
+    } catch (err) {
+      toast({ title: errorMessage(err, "Couldn't remove the passkey"), tone: "error" })
+    }
+    busy = false
+  }
 
   async function loadDevices() {
     devices = (await client?.devices().catch(() => [])) ?? []
@@ -77,33 +114,7 @@
     busy = false
   }
 
-  /** "Firefox on Linux", roughly: enough to tell one's devices apart. */
-  function device(agent: string | null) {
-    if (!agent) return "Unknown device"
-    const browser = /Edg\//.test(agent)
-      ? "Edge"
-      : /Firefox\//.test(agent)
-        ? "Firefox"
-        : /Chrome\//.test(agent)
-          ? "Chrome"
-          : /Safari\//.test(agent)
-            ? "Safari"
-            : /okhttp|Android/.test(agent)
-              ? "Crumb app"
-              : "Browser"
-    const system = /iPhone|iPad/.test(agent)
-      ? "iOS"
-      : /Android/.test(agent)
-        ? "Android"
-        : /Mac OS X/.test(agent)
-          ? "macOS"
-          : /Windows/.test(agent)
-            ? "Windows"
-            : /Linux/.test(agent)
-              ? "Linux"
-              : ""
-    return system ? `${browser} on ${system}` : browser
-  }
+  const device = deviceName
 
   const day = (secs: number) =>
     new Date(secs * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })
@@ -244,6 +255,59 @@
           {/if}
         </div>
       {/each}
+      {#each passkeys as p (p.id)}
+        <div class="list-row settings-row flex-wrap">
+          <KeyRound class="settings-icon" />
+          <span class="min-w-0 flex-1">
+            <span class="block truncate font-bold">{p.name}</span>
+            <span class="text-ink-muted block text-sm">Passkey added {day(p.createdAt)}</span>
+          </span>
+          {#if confirming === `passkey:${p.id}`}
+            <span class="flex w-full flex-wrap items-center justify-end gap-2 pl-[2.125rem]">
+              <span class="text-ink-muted mr-auto text-sm">
+                It stops signing you in. Also delete it from the device.
+              </span>
+              <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+                Keep
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                disabled={busy}
+                onclick={() => removePasskey(p)}
+              >
+                Remove
+              </button>
+            </span>
+          {:else}
+            <button
+              type="button"
+              class="btn btn-ghost btn-icon flex-none"
+              aria-label={`Remove the passkey ${p.name}`}
+              title="Remove"
+              onclick={() => (confirming = `passkey:${p.id}`)}
+            >
+              <Trash2 />
+            </button>
+          {/if}
+        </div>
+      {/each}
+      {#if canPasskey}
+        <button
+          type="button"
+          class="list-row settings-row w-full text-left"
+          disabled={busy}
+          onclick={addPasskey}
+        >
+          <KeyRound class="settings-icon" />
+          <span class="min-w-0 flex-1">
+            <span class="block font-bold">Add a passkey</span>
+            <span class="text-ink-muted block text-sm">
+              Sign in with your fingerprint, face or screen lock
+            </span>
+          </span>
+        </button>
+      {/if}
       {#if devices.length > 1}
         <button
           type="button"

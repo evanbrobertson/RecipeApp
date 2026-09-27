@@ -266,6 +266,7 @@ The default is `AUTH_MODE=password`, which works as described in [Password](#pas
 
 - Anyone can make an account. Everyone gets a household of their own the first time they open Crumb.
 - With an email provider (Amazon SES), new accounts confirm their email first, and people can reset their password by email. Without one, emails are written to the auth service's log instead.
+- Once signed in, people can add passkeys on the More page, then sign in with one from the sign-in page (or the email field's autofill) without a password. Adding one needs a sign-in from the last day.
 - The owner invites people by email from the More page. An invite works for a week, only for the address it was sent to.
 - Members, leaving, removing, switching households, devices and Claude's connector work as with [Accounts](#accounts).
 - The browser only talks to the Rust server, which passes `/api/auth/*` to the auth service. Only the Rust server can reach the service.
