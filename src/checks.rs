@@ -28,7 +28,7 @@
 //!    `TYPESAFE_API_KEY`.
 
 use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use regex::Regex;
@@ -81,17 +81,16 @@ impl Mode {
     }
 }
 
-/// The queue: a semaphore for concurrency and the recipes already queued or running.
+/// The check queue: a semaphore for concurrency across households (each household keeps
+/// its own set of queued recipes, `AppState::queued`).
 pub struct Checks {
     sem: Semaphore,
-    queued: Mutex<HashSet<i64>>,
 }
 
 impl Default for Checks {
     fn default() -> Self {
         Self {
             sem: Semaphore::new(CONCURRENCY),
-            queued: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -1153,6 +1152,7 @@ async fn ask_jev(
     let url = format!("{}/v1/systemone", ts.base_url);
     let mut attempt = 0;
     loop {
+        let span = crate::telemetry::AiSpan::start("typesafe", &ts.model, "check", None);
         let res = state
             .http
             .post(&url)
@@ -1163,7 +1163,23 @@ async fn ask_jev(
             .await;
         let retry = match res {
             Ok(res) if res.status().is_success() => {
-                let v: Value = res.json().await.map_err(|e| format!("bad reply: {e}"))?;
+                let v: Value = match res.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        span.failed(crate::telemetry::ai_error_type(&e));
+                        return Err(format!("bad reply: {e}"));
+                    }
+                };
+                let input_tokens = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                span.answered(
+                    v["model"].as_str(),
+                    crate::telemetry::AiUsage {
+                        input: input_tokens,
+                        output: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
+                        ..Default::default()
+                    },
+                    None,
+                );
                 let answers = v
                     .get("answers")
                     .and_then(Value::as_object)
@@ -1177,6 +1193,7 @@ async fn ask_jev(
             }
             Ok(res) => {
                 let status = res.status().as_u16();
+                span.failed(&format!("http_{status}"));
                 let text = res.text().await.unwrap_or_default();
                 let err = format!("HTTP {status}: {}", crate::telemetry::api_error_text(&text));
                 if !(status == 429 || status >= 500) {
@@ -1184,7 +1201,10 @@ async fn ask_jev(
                 }
                 err
             }
-            Err(e) => format!("request failed: {e}"),
+            Err(e) => {
+                span.failed(crate::telemetry::ai_error_type(&e));
+                format!("request failed: {e}")
+            }
         };
         if attempt >= 2 {
             return Err(retry);
@@ -1225,7 +1245,6 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
     let now = now_secs();
     for &id in ids {
         if !state
-            .checks
             .queued
             .lock()
             .map(|mut q| q.insert(id))
@@ -1252,7 +1271,7 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
 }
 
 fn forget(state: &AppState, id: i64) {
-    if let Ok(mut q) = state.checks.queued.lock() {
+    if let Ok(mut q) = state.queued.lock() {
         q.remove(&id);
     }
 }

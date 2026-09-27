@@ -2,7 +2,7 @@
 //! with their data inlined so each one renders from a single request.
 
 use axum::body::Body;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{Path, Query, Request};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
@@ -145,7 +145,7 @@ pub fn routes() -> Router<AppState> {
         .route("/random", routing::get(random))
 }
 
-async fn home(State(state): State<AppState>, headers: HeaderMap) -> Response {
+async fn home(crate::Scoped(state): crate::Scoped, headers: HeaderMap) -> Response {
     let data = (|| {
         let ctx = suggestions::context(&state, &headers, 0);
         let opts = suggestions::Options {
@@ -170,7 +170,7 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Response {
 /// Surprise me: a redirect to a random recipe. Never cached, and never prerendered
 /// (see speculation-rules.json), or hovering the link would pick one.
 async fn random(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
@@ -194,7 +194,7 @@ async fn random(
 }
 
 async fn recipe_list(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let query: String = q
@@ -218,9 +218,13 @@ fn numeric(id: &str) -> Option<i64> {
         .filter(|i| *i > 0 && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
-async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Request) -> Response {
+async fn recipe(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
     let Some(id) = numeric(&id) else {
-        return static_files(State(state), req).await;
+        return static_files(crate::Scoped(state), req).await;
     };
     let mut hero = None;
     let origin = state.config.public_origin(req.headers());
@@ -252,7 +256,7 @@ async fn recipe(State(state): State<AppState>, Path(id): Path<String>, req: Requ
 }
 
 async fn recipe_view(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path((id, view)): Path<(String, String)>,
     req: Request,
 ) -> Response {
@@ -260,7 +264,7 @@ async fn recipe_view(
         numeric(&id),
         matches!(view.as_str(), "cook" | "prep" | "edit"),
     ) else {
-        return static_files(State(state), req).await;
+        return static_files(crate::Scoped(state), req).await;
     };
     let data = (|| {
         let conn = state.db.lock();
@@ -273,16 +277,20 @@ async fn recipe_view(
     page(&state, &format!("shell/{view}/index.html"), data)
 }
 
-async fn cookbook_list(State(state): State<AppState>) -> Response {
+async fn cookbook_list(crate::Scoped(state): crate::Scoped) -> Response {
     let data = (|| {
         Ok(json!({"cookbooks": recipes::to_value(&recipes::list_cookbooks(&state.db.lock())?)}))
     })();
     page(&state, "cookbooks/index.html", data)
 }
 
-async fn cookbook(State(state): State<AppState>, Path(id): Path<String>, req: Request) -> Response {
+async fn cookbook(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
     let Some(id) = numeric(&id) else {
-        return static_files(State(state), req).await;
+        return static_files(crate::Scoped(state), req).await;
     };
     let origin = state.config.public_origin(req.headers());
     let data = (|| {
@@ -299,7 +307,7 @@ async fn cookbook(State(state): State<AppState>, Path(id): Path<String>, req: Re
 }
 
 async fn connector_page(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     headers: HeaderMap,
     req: Request,
 ) -> Response {
@@ -318,7 +326,7 @@ async fn connector_page(
 
 /// The recipes with suggestions waiting and, when Wee Chef checks are set up, their
 /// progress for the page's Check all card. Empty is fine: the page says so.
-async fn suggestions_page(State(state): State<AppState>) -> Response {
+async fn suggestions_page(crate::Scoped(state): crate::Scoped) -> Response {
     let data = (|| -> AppResult<Value> {
         let conn = state.db.lock();
         let mut data = json!({"recipes": crate::checks::to_review(&conn)?});
@@ -337,7 +345,7 @@ async fn suggestions_page(State(state): State<AppState>) -> Response {
 /// (`Server-Timing: crumb-review;desc="3"`), so the nav can show Suggestions before it
 /// paints. The count is folded into the ETag, so a change is never answered with a 304.
 pub async fn review_hint(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     req: Request,
     next: axum::middleware::Next,
 ) -> Response {
@@ -375,11 +383,11 @@ pub async fn review_hint(
     res
 }
 
-async fn login(State(state): State<AppState>, req: Request) -> Response {
-    if crate::auth::is_logged_in(&state.config, req.headers()) {
+async fn login(crate::Scoped(state): crate::Scoped, req: Request) -> Response {
+    if crate::auth::signed_in(&state, req.headers()) {
         return crate::auth::found("/");
     }
-    static_files(State(state), req).await
+    static_files(crate::Scoped(state), req).await
 }
 
 fn cache_control(path: &str) -> &'static str {
@@ -393,7 +401,7 @@ fn cache_control(path: &str) -> &'static str {
 }
 
 /// Everything that isn't an app route: pages by clean URL, then files from the build.
-pub async fn static_files(State(state): State<AppState>, req: Request) -> Response {
+pub async fn static_files(crate::Scoped(state): crate::Scoped, req: Request) -> Response {
     let path = req.uri().path().to_string();
     if path.starts_with("/shell/") || path == "/shell" {
         return not_found(&state);

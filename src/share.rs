@@ -339,7 +339,10 @@ pub fn public_routes() -> Router<AppState> {
         .layer(axum::middleware::map_response(public_headers))
 }
 
-async fn list_shares(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
+async fn list_shares(
+    crate::Scoped(state): crate::Scoped,
+    headers: HeaderMap,
+) -> AppResult<Json<Value>> {
     let origin = state.config.public_origin(&headers);
     Ok(Json(json!(list(&state.db.lock(), &origin)?)))
 }
@@ -353,7 +356,7 @@ fn book_target(id: &str) -> AppResult<Target> {
 }
 
 async fn create_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
@@ -361,7 +364,7 @@ async fn create_recipe_share(
 }
 
 async fn create_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
@@ -369,21 +372,21 @@ async fn create_book_share(
 }
 
 async fn stop_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     stop(&state, recipe_target(&id)?)
 }
 
 async fn stop_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
     stop(&state, book_target(&id)?)
 }
 
 async fn update_recipe_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -392,7 +395,7 @@ async fn update_recipe_share(
 }
 
 async fn update_book_share(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -402,12 +405,21 @@ async fn update_book_share(
 
 fn create(state: &AppState, target: Target, headers: &HeaderMap) -> AppResult<Json<Value>> {
     let share = get_or_create(&state.db.lock(), target)?;
+    // Another household's link is found through the accounts database
+    if let Some(accounts) = &state.accounts
+        && state.household != crate::households::HOME
+    {
+        accounts.index_share(&share.token, state.household)?;
+    }
     Ok(Json(to_json(&share, &state.config.public_origin(headers))))
 }
 
 fn stop(state: &AppState, target: Target) -> AppResult<Json<Value>> {
     let conn = state.db.lock();
     target.require(&conn)?;
+    if let (Some(accounts), Some(share)) = (&state.accounts, for_target(&conn, target)?) {
+        accounts.unindex_share(&share.token)?;
+    }
     delete_for(&conn, target)?;
     Ok(Json(json!({"ok": true})))
 }
@@ -464,6 +476,24 @@ fn too_many() -> Response {
     res
 }
 
+/// The state for the household whose box a share token opens: the home household's unless
+/// the accounts database says it's another's.
+fn share_state(state: &AppState, token: &str) -> AppState {
+    let Some(accounts) = &state.accounts else {
+        return state.clone();
+    };
+    if !plausible_token(token) {
+        return state.clone();
+    }
+    match accounts.share_household(token) {
+        Ok(Some(household)) => state.for_household(household).unwrap_or_else(|err| {
+            tracing::warn!("[share] couldn't open a shared box: {}", err.message);
+            state.clone()
+        }),
+        _ => state.clone(),
+    }
+}
+
 /// Looks a token up for a public request, counting misses against the client's address.
 fn find(state: &AppState, req: &Request, token: &str) -> Result<Found, Box<Response>> {
     let ip = client_ip(req, state.config.trust_proxy_headers);
@@ -498,6 +528,7 @@ fn miss(state: &AppState, ip: &str) -> Response {
 }
 
 async fn page(State(state): State<AppState>, Path(token): Path<String>, req: Request) -> Response {
+    let state = share_state(&state, &token);
     let found = match find(&state, &req, &token) {
         Ok(found) => found,
         Err(res) => return *res,
@@ -569,6 +600,7 @@ async fn file(
     Path((token, rest)): Path<(String, String)>,
     req: Request,
 ) -> Response {
+    let state = share_state(&state, &token);
     let found = match find(&state, &req, &token) {
         Ok(found) => found,
         Err(res) => return *res,

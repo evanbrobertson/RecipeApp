@@ -6,6 +6,9 @@
 //! below WARN never leave the process, and WARN lines only travel as breadcrumbs on an error.
 //! Every message that does leave (breadcrumbs, errors, panics) has its URLs cut to the host and
 //! is capped in length ([`scrub_text`]); log lines name hosts, not recipe URLs.
+//!
+//! Every AI call is a `gen_ai.chat` span ([`AiSpan`]) for Sentry's AI monitoring: provider, model,
+//! feature and token counts, which Sentry turns into cost. Never the prompt or the reply.
 
 use std::sync::{Arc, OnceLock};
 
@@ -158,6 +161,17 @@ fn scrub_event(event: &mut protocol::Event<'_>) {
 /// and export share the `/s/{token}/{*rest}` route).
 const UNTRACED_PREFIXES: &[&str] = &["/api/health", "/img/", "/s/{token}/"];
 
+/// How often a transaction is kept: every AI call ([`AiSpan`]) while tracing is on, so
+/// token use and cost in Sentry's AI dashboards are whole rather than a sample; everything
+/// else at `rate`, or as the trace it continues decided.
+fn trace_rate(rate: f32, op: &str, parent_sampled: Option<bool>) -> f32 {
+    if rate > 0.0 && op.starts_with("gen_ai.") {
+        1.0
+    } else {
+        parent_sampled.map_or(rate, f32::from)
+    }
+}
+
 /// What the environment asked for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
@@ -237,7 +251,10 @@ pub fn init(settings: &Settings) -> Option<sentry::ClientInitGuard> {
             .dsn(dsn)
             .release(settings.release.clone())
             .environment(settings.environment.clone())
-            .traces_sample_rate(settings.traces_sample_rate)
+            .traces_sampler({
+                let rate = settings.traces_sample_rate;
+                move |ctx| trace_rate(rate, ctx.operation(), ctx.sampled())
+            })
             .send_default_pii(false)
             .max_breadcrumbs(30)
             .before_send(|mut event| {
@@ -414,6 +431,146 @@ fn span_status(status: StatusCode) -> SpanStatus {
     }
 }
 
+// ─── AI calls ────────────────────────────────────────────────────────────────
+
+/// Token counts an AI API reported for one call.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AiUsage {
+    /// Every input token, cached ones included.
+    pub input: u64,
+    /// Of `input`, read from the prompt cache.
+    pub cache_read: u64,
+    /// Of `input`, written to the prompt cache.
+    pub cache_write: u64,
+    /// Every output token, reasoning included.
+    pub output: u64,
+    /// Of `output`, spent reasoning.
+    pub reasoning: u64,
+}
+
+impl AiUsage {
+    /// The `usage` of an Anthropic Messages reply, whose `input_tokens` leaves out the cache.
+    pub fn from_anthropic(usage: &serde_json::Value) -> Self {
+        let n = |k: &str| usage[k].as_u64().unwrap_or(0);
+        let (read, write) = (
+            n("cache_read_input_tokens"),
+            n("cache_creation_input_tokens"),
+        );
+        Self {
+            input: n("input_tokens") + read + write,
+            cache_read: read,
+            cache_write: write,
+            output: n("output_tokens"),
+            reasoning: 0,
+        }
+    }
+
+    /// The `usage` of an OpenAI-style chat completion (OpenAI, DeepSeek), whose
+    /// `prompt_tokens` already counts cached ones.
+    pub fn from_openai(usage: &serde_json::Value) -> Self {
+        let n = |v: &serde_json::Value| v.as_u64().unwrap_or(0);
+        Self {
+            input: n(&usage["prompt_tokens"]),
+            cache_read: usage["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or_else(|| n(&usage["prompt_cache_hit_tokens"])),
+            cache_write: 0,
+            output: n(&usage["completion_tokens"]),
+            reasoning: n(&usage["completion_tokens_details"]["reasoning_tokens"]),
+        }
+    }
+}
+
+/// One call to an AI API as a `gen_ai.chat` span, for Sentry's AI monitoring: provider,
+/// model, feature (`pipeline`), tokens and outcome. Never the prompt or the reply (they hold
+/// recipes). A child of the request's span when that's traced, else its own transaction in
+/// the same trace, kept whatever the sample rate ([`trace_rate`]). A no-op without Sentry.
+pub struct AiSpan(Option<sentry::TransactionOrSpan>);
+
+impl AiSpan {
+    const OP: &str = "gen_ai.chat";
+
+    pub fn start(provider: &str, model: &str, pipeline: &str, max_tokens: Option<u32>) -> Self {
+        if sentry::Hub::current().client().is_none() {
+            return Self(None);
+        }
+        let name = format!("chat {model}");
+        let parent = sentry::configure_scope(|scope| scope.get_span());
+        // Deprecated because `false` can also mean a deferred decision; a `true` is always
+        // a kept trace, and that's the only answer relied on
+        #[expect(deprecated)]
+        let kept = parent.as_ref().is_some_and(|p| p.is_sampled());
+        let span: sentry::TransactionOrSpan = match parent {
+            Some(parent) if kept => parent.start_child(Self::OP, &name).into(),
+            parent => sentry::start_transaction(TransactionContext::continue_from_span(
+                &name,
+                Self::OP,
+                parent,
+            ))
+            .into(),
+        };
+        span.set_data("gen_ai.operation.name", "chat".into());
+        span.set_data("gen_ai.provider.name", provider.into());
+        span.set_data("gen_ai.request.model", model.into());
+        span.set_data("gen_ai.agent.name", "Wee Chef".into());
+        span.set_data("gen_ai.pipeline.name", pipeline.into());
+        if let Some(max) = max_tokens {
+            span.set_data("gen_ai.request.max_tokens", max.into());
+        }
+        Self(Some(span))
+    }
+
+    /// A reply: the model that answered, its token use and why it stopped.
+    pub fn answered(self, model: Option<&str>, usage: AiUsage, finish: Option<&str>) {
+        let Some(span) = self.0 else { return };
+        if let Some(model) = model {
+            span.set_data("gen_ai.response.model", model.into());
+        }
+        for (key, n) in [
+            ("gen_ai.usage.input_tokens", usage.input),
+            ("gen_ai.usage.cache_read.input_tokens", usage.cache_read),
+            (
+                "gen_ai.usage.cache_creation.input_tokens",
+                usage.cache_write,
+            ),
+            ("gen_ai.usage.output_tokens", usage.output),
+            ("gen_ai.usage.reasoning.output_tokens", usage.reasoning),
+            ("gen_ai.usage.total_tokens", usage.input + usage.output),
+        ] {
+            span.set_data(key, n.into());
+        }
+        if let Some(finish) = finish {
+            span.set_data(
+                "gen_ai.response.finish_reasons",
+                serde_json::json!([finish]).to_string().into(),
+            );
+        }
+        span.set_status(SpanStatus::Ok);
+        span.finish();
+    }
+
+    /// No reply: `error` is a short code, like `http_429` or `timeout`.
+    pub fn failed(self, error: &str) {
+        let Some(span) = self.0 else { return };
+        span.set_data("error.type", error.into());
+        span.set_status(SpanStatus::InternalError);
+        span.finish();
+    }
+}
+
+/// A short, low-cardinality code for a failed AI request.
+pub fn ai_error_type(err: &reqwest::Error) -> &'static str {
+    if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "connect"
+    } else if err.is_decode() || err.is_body() {
+        "bad_reply"
+    } else {
+        "request"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +578,115 @@ mod tests {
     fn settings(pairs: &[(&str, &str)]) -> Settings {
         let map: std::collections::HashMap<_, _> = pairs.iter().copied().collect();
         Settings::from_lookup(|k| map.get(k).map(|v| v.to_string()))
+    }
+
+    #[test]
+    fn ai_calls_are_always_traced_while_tracing_is_on() {
+        assert_eq!(trace_rate(0.1, "gen_ai.chat", Some(false)), 1.0);
+        assert_eq!(trace_rate(0.1, "gen_ai.chat", None), 1.0);
+        assert_eq!(trace_rate(0.0, "gen_ai.chat", None), 0.0);
+        assert_eq!(trace_rate(0.1, "http.server", None), 0.1);
+        assert_eq!(trace_rate(0.1, "http.server", Some(true)), 1.0);
+        assert_eq!(trace_rate(0.1, "http.server", Some(false)), 0.0);
+    }
+
+    #[test]
+    fn an_ai_call_is_a_gen_ai_span_without_its_prompt() {
+        let options = sentry::ClientOptions::new()
+            .traces_sampler(|ctx| trace_rate(0.1, ctx.operation(), ctx.sampled()));
+        let envelopes = sentry::test::with_captured_envelopes_options(
+            || {
+                let usage = AiUsage {
+                    input: 120,
+                    output: 40,
+                    ..AiUsage::default()
+                };
+                AiSpan::start("anthropic", "claude-haiku-4-5", "extract", Some(4096)).answered(
+                    Some("claude-haiku-4-5-20251001"),
+                    usage,
+                    Some("end_turn"),
+                );
+                AiSpan::start("openai", "gpt-5-mini", "suggest", None).failed("http_429");
+            },
+            options,
+        );
+        let sent: Vec<_> = envelopes
+            .iter()
+            .flat_map(|e| e.items())
+            .filter_map(|item| match item {
+                sentry::protocol::EnvelopeItem::Transaction(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        // Kept although requests are sampled at 10%, each its own transaction (no request)
+        assert_eq!(sent.len(), 2);
+        let ok = sent[0].contexts.get("trace").unwrap();
+        let sentry::protocol::Context::Trace(trace) = ok else {
+            panic!("no trace context");
+        };
+        assert_eq!(trace.op.as_deref(), Some("gen_ai.chat"));
+        assert_eq!(sent[0].name.as_deref(), Some("chat claude-haiku-4-5"));
+        let data = &trace.data;
+        assert_eq!(data["gen_ai.provider.name"], "anthropic");
+        assert_eq!(data["gen_ai.request.model"], "claude-haiku-4-5");
+        assert_eq!(data["gen_ai.response.model"], "claude-haiku-4-5-20251001");
+        assert_eq!(data["gen_ai.pipeline.name"], "extract");
+        assert_eq!(data["gen_ai.usage.input_tokens"], 120);
+        assert_eq!(data["gen_ai.usage.output_tokens"], 40);
+        assert_eq!(data["gen_ai.usage.total_tokens"], 160);
+        assert!(
+            !data
+                .keys()
+                .any(|k| k.contains("messages") || k.contains("instructions"))
+        );
+        let sentry::protocol::Context::Trace(failed) = sent[1].contexts.get("trace").unwrap()
+        else {
+            panic!("no trace context");
+        };
+        assert_eq!(failed.data["error.type"], "http_429");
+        assert_eq!(failed.status, Some(SpanStatus::InternalError));
+    }
+
+    #[test]
+    fn ai_usage_counts_cached_tokens_as_input() {
+        let a = AiUsage::from_anthropic(&serde_json::json!({
+            "input_tokens": 10, "cache_read_input_tokens": 100,
+            "cache_creation_input_tokens": 20, "output_tokens": 50
+        }));
+        assert_eq!(
+            a,
+            AiUsage {
+                input: 130,
+                cache_read: 100,
+                cache_write: 20,
+                output: 50,
+                reasoning: 0
+            }
+        );
+        let o = AiUsage::from_openai(&serde_json::json!({
+            "prompt_tokens": 130, "completion_tokens": 50,
+            "prompt_tokens_details": {"cached_tokens": 100},
+            "completion_tokens_details": {"reasoning_tokens": 30}
+        }));
+        assert_eq!(
+            o,
+            AiUsage {
+                input: 130,
+                cache_read: 100,
+                cache_write: 0,
+                output: 50,
+                reasoning: 30
+            }
+        );
+        // DeepSeek names its cache hits differently
+        let d = AiUsage::from_openai(&serde_json::json!({
+            "prompt_tokens": 130, "completion_tokens": 5, "prompt_cache_hit_tokens": 64
+        }));
+        assert_eq!(d.cache_read, 64);
+        assert_eq!(
+            AiUsage::from_openai(&serde_json::Value::Null),
+            AiUsage::default()
+        );
     }
 
     #[test]
