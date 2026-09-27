@@ -27,6 +27,7 @@ pub mod suggest;
 pub mod suggestions;
 pub mod telemetry;
 pub mod text_parser;
+pub mod video;
 pub mod web;
 
 use std::sync::Arc;

@@ -49,6 +49,8 @@ async fn serve() -> Result<(), BoxError> {
         }
     );
 
+    tracing::info!("{}", config.video.describe());
+
     let addr = format!("{}:{}", config.host, config.port);
     let service = NormalizePathLayer::trim_trailing_slash()
         .layer(app(AppState::new(database, config, browser)));

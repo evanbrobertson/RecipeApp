@@ -173,7 +173,7 @@ pub fn require_recipe(conn: &Connection, id: i64) -> AppResult<Recipe> {
     get_recipe(conn, id)?.ok_or_else(|| AppError::not_found("Recipe not found"))
 }
 
-fn find_by_url(conn: &Connection, url: &str) -> AppResult<Option<i64>> {
+pub(crate) fn find_by_url(conn: &Connection, url: &str) -> AppResult<Option<i64>> {
     Ok(conn
         .query_row("SELECT id FROM recipes WHERE url = ?1", [url], |r| r.get(0))
         .optional()?)
@@ -383,6 +383,11 @@ pub async fn import_link(state: &AppState, raw_url: &str) -> AppResult<Imported>
                 false,
             ));
         }
+    }
+    // A cooking video: its caption, or what's said and shown in it
+    if crate::video::is_video_url(&url) {
+        let (recipe, is_new) = crate::video::import(state, &url).await?;
+        return Ok(Imported::Recipe(Box::new(recipe), is_new));
     }
     let scraped = crate::scraper::scrape_page(state, &url).await?;
     // Another Crumb's share page: take its export (sections, notes and the original link
@@ -676,6 +681,12 @@ pub async fn refresh_from_source(
         current.url.clone().filter(|u| is_http(u)).ok_or_else(|| {
             AppError::bad_request("This recipe has no source URL to refresh from")
         })?;
+    if crate::video::is_video_url(&url) {
+        return Err(AppError::new(
+            422,
+            "Recipes from videos can't be refreshed from the video. Edit the recipe instead.",
+        ));
+    }
     let mut scraped = crate::scraper::scrape_recipe(state, &url).await?;
     crate::checks::tidy(&mut scraped, crate::checks::TidyScope::Scrape);
 

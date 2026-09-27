@@ -180,6 +180,8 @@ pub struct Config {
     /// Where resized recipe photos are kept (`img-cache/` next to the database).
     /// None = resize on every request.
     pub image_cache: Option<PathBuf>,
+    /// yt-dlp, ffmpeg and whisper.cpp for recipes from cooking videos (`src/video.rs`).
+    pub video: crate::video::VideoTools,
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
@@ -204,6 +206,7 @@ impl Default for Config {
             trust_proxy_headers: false,
             web_dist: PathBuf::from("web/dist"),
             image_cache: None,
+            video: crate::video::VideoTools::default(),
             households_dir: None,
             host: "0.0.0.0".into(),
             port: 3000,
@@ -301,6 +304,7 @@ impl Config {
             trust_proxy_headers: env(&["RAILWAY_ENVIRONMENT"]).is_some(),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),
             image_cache: Some(crate::db::image_cache_dir(&crate::db::database_path())),
+            video: crate::video::VideoTools::from_env(),
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),

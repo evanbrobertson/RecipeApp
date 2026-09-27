@@ -28,9 +28,13 @@
     { long: "Paste a link from any recipe site", short: "links from\nany site" },
     { long: "Drop in a Crumb or Just the Recipe backup", short: "backups\nwork too" },
     { long: "Paste a few links at once", short: "a few links\nat once" },
+    { long: "Paste a TikTok, Reel or YouTube Short", short: "cooking\nvideos too" },
   ]
 
   const URL_RE = /^https?:\/\/\S+$/i
+  // Cooking videos Wee Chef watches (src/video.rs): slower than a recipe page
+  const VIDEO_RE =
+    /^https?:\/\/((www|m|vm|vt)\.)?(tiktok\.com\/.|instagram\.com\/(reels?|tv)\/|youtube\.com\/shorts\/)/i
   // A line that reads like an ingredient: starts with an amount or a bullet, or names a unit
   const INGREDIENT_RE =
     /^\s*([-•*▢□]|\d|[½¼¾⅓⅔⅛]|a (pinch|handful|few))|\b(cups?|tbsp|tsp|tablespoons?|teaspoons?|grams?|g|kg|ml|l|oz|ounces?|lbs?|pounds?|cloves?|pinch)\b/i
@@ -174,8 +178,13 @@
   const mode = $derived<AddMode>(manual ?? detected.mode)
   const modeLabel = $derived(MODES.find((m) => m.mode === mode)!.label)
   const linkCount = $derived(input.trim().split(/\s+/).filter((t) => URL_RE.test(t)).length)
+  const isVideo = $derived(
+    linkCount === 1 && input.trim().split(/\s+/).some((t) => VIDEO_RE.test(t)),
+  )
   const summary = $derived.by(() => {
     if (saving && mode === "photo") return progress
+    if (saving && mode === "link" && isVideo)
+      return "Watching the video… this can take a minute or two"
     if (saving) return mode === "link" ? "Fetching… tricky sites take ~20s" : "Reading…"
     if (mode === "photo")
       return pages.length ? detected.summary : `Up to ${MAX_PHOTOS} pages of one recipe`

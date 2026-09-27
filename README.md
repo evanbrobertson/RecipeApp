@@ -272,6 +272,9 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
 - **No loading round trip:** for pages that show your recipes, the server inlines the page's data as JSON
   (`#page-data`) into the HTML, so the page renders from a single response.
 - **Tricky sites:** pages are fetched with a real browser's TLS and HTTP/2 fingerprint (Firefox, then Safari if that's refused). If both are blocked or the recipe is rendered by JavaScript, the server retries in headless Chromium (installed in the Docker image).
+- **Cooking videos:** a TikTok, Instagram Reel or YouTube Short is read from its caption when that's the whole
+  recipe. Otherwise `yt-dlp` downloads it, whisper.cpp transcribes what the cook says on the server itself, and
+  `ffmpeg` takes stills for on-screen text; Wee Chef reads all three together. Without an AI key only captions work.
 - **Caching:** hashed assets under `/_astro/` are cached for a year and served precompressed (brotli/gzip).
   HTML is never cached.
 
@@ -325,6 +328,9 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 | `HOST` / `PORT`     | No         | Listen address, default `0.0.0.0:3000`                                        |
 | `CHROMIUM_PATH`     | No         | Chromium for the scraping fallback (set in the Docker image; auto-detected)   |
 | `BROWSER_SCRAPING`  | No         | Set to `off` to disable the headless browser fallback                         |
+| `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
+| `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
+| `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |
 | `SENTRY_DSN`        | No         | Report errors and traces to Sentry (server and browser). Unset: nothing is sent |
 | `SENTRY_ENVIRONMENT` | No        | Environment name in Sentry, default `production` (the hosted app uses `dev` and `stable`) |
 | `SENTRY_RELEASE`    | No         | Release name; set in the Docker image by CI, default `crumb@<version>`        |

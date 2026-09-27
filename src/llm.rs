@@ -27,6 +27,14 @@ Ignore page numbers, headers, photos of the dish, and other recipes that are onl
 Group ingredients and steps into named sections only when the source does; otherwise use a single section with name null.
 Each instruction item is one step. Do not invent ingredients, steps or metadata that are not in the photos. Set isRecipe to false if the photos don't show a recipe.";
 
+const VIDEO_SYSTEM: &str = "You write down the recipe from a short cooking video. You get the video's caption, an automatic transcript of what the cook says, and stills from the video in order, which may show on-screen text such as ingredient lists and amounts.
+Combine all three into one recipe. Amounts, temperatures and times written in the caption or on screen win over the transcript, which can mishear numbers; otherwise keep them exactly as given.
+Take the ingredients from everything the cook uses, and write the steps in the order the cook does them, one action or two per step, in plain imperative sentences.
+When no amount is given for an ingredient, list it without one; never guess amounts, temperatures or times. Put tips, swaps and serving ideas the cook mentions in notes.
+Ignore hashtags, calls to follow or like, sponsors, music and chatter. Use a plain dish name as the title (not the caption's hook), and a one-sentence description.
+Group ingredients and steps into named sections only when the cook does (e.g. a sauce made separately); otherwise use a single section with name null.
+Do not invent ingredients or steps that are not in the video. Set isRecipe to false if the video doesn't show how to make a dish.";
+
 /// DeepSeek caps output tokens for its chat model.
 const DEEPSEEK_MAX_TOKENS: u32 = 8192;
 
@@ -119,23 +127,31 @@ pub struct Ask<'a> {
     pub timeout: Duration,
 }
 
-/// What the user message carries: text, or photos (labelled "Page N:") and then text.
+/// What the user message carries: text, or photos (each labelled "{label} N:") and then text.
 #[derive(Clone, Copy)]
 enum UserContent<'a> {
     Text(&'a str),
-    Pages { photos: &'a [Photo], text: &'a str },
+    Pages {
+        photos: &'a [Photo],
+        label: &'a str,
+        text: &'a str,
+    },
 }
 
 /// The user message's `content` in this provider's format.
 fn user_content(provider: LlmProvider, content: UserContent) -> Value {
-    let (photos, text) = match content {
+    let (photos, label, text) = match content {
         UserContent::Text(text) => return json!(text),
-        UserContent::Pages { photos, text } => (photos, text),
+        UserContent::Pages {
+            photos,
+            label,
+            text,
+        } => (photos, label, text),
     };
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut blocks = Vec::with_capacity(photos.len() * 2 + 1);
     for (i, photo) in photos.iter().enumerate() {
-        blocks.push(json!({"type": "text", "text": format!("Page {}:", i + 1)}));
+        blocks.push(json!({"type": "text", "text": format!("{label} {}:", i + 1)}));
         let data = b64.encode(&photo.bytes);
         blocks.push(match provider {
             LlmProvider::Anthropic => json!({"type": "image", "source": {
@@ -407,10 +423,47 @@ pub async fn extract_recipe_from_photos(
         &ask,
         UserContent::Pages {
             photos,
+            label: "Page",
             text: &text,
         },
     )
     .await?;
+    fields_from_reply(&out)
+}
+
+/// Reads a recipe from a cooking video: `frames` are stills in order, `text` holds the
+/// caption and transcript (see `video::video_prompt`). Without frames only the text is sent.
+/// None when no AI is configured, the call fails, or the video shows no recipe.
+pub async fn extract_recipe_from_video(
+    state: &AppState,
+    frames: &[Photo],
+    text: &str,
+) -> Option<RecipeFields> {
+    let llm = state.config.llm.as_ref()?;
+    let model = if frames.is_empty() {
+        llm.model.clone()
+    } else {
+        llm.vision_model().to_string()
+    };
+    let ask = Ask {
+        tag: "video",
+        model: &model,
+        system: VIDEO_SYSTEM,
+        user: text,
+        schema: schema(),
+        max_tokens: 6000,
+        timeout: Duration::from_secs(120),
+    };
+    let content = if frames.is_empty() {
+        UserContent::Text(text)
+    } else {
+        UserContent::Pages {
+            photos: frames,
+            label: "Frame",
+            text,
+        }
+    };
+    let out = send(state, &ask, content).await?;
     fields_from_reply(&out)
 }
 
@@ -480,6 +533,7 @@ mod tests {
         ];
         let pages = UserContent::Pages {
             photos: &photos,
+            label: "Page",
             text: "Transcribe.",
         };
         let a = user_content(LlmProvider::Anthropic, pages);
