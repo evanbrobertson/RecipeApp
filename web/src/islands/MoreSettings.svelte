@@ -10,13 +10,14 @@
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import LocateFixed from "@lucide/svelte/icons/locate-fixed"
   import LinkOff from "@lucide/svelte/icons/unlink"
-  import LogOut from "@lucide/svelte/icons/log-out"
   import MonitorSmartphone from "@lucide/svelte/icons/monitor-smartphone"
   import Moon from "@lucide/svelte/icons/moon"
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
-  import AccountSection from "../components/AccountSection.svelte"
-  import { accounts, authStatus } from "../lib/account"
+  import Plug from "@lucide/svelte/icons/plug"
+  import UserRound from "@lucide/svelte/icons/user-round"
+  import { onMount } from "svelte"
+  import { type Status, authStatus } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
   import type { ConnectorInfo, SharedLink } from "../lib/recipe"
@@ -197,18 +198,39 @@
     if (e.key === theme.LOC) saved = savedLocation()
   }
 
-  async function signOut() {
-    const { mode } = await authStatus()
-    await accounts(mode)
-      .signOut()
-      .catch(() => {})
-    location.href = "/login"
-  }
+  // Account, household, connected apps and signing out live on their own page
+  let status = $state<Status | null>(null)
+  onMount(async () => {
+    status = await authStatus()
+  })
+  const signedIn = $derived(!!status && status.mode !== "password" && !!status.user)
 </script>
 
 <svelte:window onstorage={sync} />
 
 <div class="space-y-8">
+<section>
+  <h2 class="settings-heading">Account</h2>
+  <div class="list-card">
+    <a href="/more/account" class="list-row settings-row">
+      {#if signedIn}<UserRound class="settings-icon" />{:else}<Plug class="settings-icon" />{/if}
+      <span class="min-w-0 flex-1">
+        <span class="block truncate font-bold">
+          {signedIn ? status?.user?.name : "Connected apps"}
+        </span>
+        <span class="text-ink-muted block truncate text-sm">
+          {signedIn
+            ? `${status?.household?.name ?? "Household"}, sign-in and connected apps`
+            : info?.authEnabled
+              ? "Claude connections and signing out"
+              : "Claude connections"}
+        </span>
+      </span>
+      <ChevronRight class="text-ink-muted size-5 flex-none" />
+    </a>
+  </div>
+</section>
+
 <section>
   <h2 class="settings-heading" id="theme-title">Theme</h2>
   <div class="list-card">
@@ -260,8 +282,6 @@
     {/if}
   </div>
 </section>
-
-<AccountSection />
 
 {#if shares?.length}
   <section>
@@ -355,12 +375,6 @@
           <span class="meta flex-none">Suggestions</span>
           <ChevronRight class="text-ink-muted size-5 flex-none" />
         </a>
-      {/if}
-      {#if info.authEnabled}
-        <button type="button" class="list-row settings-row w-full text-left" onclick={signOut}>
-          <LogOut class="settings-icon" />
-          <span class="min-w-0 flex-1 font-bold">Sign out</span>
-        </button>
       {/if}
     </div>
   </section>

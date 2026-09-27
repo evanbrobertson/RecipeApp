@@ -84,6 +84,13 @@ pub struct Hosted {
     home_owner: Option<String>,
     sessions: Mutex<HashMap<String, (Instant, Option<Session>)>>,
     members: Mutex<HashMap<(i64, HouseholdId), (Instant, bool)>>,
+    /// The social sign-ins the service offers (its config: asked once).
+    providers: Mutex<Option<Vec<String>>>,
+}
+
+#[derive(Deserialize)]
+struct ProvidersReply {
+    providers: Vec<String>,
 }
 
 impl Hosted {
@@ -102,6 +109,7 @@ impl Hosted {
             home_owner,
             sessions: Mutex::default(),
             members: Mutex::default(),
+            providers: Mutex::default(),
         }
     }
 
@@ -243,9 +251,68 @@ impl Hosted {
         Ok(reply.member)
     }
 
+    /// Asks the service about the signed-in person (by the request's cookies): `export` for
+    /// everything it keeps about them, `delete-account` to delete them. Its refusals (a
+    /// wrong password, say) come back as they are.
+    pub async fn account(
+        &self,
+        action: &str,
+        headers: &HeaderMap,
+        body: serde_json::Value,
+    ) -> AppResult<serde_json::Value> {
+        let cookies = headers
+            .get_all(header::COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let res = self
+            .http
+            .post(format!("{}/internal/{action}", self.base))
+            .header("x-crumb-internal", &self.secret)
+            .header(header::COOKIE, cookies)
+            .json(&body)
+            .send()
+            .await
+            .map_err(unavailable)?;
+        let status = res.status().as_u16();
+        let reply: serde_json::Value = res.json().await.map_err(unavailable)?;
+        if (400..500).contains(&status) {
+            let message = reply["message"].as_str().unwrap_or("That didn't work");
+            return Err(AppError::new(status, message.to_string()));
+        }
+        if status >= 500 {
+            return Err(AppError::new(
+                503,
+                "Sign-in is unavailable right now. Try again in a moment.",
+            ));
+        }
+        Ok(reply)
+    }
+
+    /// Which of Google and Apple people can sign in with (none while the service can't say).
+    pub async fn providers(&self) -> Vec<String> {
+        if let Some(known) = lock(&self.providers).clone() {
+            return known;
+        }
+        let reply = self
+            .http
+            .get(format!("{}/internal/providers", self.base))
+            .header("x-crumb-internal", &self.secret)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status);
+        let Ok(reply) = reply else { return Vec::new() };
+        let Ok(reply) = reply.json::<ProvidersReply>().await else {
+            return Vec::new();
+        };
+        *lock(&self.providers) = Some(reply.providers.clone());
+        reply.providers
+    }
+
     /// Forgets every cached answer: something may have signed out, switched household or
     /// changed who's in one.
-    fn forget(&self) {
+    pub fn forget(&self) {
         lock(&self.sessions).clear();
         lock(&self.members).clear();
     }

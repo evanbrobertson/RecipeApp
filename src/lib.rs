@@ -24,6 +24,7 @@ pub mod photos;
 pub mod recipes;
 pub mod scraper;
 pub mod share;
+pub mod social;
 pub mod suggest;
 pub mod suggestions;
 pub mod telemetry;
@@ -186,6 +187,7 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(api::routes())
         .merge(account_api::routes())
+        .merge(social::routes())
         // Hosted: the rest of /api/auth/* is Better Auth's
         .route("/api/auth/{*rest}", axum::routing::any(hosted::proxy))
         .merge(oauth::routes())

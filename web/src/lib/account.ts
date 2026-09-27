@@ -8,12 +8,20 @@ import { api } from "./api"
 
 export type Mode = "password" | "accounts" | "hosted"
 
+export type Provider = "google" | "apple"
+
+export const providerNames: Record<Provider, string> = { google: "Google", apple: "Apple" }
+
 export type Status = {
   mode: Mode
   signedIn?: boolean
   setupNeeded?: boolean
   setupNeedsAppPassword?: boolean
   signupOpen?: boolean
+  /** One password: whether it's set (so there's a Sign out). */
+  passwordRequired?: boolean
+  /** Google and Apple, when this Crumb has their keys. */
+  providers?: Provider[]
   user?: { name: string; email: string } | null
   household?: { id: number; name: string; role: string } | null
 }
@@ -60,6 +68,26 @@ export type InvitePreview = {
   email?: string
 }
 
+export type SignInMethods = {
+  password: boolean
+  linked: { provider: Provider; email?: string | null; createdAt: number }[]
+}
+
+/** Where a Google or Apple sign-in is headed: sign in, add it to this account, or join. */
+export type SocialIntent =
+  | { intent: "login"; next?: string }
+  | { intent: "link" }
+  | { intent: "invite"; invite: string }
+
+/** An app connected to Crumb (Claude, mostly): one per app and household. */
+export type ConnectedApp = {
+  id: string
+  name: string
+  household: { id: number; name: string | null } | null
+  /** Unix seconds. */
+  connectedAt: number
+}
+
 export type Credentials = { name?: string; email: string; password: string }
 
 let status: Promise<Status> | null = null
@@ -95,6 +123,10 @@ export interface Accounts {
   /** Hosted, with email: sends a password reset link. */
   requestReset?(email: string): Promise<void>
   resetPassword?(token: string, password: string): Promise<void>
+  /** The provider's page to send the browser to. */
+  socialStart(provider: Provider, to: SocialIntent): Promise<string>
+  signInMethods(): Promise<SignInMethods>
+  unlink(provider: Provider): Promise<void>
 }
 
 /** Crumb's own accounts (AUTH_MODE=accounts). */
@@ -173,6 +205,19 @@ const own: Accounts = {
   async acceptInvite(token, creds) {
     await api("/api/auth/invite/accept", { method: "POST", body: { token, ...creds } })
     return { verify: false }
+  },
+  async socialStart(provider, to) {
+    const made = await api<{ url: string }>(`/api/auth/social/${provider}/start`, {
+      method: "POST",
+      body: to,
+    })
+    return made.url
+  },
+  async signInMethods() {
+    return api<SignInMethods>("/api/auth/identities")
+  },
+  async unlink(provider) {
+    await api(`/api/auth/identities/${provider}`, { method: "DELETE" })
   },
 }
 
@@ -307,8 +352,93 @@ const hosted: Accounts = {
   async resetPassword(token, newPassword) {
     await api("/api/auth/reset-password", { method: "POST", body: { token, newPassword } })
   },
+  async socialStart(provider, to) {
+    type Started = { url: string }
+    if (to.intent === "link") {
+      const made = await api<Started>("/api/auth/link-social", {
+        method: "POST",
+        body: {
+          provider,
+          callbackURL: `/more/account?linked=${provider}`,
+          errorCallbackURL: "/more/account",
+        },
+      })
+      return made.url
+    }
+    // Back to the invite page to accept, signed in (it reads the invite from the fragment)
+    const callbackURL = to.intent === "invite" ? `/invite#${to.invite}` : (to.next ?? "/")
+    const made = await api<Started>("/api/auth/sign-in/social", {
+      method: "POST",
+      body: { provider, callbackURL, errorCallbackURL: "/login" },
+    })
+    return made.url
+  },
+  async signInMethods() {
+    type Row = { providerId: string; createdAt: string }
+    const rows = await api<Row[]>("/api/auth/list-accounts")
+    return {
+      password: rows.some((r) => r.providerId === "credential"),
+      linked: rows
+        .filter(
+          (r): r is Row & { providerId: Provider } =>
+            r.providerId === "google" || r.providerId === "apple",
+        )
+        .map((r) => ({ provider: r.providerId, createdAt: secs(r.createdAt) })),
+    }
+  },
+  async unlink(provider) {
+    type Row = { id: string; providerId: string }
+    const rows = await api<Row[]>("/api/auth/list-accounts")
+    const row = rows.find((r) => r.providerId === provider)
+    if (!row) return
+    await api("/api/auth/unlink-account", { method: "POST", body: { accountId: row.id } })
+  },
 }
 
 export function accounts(mode: Mode): Accounts {
   return mode === "hosted" ? hosted : own
+}
+
+/** Connected apps, whichever way this Crumb signs people in. */
+export function connectedApps(): Promise<ConnectedApp[]> {
+  return api<ConnectedApp[]>("/api/connections")
+}
+
+export async function disconnectApp(app: ConnectedApp): Promise<void> {
+  await api(`/api/connections/${encodeURIComponent(app.id)}`, { method: "DELETE" })
+}
+
+/** Deletes the signed-in account: its password, or with none, its email typed out. */
+export async function deleteAccount(confirm: { password?: string; confirm?: string }) {
+  await api("/api/account/delete", { method: "POST", body: confirm })
+}
+
+/**
+ * Words for the `?error=` a Google or Apple sign-in came back with: Crumb's own codes
+ * (src/social.rs) and Better Auth's. Only known codes: never text from the URL.
+ */
+export function socialError(code: string | null): string | null {
+  if (!code) return null
+  const words: Record<string, string> = {
+    cancelled: "Sign-in was cancelled.",
+    access_denied: "Sign-in was cancelled.",
+    expired: "That sign-in took too long, or was started in another browser. Try again.",
+    email_taken:
+      "There's already an account with that email. Sign in with your password, then link it under More → Account.",
+    account_not_linked:
+      "There's already an account with that email. Sign in with your password, then link it under More → Account.",
+    signup_closed:
+      "There's no account for that sign-in, and sign-up isn't open here. Ask for an invite.",
+    signup_disabled:
+      "There's no account for that sign-in, and sign-up isn't open here. Ask for an invite.",
+    not_set_up: "Crumb isn't set up yet. Make the first account with an email and password.",
+    invite_gone: "This invite has expired or was already used. Ask for a new one.",
+    already_linked: "That sign-in is already linked to another account.",
+    account_already_linked_to_different_user: "That sign-in is already linked to another account.",
+    unverified: "That account's email isn't verified yet.",
+    email_not_verified: "That account's email isn't verified yet.",
+    no_email: "That sign-in didn't share an email address.",
+    email_not_found: "That sign-in didn't share an email address.",
+  }
+  return words[code] ?? "Couldn't sign in with that. Try again."
 }

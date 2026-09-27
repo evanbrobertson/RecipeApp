@@ -94,6 +94,30 @@ impl Households {
     }
 }
 
+impl Households {
+    /// Deletes household `id`'s box (never the home one's): closes it and removes its
+    /// folder, database and all.
+    pub fn remove(&self, id: HouseholdId) -> AppResult<()> {
+        if id == HOME {
+            return Err(AppError::internal(
+                "the home household's file is never removed",
+            ));
+        }
+        self.open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        if let Some(dir) = &self.dir {
+            match std::fs::remove_dir_all(dir.join(id.to_string())) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(AppError::internal(err)),
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The folder other households' files go in: `households/` beside the home database.
 pub fn households_dir(home_db: &std::path::Path) -> PathBuf {
     home_db

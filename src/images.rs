@@ -119,6 +119,31 @@ impl Images {
         f.insert(source, Instant::now());
     }
 
+    /// Deletes a household's sized photos (see `source` in the handler for their names:
+    /// the home household's start with the recipe id, another's with `h{id}-`). Blocking.
+    pub fn forget_household(&self, household: crate::households::HouseholdId) {
+        let Some(dir) = &self.dir else { return };
+        let prefix = format!("h{household}-");
+        let theirs = |name: &str| {
+            if household == crate::households::HOME {
+                name.starts_with(|c: char| c.is_ascii_digit())
+            } else {
+                name.starts_with(&prefix)
+            }
+        };
+        for (_, _, path) in cache_files(dir) {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(theirs)
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        // Counted again on the next write
+        *locked(&self.disk_bytes) = None;
+    }
+
     fn cached_path(&self, name: &str) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(name))
     }

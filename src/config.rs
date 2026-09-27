@@ -170,6 +170,8 @@ pub struct Config {
     /// (household 1) when it's first seen (`HOSTED_HOME_OWNER`). Unset, every household
     /// starts empty and the old database is left alone.
     pub hosted_home_owner: Option<String>,
+    /// Sign in with Google and Apple, when their keys are set (see `crate::social`).
+    pub social: Vec<crate::social::Provider>,
     /// Password for the web UI and the Claude connector. None = no auth (local dev only).
     pub app_password: Option<String>,
     /// The AI API, when a key is configured.
@@ -211,6 +213,7 @@ impl Default for Config {
             auth_service_url: None,
             auth_internal_secret: None,
             hosted_home_owner: None,
+            social: Vec::new(),
             app_password: None,
             llm: None,
             suggest_model: None,
@@ -313,6 +316,7 @@ impl Config {
             auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
             auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),
             hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),
+            social: crate::social::Provider::from_env(env),
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),

@@ -100,7 +100,38 @@ const SCHEMA: &str = "
     external_id text NOT NULL,
     created_at integer NOT NULL
   );
-  CREATE UNIQUE INDEX IF NOT EXISTS hosted_users_external_unique ON hosted_users (external_id);";
+  CREATE UNIQUE INDEX IF NOT EXISTS hosted_users_external_unique ON hosted_users (external_id);
+
+  -- Google and Apple sign-ins linked to an account, by the provider's stable id for the
+  -- person (`sub`). One of each provider per account. An account made this way has an
+  -- empty password_hash until it sets a password.
+  CREATE TABLE IF NOT EXISTS identities (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider text NOT NULL,
+    subject text NOT NULL,
+    email text,
+    created_at integer NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS identities_subject_unique ON identities (provider, subject);
+  CREATE UNIQUE INDEX IF NOT EXISTS identities_user_unique ON identities (user_id, provider);
+
+  -- Sign-ins with Google or Apple on their way: what to do when the provider sends the
+  -- person back with this state (only its hash is kept). They last ten minutes.
+  CREATE TABLE IF NOT EXISTS social_logins (
+    state_hash text PRIMARY KEY NOT NULL,
+    provider text NOT NULL,
+    verifier text NOT NULL,
+    nonce text NOT NULL,
+    intent text NOT NULL CHECK (intent IN ('login', 'link', 'invite')),
+    user_id integer REFERENCES users(id) ON DELETE CASCADE,
+    invite text,
+    next text,
+    expires_at integer NOT NULL
+  );";
+
+/// How long a sign-in with Google or Apple may take.
+const SOCIAL_LOGIN_SECS: i64 = 10 * 60;
 
 /// A signed-in person, and the household the session works on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -164,6 +195,40 @@ pub struct InvitePreview {
     pub household_name: String,
     pub invited_by: Option<String>,
     pub expires_at: i64,
+}
+
+/// A Google or Apple sign-in linked to an account.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Identity {
+    pub provider: String,
+    pub email: Option<String>,
+    pub created_at: i64,
+}
+
+/// What a sign-in with Google or Apple is for, kept while the person is at the provider.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SocialLogin {
+    pub provider: String,
+    /// PKCE code verifier.
+    pub verifier: String,
+    pub nonce: String,
+    /// `login`, `link` (to `user`) or `invite` (join the household `invite` is for).
+    pub intent: String,
+    pub user: Option<i64>,
+    pub invite: Option<String>,
+    /// Where to go afterwards (a same-origin path).
+    pub next: Option<String>,
+}
+
+/// What deleting an account left to clean up outside `accounts.db`.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Deleted {
+    /// Households nobody is left in: their recipe files go too.
+    pub households: Vec<HouseholdId>,
+    /// Household 1 (the original database) was among them: its contents are emptied,
+    /// since its file is the one Crumb was started with.
+    pub home: bool,
 }
 
 /// `accounts.db`, next to the home database.
@@ -302,9 +367,11 @@ impl Accounts {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
+        // An account with no password (made with Google or Apple) is checked against the
+        // dummy too, so it answers like a wrong password, in the same time
         let (user, hash) = match found {
-            Some((user, hash)) => (Some(user), hash),
-            None => (None, DUMMY_HASH.clone()),
+            Some((user, hash)) if !hash.is_empty() => (Some(user), hash),
+            _ => (None, DUMMY_HASH.clone()),
         };
         let ok = verify_password(password, &hash).await;
         let Some(user) = user.filter(|_| ok) else {
@@ -314,7 +381,7 @@ impl Accounts {
     }
 
     /// The household a person signs in to: the first one they joined.
-    fn default_household(&self, user: i64) -> AppResult<Option<HouseholdId>> {
+    pub fn default_household(&self, user: i64) -> AppResult<Option<HouseholdId>> {
         Ok(self
             .lock()
             .query_row(
@@ -810,6 +877,370 @@ impl Accounts {
             .optional()?
             .flatten();
         Ok(user.zip(household))
+    }
+
+    /// Keeps a Google or Apple sign-in on its way; returns the `state` to send.
+    pub fn start_social(&self, login: &SocialLogin) -> AppResult<String> {
+        let state = random_token(24);
+        let now = now_secs();
+        let conn = self.lock();
+        conn.execute("DELETE FROM social_logins WHERE expires_at <= ?1", [now])?;
+        conn.execute(
+            "INSERT INTO social_logins (state_hash, provider, verifier, nonce, intent, user_id,
+               invite, next, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                sha256_hex(&state),
+                login.provider,
+                login.verifier,
+                login.nonce,
+                login.intent,
+                login.user,
+                login.invite,
+                login.next,
+                now + SOCIAL_LOGIN_SECS
+            ],
+        )?;
+        Ok(state)
+    }
+
+    /// The sign-in a provider sent someone back from, used up (each works once).
+    pub fn take_social(&self, state: &str) -> AppResult<Option<SocialLogin>> {
+        let conn = self.lock();
+        let hash = sha256_hex(state);
+        let found = conn
+            .query_row(
+                "SELECT provider, verifier, nonce, intent, user_id, invite, next
+                 FROM social_logins WHERE state_hash = ?1 AND expires_at > ?2",
+                params![hash, now_secs()],
+                |r| {
+                    Ok(SocialLogin {
+                        provider: r.get(0)?,
+                        verifier: r.get(1)?,
+                        nonce: r.get(2)?,
+                        intent: r.get(3)?,
+                        user: r.get(4)?,
+                        invite: r.get(5)?,
+                        next: r.get(6)?,
+                    })
+                },
+            )
+            .optional()?;
+        conn.execute("DELETE FROM social_logins WHERE state_hash = ?1", [hash])?;
+        Ok(found)
+    }
+
+    /// The account a Google or Apple sign-in is linked to.
+    pub fn identity_user(&self, provider: &str, subject: &str) -> AppResult<Option<i64>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT user_id FROM identities WHERE provider = ?1 AND subject = ?2",
+                params![provider, subject],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Whether an account with this email exists (any case).
+    pub fn email_taken(&self, email: &str) -> AppResult<bool> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT 1 FROM users WHERE lower(email) = lower(?1)",
+                [email.trim()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The Google and Apple sign-ins linked to an account, and whether it has a password.
+    pub fn sign_in_methods(&self, user: i64) -> AppResult<(bool, Vec<Identity>)> {
+        let conn = self.lock();
+        let hash: String = conn.query_row(
+            "SELECT password_hash FROM users WHERE id = ?1",
+            [user],
+            |r| r.get(0),
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT provider, email, created_at FROM identities WHERE user_id = ?1
+             ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([user], |r| {
+            Ok(Identity {
+                provider: r.get(0)?,
+                email: r.get(1)?,
+                created_at: r.get(2)?,
+            })
+        })?;
+        Ok((!hash.is_empty(), rows.collect::<rusqlite::Result<_>>()?))
+    }
+
+    /// Links a Google or Apple sign-in to an account. Refused (409) when that sign-in is
+    /// another account's, or the account already has one from this provider.
+    pub fn link_identity(
+        &self,
+        user: i64,
+        provider: &str,
+        subject: &str,
+        email: Option<&str>,
+    ) -> AppResult<()> {
+        let conn = self.lock();
+        let linked = conn
+            .query_row(
+                "SELECT user_id FROM identities WHERE provider = ?1 AND subject = ?2",
+                params![provider, subject],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?;
+        match linked {
+            Some(owner) if owner == user => return Ok(()),
+            Some(_) => {
+                return Err(AppError::new(
+                    409,
+                    "That sign-in is already linked to another account",
+                ));
+            }
+            None => {}
+        }
+        let n = conn.execute(
+            "INSERT OR IGNORE INTO identities (user_id, provider, subject, email, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user, provider, subject, email, now_secs()],
+        )?;
+        if n == 0 {
+            return Err(AppError::new(
+                409,
+                "Another sign-in from there is already linked. Unlink it first.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Unlinks a Google or Apple sign-in, unless it's the only way left into the account.
+    pub fn unlink_identity(&self, user: i64, provider: &str) -> AppResult<bool> {
+        let (password, identities) = self.sign_in_methods(user)?;
+        if !identities.iter().any(|i| i.provider == provider) {
+            return Ok(false);
+        }
+        if !password && identities.len() == 1 {
+            return Err(AppError::new(
+                409,
+                "That's the only way into your account. Link another first.",
+            ));
+        }
+        self.lock().execute(
+            "DELETE FROM identities WHERE user_id = ?1 AND provider = ?2",
+            params![user, provider],
+        )?;
+        Ok(true)
+    }
+
+    /// A new account from a Google or Apple sign-in: it joins the household `invite` is for,
+    /// or with `open` sign-up gets one of its own. Refused when the email already has an
+    /// account (409: they sign in and link it instead, so nobody takes over an account by
+    /// its address), before the setup (409), with sign-up closed (403) and for a used
+    /// invite (410).
+    pub fn sign_up_social(
+        &self,
+        provider: &str,
+        subject: &str,
+        email: &str,
+        name: &str,
+        invite: Option<&str>,
+        open: bool,
+    ) -> AppResult<(i64, HouseholdId)> {
+        let email = valid_email(email)?;
+        let name =
+            valid_name(name).or_else(|_| valid_name(email.split('@').next().unwrap_or("Cook")))?;
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let users: i64 = tx.query_row("SELECT count(*) FROM users", [], |r| r.get(0))?;
+        if users == 0 {
+            return Err(AppError::new(409, "Crumb isn't set up yet."));
+        }
+        if invite.is_none() && !open {
+            return Err(AppError::new(
+                403,
+                "Sign-up isn't open here. Ask for an invite.",
+            ));
+        }
+        let now = now_secs();
+        let user = insert_user(&tx, &email, &name, "", now)?;
+        tx.execute(
+            "INSERT INTO identities (user_id, provider, subject, email, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user, provider, subject, email, now],
+        )?;
+        let household = match invite {
+            Some(token) => join_by_invite(&tx, token, user)?,
+            None => {
+                tx.execute(
+                    "INSERT INTO households (name, created_at) VALUES (?1, ?2)",
+                    params![household_name(&name), now],
+                )?;
+                let household = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO household_members (household_id, user_id, role, created_at)
+                     VALUES (?1, ?2, 'owner', ?3)",
+                    params![household, user, now],
+                )?;
+                household
+            }
+        };
+        tx.commit()?;
+        Ok((user, household))
+    }
+
+    /// Checks the password of an account that has one (true for one that doesn't).
+    pub async fn check_password(&self, user: i64, password: &str) -> AppResult<bool> {
+        let hash: String = self.lock().query_row(
+            "SELECT password_hash FROM users WHERE id = ?1",
+            [user],
+            |r| r.get(0),
+        )?;
+        if hash.is_empty() {
+            return Ok(true);
+        }
+        Ok(verify_password(password, &hash).await)
+    }
+
+    /// Everything kept about a person here, for "Download my data": their account, how
+    /// they sign in, their households and their devices.
+    pub fn export(&self, user: i64) -> AppResult<serde_json::Value> {
+        let (password, identities) = self.sign_in_methods(user)?;
+        let conn = self.lock();
+        let (email, name, created_at): (String, String, i64) = conn.query_row(
+            "SELECT email, name, created_at FROM users WHERE id = ?1",
+            [user],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT h.id, h.name, m.role, m.created_at FROM household_members m
+             JOIN households h ON h.id = m.household_id
+             WHERE m.user_id = ?1 ORDER BY m.created_at, h.id",
+        )?;
+        let households: Vec<serde_json::Value> = stmt
+            .query_map([user], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "role": r.get::<_, String>(2)?,
+                    "joinedAt": r.get::<_, i64>(3)?,
+                }))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_agent, created_at, last_seen_at FROM sessions
+             WHERE user_id = ?1 AND expires_at > ?2 ORDER BY last_seen_at DESC",
+        )?;
+        let devices: Vec<serde_json::Value> = stmt
+            .query_map(params![user, now_secs()], |r| {
+                Ok(serde_json::json!({
+                    "userAgent": r.get::<_, Option<String>>(0)?,
+                    "signedInAt": r.get::<_, i64>(1)?,
+                    "lastSeenAt": r.get::<_, i64>(2)?,
+                }))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(serde_json::json!({
+            "account": {"name": name, "email": email, "createdAt": created_at},
+            "signInMethods": {"password": password, "linked": identities},
+            "households": households,
+            "devices": devices,
+        }))
+    }
+
+    /// Deletes an account. A household it owns with other people in it passes to whoever
+    /// joined first; one it had to itself goes (returned, so its recipe file can go too).
+    pub fn delete_account(&self, user: i64) -> AppResult<Deleted> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let owned: Vec<HouseholdId> = {
+            let mut stmt = tx.prepare(
+                "SELECT household_id FROM household_members WHERE user_id = ?1 AND role = 'owner'",
+            )?;
+            stmt.query_map([user], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let mut deleted = Deleted::default();
+        for household in owned {
+            let heir: Option<i64> = tx
+                .query_row(
+                    "SELECT user_id FROM household_members
+                     WHERE household_id = ?1 AND user_id != ?2
+                     ORDER BY role = 'owner' DESC, created_at, user_id LIMIT 1",
+                    params![household, user],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            match heir {
+                Some(heir) => {
+                    tx.execute(
+                        "UPDATE household_members SET role = 'owner'
+                         WHERE household_id = ?1 AND user_id = ?2",
+                        params![household, heir],
+                    )?;
+                }
+                None => {
+                    tx.execute("DELETE FROM households WHERE id = ?1", [household])?;
+                    if household == HOME {
+                        deleted.home = true;
+                    } else {
+                        deleted.households.push(household);
+                    }
+                }
+            }
+        }
+        if tx.execute("DELETE FROM users WHERE id = ?1", [user])? == 0 {
+            return Err(AppError::not_found("Account not found"));
+        }
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    /// The local id of a hosted household (a Better Auth organization), if it was ever seen.
+    pub fn find_hosted_household(&self, external: &str) -> AppResult<Option<HouseholdId>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT id FROM households WHERE external_id = ?1",
+                [external],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Forgets a hosted person (deleted in Better Auth) and the households that went with
+    /// them. Which households those were is the auth service's answer.
+    pub fn forget_hosted(&self, user: i64, households: &[HouseholdId]) -> AppResult<Deleted> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let mut deleted = Deleted::default();
+        for &household in households {
+            tx.execute("DELETE FROM households WHERE id = ?1", [household])?;
+            if household == HOME {
+                deleted.home = true;
+            } else {
+                deleted.households.push(household);
+            }
+        }
+        tx.execute("DELETE FROM hosted_users WHERE id = ?1", [user])?;
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    /// A household's name.
+    pub fn household_name(&self, household: HouseholdId) -> AppResult<Option<String>> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT name FROM households WHERE id = ?1",
+                [household],
+                |r| r.get(0),
+            )
+            .optional()?)
     }
 
     /// Renames the signed-in owner's household.

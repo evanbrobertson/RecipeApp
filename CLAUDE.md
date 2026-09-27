@@ -49,7 +49,8 @@ src/
   config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
   households.rs   # One SQLite file per household; Scoped extractor gives a handler its household's state
-  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, invites, sessions, share index); account_api.rs
+  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, invites, sessions, identities, share index); account_api.rs
+  social.rs       # Sign in with Google / Apple for AUTH_MODE=accounts (OIDC code flow; hosted uses Better Auth's)
   hosted.rs       # AUTH_MODE=hosted: asks the Better Auth service (auth/) who's signed in, proxies /api/auth/*
   model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
@@ -106,6 +107,7 @@ web/src/
 - **Account modes:** `password` (one `APP_PASSWORD`), `accounts` (Rust-owned users, households, invite links) and
   `hosted` (Better Auth in `auth/`, households = organizations, mapped to local ids in `accounts.db`). The web
   talks to either through `web/src/lib/account.ts`; handlers get the signed-in user via `auth::session`/`SignedIn`.
+  Account, household, connected apps and data settings live on `/more/account` (`AccountPage.svelte`), not More.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400

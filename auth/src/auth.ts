@@ -16,6 +16,7 @@ import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
 import { organization } from "better-auth/plugins"
 import type { Mailer } from "./mailer"
+import type { Social } from "./social"
 
 const DAY = 60 * 60 * 24
 
@@ -26,6 +27,8 @@ export type AuthOptions = {
   /** `BETTER_AUTH_SECRET`: signs cookies and tokens. */
   secret: string
   mailer: Mailer
+  /** Google and Apple, when configured (see social.ts). */
+  social?: Social
 }
 
 export function createAuth(opts: AuthOptions) {
@@ -34,13 +37,28 @@ export function createAuth(opts: AuthOptions) {
 
 export function authOptions(opts: AuthOptions) {
   const { mailer, baseURL } = opts
+  const social = opts.social ?? { providers: {}, ids: [] }
   return {
     appName: "Crumb",
     baseURL,
     basePath: "/api/auth",
     secret: opts.secret,
     database: opts.db,
-    trustedOrigins: [baseURL],
+    // Apple posts its answer back from its own origin
+    trustedOrigins: social.ids.includes("apple")
+      ? [baseURL, "https://appleid.apple.com"]
+      : [baseURL],
+    socialProviders: social.providers,
+    account: {
+      accountLinking: {
+        enabled: true,
+        // Linking from More → Account is done signed in, so the provider's address may
+        // differ (Apple's "Hide My Email"). Signing in with Google or Apple only joins an
+        // existing account when both sides have verified the email (Better Auth's
+        // requireLocalEmailVerified, left on), so nobody takes over an account by its address.
+        allowDifferentEmails: true,
+      },
+    },
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
@@ -80,6 +98,7 @@ export function authOptions(opts: AuthOptions) {
         "/sign-in/email": { window: 60, max: 10 },
         "/sign-up/email": { window: 60, max: 5 },
         "/request-password-reset": { window: 60, max: 3 },
+        "/sign-in/social": { window: 60, max: 10 },
       },
     },
     advanced: {

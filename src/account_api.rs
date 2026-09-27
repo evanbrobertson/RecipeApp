@@ -40,11 +40,13 @@ pub fn routes() -> Router<AppState> {
         .route("/api/auth/invites/{id}", routing::delete(cancel_invite))
         .route("/api/auth/invite/preview", routing::post(preview_invite))
         .route("/api/auth/invite/accept", routing::post(accept_invite))
+        .route("/api/account/export", routing::get(export_account))
+        .route("/api/account/delete", routing::post(delete_account))
 }
 
 /// Accounts, when this server keeps them itself (`AUTH_MODE=accounts`). Hosted, Better
 /// Auth answers for them through the proxy instead (see `crate::hosted`).
-fn accounts(state: &AppState) -> AppResult<&Accounts> {
+pub fn accounts(state: &AppState) -> AppResult<&Accounts> {
     if state.hosted.is_some() {
         return Err(AppError::not_found("Not found"));
     }
@@ -54,14 +56,14 @@ fn accounts(state: &AppState) -> AppResult<&Accounts> {
         .ok_or_else(|| AppError::not_found("Accounts aren't turned on here"))
 }
 
-fn text<'a>(body: &'a Value, key: &str, label: &str) -> AppResult<&'a str> {
+pub fn text<'a>(body: &'a Value, key: &str, label: &str) -> AppResult<&'a str> {
     body.get(key)
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::bad_request(format!("{key}: {label} is required")))
 }
 
-fn json_body(body: &Bytes) -> AppResult<Value> {
+pub fn json_body(body: &Bytes) -> AppResult<Value> {
     serde_json::from_slice(body).map_err(|_| AppError::bad_request("Invalid JSON body"))
 }
 
@@ -83,6 +85,7 @@ async fn status(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
             "setupNeeded": false,
             "signupOpen": true,
             "signedIn": who.is_some(),
+            "providers": hosted.providers().await,
             "user": who.as_ref().map(|(name, email, _)| json!({"name": name, "email": email})),
             "household": signed.map(|s| json!({
                 "id": s.household_id, "name": s.household_name, "role": s.role,
@@ -98,6 +101,7 @@ async fn status(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
         // claim the box that's already here
         "setupNeedsAppPassword": setup_needed && state.config.app_password.is_some(),
         "signupOpen": state.config.open_signup && !setup_needed,
+        "providers": crate::social::provider_ids(&state),
         "signedIn": signed.is_some(),
         "user": signed.as_ref().map(|s| json!({"name": s.name, "email": s.email})),
         "household": signed.as_ref().map(|s| json!({
@@ -113,15 +117,25 @@ fn signed_in_response(
     household: i64,
     headers: &HeaderMap,
 ) -> AppResult<Response> {
+    let mut res = Json(json!({"ok": true})).into_response();
+    if let Some(cookie) = new_session(accounts, user, household, headers)? {
+        res.headers_mut().append(header::SET_COOKIE, cookie);
+    }
+    Ok(res)
+}
+
+/// Starts a session for `user` in `household`: the `Set-Cookie` that carries it.
+pub fn new_session(
+    accounts: &Accounts,
+    user: i64,
+    household: i64,
+    headers: &HeaderMap,
+) -> AppResult<Option<header::HeaderValue>> {
     let agent = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok());
     let token = accounts.start_session(user, household, agent)?;
-    let mut res = Json(json!({"ok": true})).into_response();
-    if let Some(cookie) = auth::session_cookie(&token, headers) {
-        res.headers_mut().append(header::SET_COOKIE, cookie);
-    }
-    Ok(res)
+    Ok(auth::session_cookie(&token, headers))
 }
 
 /// The first account, which owns the recipe box already here (household 1). Refused once
@@ -381,4 +395,144 @@ async fn accept_invite(
     };
     let household = accounts.accept_invite(token, user)?;
     signed_in_response(accounts, user, household, &headers)
+}
+
+/// "Download my data": the account (who, how they sign in, their devices), the apps they
+/// connected, and every household they're in with its recipes in the backup format.
+async fn export_account(
+    State(state): State<AppState>,
+    SignedIn(signed): SignedIn,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    let Some(accounts) = &state.accounts else {
+        return Err(AppError::not_found("Accounts aren't turned on here"));
+    };
+    let mut data = match &state.hosted {
+        Some(hosted) => {
+            let mut data = hosted.account("export", &headers, json!({})).await?;
+            // Better Auth's organizations, as the households (and recipe files) they are here
+            if let Some(list) = data["households"].as_array_mut() {
+                for h in list {
+                    let local = h["externalId"]
+                        .as_str()
+                        .map(|ext| accounts.find_hosted_household(ext))
+                        .transpose()?
+                        .flatten();
+                    h["id"] = json!(local);
+                }
+            }
+            data
+        }
+        None => accounts.export(signed.user_id)?,
+    };
+    if let Some(list) = data["households"].as_array_mut() {
+        for h in list {
+            if let Some(id) = h["id"].as_i64() {
+                let box_ = state.for_household(id)?;
+                h["recipes"] = crate::recipes::export_backup(&box_.db.lock())?;
+            }
+        }
+    }
+    data["connectedApps"] = json!(crate::oauth::connected_apps(&state, Some(signed.user_id))?);
+    data["exportedAt"] = json!(crate::model::now_secs());
+    let body = serde_json::to_string_pretty(&data).map_err(AppError::internal)?;
+    let date = chrono::Utc::now().format("%Y-%m-%d");
+    let mut res = body.into_response();
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    h.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    if let Ok(v) = header::HeaderValue::from_str(&format!(
+        "attachment; filename=\"crumb-account-{date}.json\""
+    )) {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    Ok(res)
+}
+
+/// Deletes the signed-in account: `{password}` when it has one, else `{confirm: email}`.
+/// Households it shares pass to whoever joined first; ones it had to itself are deleted,
+/// recipes and all. Connectors it approved stop working.
+async fn delete_account(
+    State(state): State<AppState>,
+    SignedIn(signed): SignedIn,
+    headers: HeaderMap,
+    body: Bytes,
+) -> AppResult<Response> {
+    let Some(accounts) = &state.accounts else {
+        return Err(AppError::not_found("Accounts aren't turned on here"));
+    };
+    let body = if body.is_empty() {
+        json!({})
+    } else {
+        json_body(&body)?
+    };
+    let password = body.get("password").and_then(Value::as_str).unwrap_or("");
+    let deleted = match &state.hosted {
+        Some(hosted) => {
+            let reply = hosted
+                .account("delete-account", &headers, json!({"password": password}))
+                .await?;
+            hosted.forget();
+            let mut gone = Vec::new();
+            for ext in reply["deletedHouseholds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                if let Some(id) = accounts.find_hosted_household(ext)? {
+                    gone.push(id);
+                }
+            }
+            accounts.forget_hosted(signed.user_id, &gone)?
+        }
+        None => {
+            let (has_password, _) = accounts.sign_in_methods(signed.user_id)?;
+            if has_password {
+                if password.is_empty() || !accounts.check_password(signed.user_id, password).await?
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+                    return Err(AppError::new(401, "password: Incorrect password"));
+                }
+            } else {
+                let confirm = body.get("confirm").and_then(Value::as_str).unwrap_or("");
+                if !confirm.trim().eq_ignore_ascii_case(&signed.email) {
+                    return Err(AppError::bad_request(
+                        "confirm: Type your email address to confirm",
+                    ));
+                }
+            }
+            accounts.delete_account(signed.user_id)?
+        }
+    };
+    crate::oauth::forget_user(&state, signed.user_id)?;
+    for &id in &deleted.households {
+        crate::oauth::forget_household(&state, id)?;
+        state.households.remove(id)?;
+        state.images.forget_household(id);
+    }
+    if deleted.home {
+        crate::oauth::forget_household(&state, crate::households::HOME)?;
+        crate::db::wipe_box(&mut state.households.home().db.lock())?;
+        state.images.forget_household(crate::households::HOME);
+    }
+    tracing::info!(
+        "[auth] an account was deleted, with {} household(s){}",
+        deleted.households.len(),
+        if deleted.home {
+            " and the home box's contents"
+        } else {
+            ""
+        }
+    );
+    let mut res = Json(json!({"ok": true})).into_response();
+    res.headers_mut()
+        .append(header::SET_COOKIE, auth::logout_cookie(&headers));
+    Ok(res)
 }

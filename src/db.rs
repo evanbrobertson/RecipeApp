@@ -109,7 +109,8 @@ fn bootstrap_sql() -> String {
     expires_at integer NOT NULL,
     created_at integer NOT NULL,
     user_id integer,
-    household_id integer
+    household_id integer,
+    granted_at integer
   );
   CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at);
 
@@ -269,9 +270,9 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN source_share_url text")?;
     }
     // With accounts, whose connector a token is and which household it works on (NULL:
-    // the one-password box's)
+    // the one-password box's); and when it was approved, carried through refreshes
     let tokens = columns(conn, "oauth_tokens")?;
-    for name in ["user_id", "household_id"] {
+    for name in ["user_id", "household_id", "granted_at"] {
         if !tokens.iter().any(|c| c.name == name) {
             conn.execute_batch(&format!(
                 "ALTER TABLE oauth_tokens ADD COLUMN {name} integer"
@@ -326,6 +327,24 @@ fn migrate_data(conn: &mut Connection) -> rusqlite::Result<()> {
     }
     tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
     tx.commit()
+}
+
+/// Empties a box of everything that's the household's: recipes, cookbooks, the cook log,
+/// checks and share links. For the home database when its household is deleted (its file
+/// stays: it also keeps the connector's clients and tokens, which aren't anyone's box).
+pub fn wipe_box(conn: &mut Connection) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute_batch(
+        "DELETE FROM shares;
+         DELETE FROM recipe_flags;
+         DELETE FROM recipe_checks;
+         DELETE FROM recipe_events;
+         DELETE FROM cookbook_recipes;
+         DELETE FROM cookbooks;
+         DELETE FROM recipes;",
+    )?;
+    tx.commit()?;
+    conn.execute_batch("VACUUM;")
 }
 
 pub fn open(path: &Path) -> anyhow_like::Result<Db> {

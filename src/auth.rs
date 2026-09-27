@@ -120,8 +120,10 @@ pub fn logout_cookie(headers: &HeaderMap) -> HeaderValue {
 }
 
 /// `/s/` is share links (src/share.rs): a token gives one recipe, read-only.
-const PUBLIC_PREFIXES: [&str; 6] = [
+const PUBLIC_PREFIXES: [&str; 7] = [
     "/_astro/",
+    // Accounts: signing in with Google or Apple, and where they send people back
+    "/api/auth/social/",
     "/fonts/",
     "/oauth/",
     "/.well-known/",
