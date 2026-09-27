@@ -17,6 +17,7 @@ use crate::AppState;
 use crate::auth::{check_password, is_logged_in, login_cookie, random_token, sha256_hex};
 use crate::error::AppError;
 use crate::model::now_secs;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 const MINUTE: i64 = 60;
 const DAY: i64 = 24 * 60 * MINUTE;
@@ -265,21 +266,58 @@ fn get_client(state: &AppState, id: &str) -> Option<Client> {
         .flatten()
 }
 
+/// Whose connector a token is, with accounts: the person who approved it and the household
+/// it works on. None with one password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Owner {
+    pub user_id: i64,
+    pub household_id: crate::households::HouseholdId,
+}
+
 fn issue(
     state: &AppState,
     kind: Kind,
     client_id: &str,
     challenge: Option<&str>,
     redirect: Option<&str>,
+    owner: Option<Owner>,
 ) -> Result<String, AppError> {
     let token = random_token(32);
     let now = now_secs();
     state.db.lock().execute(
-        "INSERT INTO oauth_tokens (hash, kind, client_id, code_challenge, redirect_uri, expires_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![sha256_hex(&token), kind.as_str(), client_id, challenge, redirect, now + kind.lifetime(), now],
+        "INSERT INTO oauth_tokens (hash, kind, client_id, code_challenge, redirect_uri, expires_at,
+           created_at, user_id, household_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            sha256_hex(&token),
+            kind.as_str(),
+            client_id,
+            challenge,
+            redirect,
+            now + kind.lifetime(),
+            now,
+            owner.map(|o| o.user_id),
+            owner.map(|o| o.household_id)
+        ],
     )?;
     Ok(token)
+}
+
+/// With accounts set up for the first time, the connector tokens the one-password box
+/// issued become its owner's (household 1), so nobody has to reconnect.
+pub fn adopt_tokens(state: &AppState, owner: i64) -> Result<(), AppError> {
+    state.households.home().db.lock().execute(
+        "UPDATE oauth_tokens SET user_id = ?1, household_id = ?2 WHERE household_id IS NULL",
+        params![owner, crate::households::HOME],
+    )?;
+    Ok(())
+}
+
+fn owner_of(user_id: Option<i64>, household_id: Option<i64>) -> Option<Owner> {
+    Some(Owner {
+        user_id: user_id?,
+        household_id: household_id?,
+    })
 }
 
 struct TokenRow {
@@ -287,6 +325,7 @@ struct TokenRow {
     client_id: String,
     code_challenge: Option<String>,
     redirect_uri: Option<String>,
+    owner: Option<Owner>,
 }
 
 /// Looks up an unexpired token of the given kind and deletes it (single use).
@@ -294,8 +333,8 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
     let conn = state.db.lock();
     let row = conn
         .query_row(
-            "SELECT hash, client_id, code_challenge, redirect_uri FROM oauth_tokens
-             WHERE hash = ?1 AND kind = ?2 AND expires_at > ?3",
+            "SELECT hash, client_id, code_challenge, redirect_uri, user_id, household_id
+             FROM oauth_tokens WHERE hash = ?1 AND kind = ?2 AND expires_at > ?3",
             params![sha256_hex(token), kind.as_str(), now_secs()],
             |r| {
                 Ok(TokenRow {
@@ -303,6 +342,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
                     client_id: r.get(1)?,
                     code_challenge: r.get(2)?,
                     redirect_uri: r.get(3)?,
+                    owner: owner_of(r.get(4)?, r.get(5)?),
                 })
             },
         )
@@ -313,34 +353,48 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
     Some(row)
 }
 
-/// Validates the bearer token on an MCP request. Always true when auth is disabled.
-pub fn has_valid_access_token(state: &AppState, headers: &HeaderMap) -> bool {
+/// The household an MCP request's bearer token works on, or None when it has no valid
+/// token. Without a password (and without accounts) every request works on the one box.
+/// With accounts, a token must belong to someone who is still in that household.
+pub fn access_household(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Option<crate::households::HouseholdId> {
     if !state.config.auth_enabled() {
-        return true;
+        return Some(crate::households::HOME);
     }
     let header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let Some((scheme, token)) = header.split_once(char::is_whitespace) else {
-        return false;
-    };
+    let (scheme, token) = header.split_once(char::is_whitespace)?;
     let token = token.trim();
     if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() {
-        return false;
+        return None;
     }
-    state
+    let found: Option<(Option<i64>, Option<i64>)> = state
+        .households
+        .home()
         .db
         .lock()
         .query_row(
-            "SELECT 1 FROM oauth_tokens WHERE hash = ?1 AND kind = 'access' AND expires_at > ?2",
+            "SELECT user_id, household_id FROM oauth_tokens
+             WHERE hash = ?1 AND kind = 'access' AND expires_at > ?2",
             params![sha256_hex(token), now_secs()],
-            |_| Ok(()),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
         .ok()
-        .flatten()
-        .is_some()
+        .flatten();
+    let (user, household) = found?;
+    let Some(accounts) = &state.accounts else {
+        return Some(crate::households::HOME);
+    };
+    let owner = owner_of(user, household)?;
+    accounts
+        .is_member(owner.user_id, owner.household_id)
+        .unwrap_or(false)
+        .then_some(owner.household_id)
 }
 
 fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
@@ -351,17 +405,21 @@ fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
         .into_response()
 }
 
-fn token_response(state: &AppState, client_id: &str) -> Result<Value, AppError> {
+fn token_response(
+    state: &AppState,
+    client_id: &str,
+    owner: Option<Owner>,
+) -> Result<Value, AppError> {
     // Opportunistically purge expired rows
     state.db.lock().execute(
         "DELETE FROM oauth_tokens WHERE expires_at < ?1",
         [now_secs()],
     )?;
     Ok(json!({
-        "access_token": issue(state, Kind::Access, client_id, None, None)?,
+        "access_token": issue(state, Kind::Access, client_id, None, None, owner)?,
         "token_type": "Bearer",
         "expires_in": Kind::Access.lifetime(),
-        "refresh_token": issue(state, Kind::Refresh, client_id, None, None)?,
+        "refresh_token": issue(state, Kind::Refresh, client_id, None, None, owner)?,
         "scope": "recipes",
     }))
 }
@@ -410,7 +468,7 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "PKCE verification failed",
                 )));
             }
-            token_response(&state, &row.client_id)
+            token_response(&state, &row.client_id, row.owner)
         }
         Some("refresh_token") => {
             let Some(refresh) = get_str(&m, "refresh_token") else {
@@ -427,7 +485,7 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "Refresh token is invalid or expired",
                 )));
             };
-            token_response(&state, &row.client_id)
+            token_response(&state, &row.client_id, row.owner)
         }
         _ => {
             return no_store(cors(
@@ -648,7 +706,18 @@ async fn authorize(
         );
     }
 
-    let logged_in = is_logged_in(&state.config, headers);
+    // With accounts, the connector is approved by a signed-in person, for their household
+    let session = crate::auth::session(state, headers);
+    let accounts = state.accounts.is_some();
+    let logged_in = if accounts {
+        session.is_some()
+    } else {
+        is_logged_in(&state.config, headers)
+    };
+    let owner = session.as_ref().map(|s| Owner {
+        user_id: s.user_id,
+        household_id: s.household_id,
+    });
     let mut error = "";
     if method == Method::POST {
         if form.get("action").map(String::as_str) == Some("deny") {
@@ -658,13 +727,14 @@ async fn authorize(
             );
         }
         let password = form.get("password").map(String::as_str).unwrap_or("");
-        if logged_in || check_password(&state.config, password) {
+        if logged_in || (!accounts && check_password(&state.config, password)) {
             let code = match issue(
                 state,
                 Kind::Code,
                 &client.id,
                 Some(&params.code_challenge),
                 Some(&params.redirect_uri),
+                owner,
             ) {
                 Ok(code) => code,
                 Err(err) => return err.into_response(),
@@ -673,13 +743,22 @@ async fn authorize(
                 &params.redirect_uri,
                 &[("code", &code), ("state", &params.state)],
             );
-            if !logged_in && let Some(cookie) = login_cookie(&state.config, headers) {
+            if !logged_in
+                && !accounts
+                && let Some(cookie) = login_cookie(&state.config, headers)
+            {
                 res.headers_mut().append(header::SET_COOKIE, cookie);
             }
             return res;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-        error = "Incorrect password.";
+        if !accounts {
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        }
+        error = if accounts {
+            "Sign in to Crumb first."
+        } else {
+            "Incorrect password."
+        };
     }
 
     let client_name = client
@@ -707,7 +786,24 @@ async fn authorize(
         })
         .collect();
     let password_field = if logged_in {
-        String::new()
+        match &session {
+            Some(s) => format!(
+                "<p>It will work on <strong>{}</strong>, as {}.</p>",
+                escape_html(&s.household_name),
+                escape_html(&s.email)
+            ),
+            None => String::new(),
+        }
+    } else if accounts {
+        // Back here once signed in
+        let back = format!(
+            "/oauth/authorize?{}",
+            serde_urlencoded::to_string(params.pairs()).unwrap_or_default()
+        );
+        format!(
+            r#"<p><a href="/login?next={}">Sign in to Crumb</a> to connect it.</p>"#,
+            escape_html(&utf8_percent_encode(&back, NON_ALPHANUMERIC).to_string())
+        )
     } else {
         r#"<label for="password">App password</label>
              <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>"#

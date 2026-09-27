@@ -15,23 +15,23 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{Path as UrlPath, Query};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
-use base64::Engine;
 use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use rusqlite::OptionalExtension;
 
 use crate::AppState;
+use crumb_core::photo::{MAX_SOURCE_BYTES, TOO_LARGE, decode_data_uri};
+pub use crumb_core::photo::{embed, is_embedded_photo};
 
 /// Widths the server makes. Must match `IMG_WIDTHS` in `web/src/lib/img.ts`.
 pub const WIDTHS: [u32; 5] = [160, 320, 480, 768, 1200];
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_SOURCE_BYTES: usize = 15 * 1024 * 1024;
 /// Decoded size guards against decompression bombs.
 const MAX_SIDE: u32 = 12_000;
 const MAX_PIXELS: u64 = 50_000_000;
@@ -294,7 +294,7 @@ pub fn parse_width(raw: &str) -> Option<u32> {
 }
 
 async fn serve(
-    State(state): State<AppState>,
+    crate::Scoped(state): crate::Scoped,
     UrlPath((id, width)): UrlPath<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
@@ -336,7 +336,13 @@ pub async fn serve_photo(
     let key = image_key(&image);
     let current = v.is_some_and(|v| v == key);
     let images = &state.images;
-    let source = format!("{id}-{key}");
+    // The home household's names are as they always were; another's carry its id, so
+    // two boxes' recipe 12 never share a cached photo
+    let source = if state.household == crate::households::HOME {
+        format!("{id}-{key}")
+    } else {
+        format!("h{}-{id}-{key}", state.household)
+    };
     let name = format!("{source}-{}", variant.file_suffix());
 
     if images.failed_recently(&source) {
@@ -424,7 +430,6 @@ async fn load_source(
     load_with_reqwest(http, parsed, referer).await
 }
 
-const TOO_LARGE: &str = "image too large";
 /// Image types first, as a browser's `<img>` request asks (no AVIF: it can't be decoded here).
 const IMAGE_ACCEPT: &str = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8";
 
@@ -515,24 +520,19 @@ async fn load_with_reqwest(
     Ok(body)
 }
 
-/// Bytes of a `data:image/...;base64,` URI.
-fn decode_data_uri(uri: &str) -> Result<Vec<u8>, String> {
-    let rest = uri.strip_prefix("data:").ok_or("not a data URI")?;
-    let (meta, data) = rest.split_once(',').ok_or("malformed data URI")?;
-    let meta = meta.to_ascii_lowercase();
-    if !meta.starts_with("image/") || !meta.split(';').any(|p| p == "base64") {
-        return Err("data URI isn't a base64 image".into());
+/// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
+/// None when it can't be had or isn't a JPEG, PNG or WebP.
+pub async fn fetch_to_embed(http: &reqwest::Client, url: &str) -> Option<String> {
+    match load_source(http, url, None).await {
+        Ok(bytes) => embed(&bytes),
+        Err(err) => {
+            tracing::info!(
+                "[img] {}: couldn't fetch a photo to keep: {err}",
+                crate::telemetry::host_of(url)
+            );
+            None
+        }
     }
-    if data.len() > MAX_SOURCE_BYTES / 3 * 4 + 4096 {
-        return Err(TOO_LARGE.into());
-    }
-    let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    let data = percent_encoding::percent_decode_str(&data).decode_utf8_lossy();
-    let engine = base64::engine::general_purpose::STANDARD;
-    engine
-        .decode(data.as_bytes())
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(data.as_bytes()))
-        .map_err(|e| format!("bad base64 in data URI: {e}"))
 }
 
 /// Decodes with the size guards and applies EXIF orientation.
@@ -597,6 +597,7 @@ pub fn preview_jpeg(bytes: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     pub fn png(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, y| {
@@ -682,6 +683,26 @@ mod tests {
         );
         assert!(decode_data_uri("data:text/plain;base64,aGk=").is_err());
         assert!(decode_data_uri("data:image/svg+xml,<svg/>").is_err());
+    }
+
+    #[test]
+    fn only_jpeg_png_and_webp_photos_are_kept_in_a_recipe() {
+        let png = png(4, 4);
+        let uri = embed(&png).unwrap();
+        assert!(uri.starts_with("data:image/png;base64,"));
+        assert!(is_embedded_photo(&uri));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        // Labelled as one of the three, and really one of them (the label may be off)
+        assert!(is_embedded_photo(&format!("data:image/jpeg;base64,{b64}")));
+        assert!(!is_embedded_photo(&format!("data:image/gif;base64,{b64}")));
+        assert!(!is_embedded_photo(&format!("data:text/html;base64,{b64}")));
+        assert!(!is_embedded_photo("data:image/png;base64,AA"));
+        assert!(!is_embedded_photo("data:image/svg+xml;base64,PHN2Zy8+"));
+        assert!(!is_embedded_photo("https://example.com/a.png"));
+        assert!(!is_embedded_photo("javascript:alert(1)"));
+        assert_eq!(embed(b"<svg/>"), None);
+        let webp = resize_to_webp(&png, 160).unwrap();
+        assert!(embed(&webp).unwrap().starts_with("data:image/webp;base64,"));
     }
 
     #[test]

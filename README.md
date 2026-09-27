@@ -246,6 +246,18 @@ On the More page, select **Download a backup**. Crumb downloads one JSON file wi
 
 Set `APP_PASSWORD` to protect Crumb with a password. The password protects the web app and the approval of the Claude connector. Without `APP_PASSWORD`, Crumb has no password. Use this only on your own computer.
 
+### Accounts
+
+With `AUTH_MODE=accounts`, people sign in with their own email and password instead of one shared password. Each household has its own recipe box, and each box is a separate SQLite file.
+
+- The first visit shows a setup page. The first account owns the recipes that were already in Crumb. When `APP_PASSWORD` is set, the setup asks for it, so a stranger can't claim your box.
+- With `SIGNUP=open`, anyone can make an account, which gets a new, empty recipe box.
+- The More page lists the devices you're signed in on and lets you sign any of them out.
+- Claude's connector is approved by a signed-in person and works on their household's box. Connector tokens from before accounts keep working.
+- Share links work as before.
+
+The default is `AUTH_MODE=password`, which works as described in [Password](#password).
+
 ### Self-hosting
 
 Crumb is one server program and one SQLite database file. To start Crumb, refer to [Quick start](#quick-start). For the settings, refer to [Configuration](#configuration). For Railway, refer to [DEPLOY.md](./DEPLOY.md).
@@ -293,6 +305,8 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 | Variable            | Required   | Description                                                                   |
 | ------------------- | ---------- | ----------------------------------------------------------------------------- |
 | `APP_PASSWORD`      | Production | Password for the web app and for approving the Claude connector               |
+| `AUTH_MODE`         | No         | `password` (default): one shared password. `accounts`: email sign-in and households |
+| `SIGNUP`            | No         | With accounts, `open` lets anyone make an account. Off by default             |
 | `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `ANTHROPIC_API_KEY` | No         | Turns on Wee Chef (reads pasted text, files and photos, writes "Try next" blurbs and ideas) |

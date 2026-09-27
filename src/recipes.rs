@@ -1,5 +1,6 @@
 //! Service layer shared by the REST API and the MCP connector.
 
+use futures_util::StreamExt;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rusqlite::types::Value as SqlValue;
@@ -388,11 +389,20 @@ pub async fn import_link(state: &AppState, raw_url: &str) -> AppResult<Imported>
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {
         match crate::share::fetch_export(export).await {
-            Some(crate::share::Export::Recipe(fields)) => {
+            Some(crate::share::Export::Recipe(mut fields)) => {
+                keep_shared_photo(state, &mut fields.image, &url).await;
                 let (recipe, is_new) = save_shared(state, *fields, &url)?;
                 return Ok(Imported::Recipe(Box::new(recipe), is_new));
             }
-            Some(crate::share::Export::Book(book)) => {
+            Some(crate::share::Export::Book(mut book)) => {
+                book.recipes = futures_util::stream::iter(book.recipes)
+                    .map(|mut item| async {
+                        keep_shared_photo(state, &mut item.fields.image, &url).await;
+                        item
+                    })
+                    .buffered(4)
+                    .collect()
+                    .await;
                 return save_shared_book(state, book, &url).map(Imported::Book);
             }
             None => {}
@@ -407,6 +417,26 @@ pub async fn import_link(state: &AppState, raw_url: &str) -> AppResult<Imported>
     }
     let (recipe, is_new) = create_checked(state, scraped.recipe, "url")?;
     Ok(Imported::Recipe(Box::new(recipe), is_new))
+}
+
+/// A shared recipe's photo that the share serves itself (`{share link}/.../img/{width}`: one
+/// the sharer's box keeps in the recipe) is fetched now and kept in this recipe too, since
+/// the share can be stopped. One that can't be had is dropped, so a share's link (its key)
+/// is never kept as a photo. Any other photo link is left as it is.
+async fn keep_shared_photo(state: &AppState, image: &mut Option<String>, share_url: &str) {
+    let Some(photo) = image.as_deref().filter(|i| served_by_share(i, share_url)) else {
+        return;
+    };
+    *image = crate::images::fetch_to_embed(&state.http, photo).await;
+}
+
+/// Whether `image` is a file under the share at `share_url` (on its host, below its path).
+fn served_by_share(image: &str, share_url: &str) -> bool {
+    let (Ok(image_url), Ok(share)) = (url::Url::parse(image), url::Url::parse(share_url)) else {
+        return false;
+    };
+    let under = format!("{}/", share.path().trim_end_matches('/'));
+    same_host(image, share_url) && image_url.path().starts_with(&under)
 }
 
 /// Saves a recipe from another Crumb's share: as it was, like a backup restore (no tidy;
@@ -949,20 +979,36 @@ pub fn export_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
     export_json(conn, Some(id))
 }
 
-/// One recipe for a share link (`/s/{token}/crumb.json`): the backup format the importer
-/// reads, without the cook log or cookbooks, and without the notes unless the share
-/// includes them.
-pub fn export_shared(recipe: &Recipe, include_notes: bool) -> Value {
-    json!({"format": "crumb", "version": 1, "recipes": [Value::Object(shared_fields(recipe, include_notes))]})
+/// One recipe for a share link (`/s/{token}/crumb.json`, the recipe's page at `link`): the
+/// backup format the importer reads, without the cook log or cookbooks, and without the notes
+/// unless the share includes them.
+pub fn export_shared(recipe: &Recipe, include_notes: bool, link: &str) -> Value {
+    json!({"format": "crumb", "version": 1, "recipes": [Value::Object(shared_fields(recipe, include_notes, link))]})
 }
 
-/// A shared recipe's fields for an export: its original source as the `url` (never a share
-/// link it was itself saved from), and no notes unless the share includes them.
-fn shared_fields(recipe: &Recipe, include_notes: bool) -> Map<String, Value> {
+/// Width of the photo a share's export links to (`{link}/img/{width}`).
+pub const SHARED_PHOTO_WIDTH: u32 = 1200;
+
+/// A shared recipe's fields for an export (the recipe's page at `link`): its original source
+/// as the `url` (never a share link it was itself saved from), no notes unless the share
+/// includes them, and a photo kept in the recipe itself as a link to the share's copy of it
+/// (the Crumb saving the share fetches it from there), so the export stays small.
+fn shared_fields(recipe: &Recipe, include_notes: bool, link: &str) -> Map<String, Value> {
     let mut m = recipe.fields().to_json();
     public_url(&mut m, recipe);
     if !include_notes {
         m.insert("notes".into(), Value::Null);
+    }
+    if let Some(image) = recipe
+        .image
+        .as_deref()
+        .filter(|i| crate::images::is_embedded_photo(i))
+    {
+        let key = crate::images::image_key(image);
+        m.insert(
+            "image".into(),
+            json!(format!("{link}/img/{SHARED_PHOTO_WIDTH}?v={key}")),
+        );
     }
     m
 }
@@ -1016,8 +1062,9 @@ pub fn export_book(book: &Cookbook, recipes: &[Recipe], how: BookExport) -> Valu
                     include_notes,
                     ..
                 } => {
-                    let mut m = shared_fields(r, include_notes);
-                    m.insert("shareUrl".into(), json!(format!("{base}/{}", r.id)));
+                    let link = format!("{base}/{}", r.id);
+                    let mut m = shared_fields(r, include_notes, &link);
+                    m.insert("shareUrl".into(), json!(link));
                     m
                 }
             };

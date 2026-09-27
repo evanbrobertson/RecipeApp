@@ -246,10 +246,21 @@ fn from_backup(o: &Map<String, Value>) -> Vec<ImportedRecipe> {
     };
     list.iter()
         .filter_map(|r| match RecipeFields::from_json(&without_bad_links(r)) {
-            Ok(fields) => Some(with_share_url(
+            Ok(mut fields) => Some(with_share_url(
                 r,
                 ImportedRecipe {
-                    fields,
+                    fields: {
+                        // A photo kept in the recipe itself (see `images::is_embedded_photo`)
+                        // comes back with it; any other `data:` image was dropped as a link
+                        if let Some(photo) = r
+                            .get("image")
+                            .and_then(Value::as_str)
+                            .filter(|i| crate::images::is_embedded_photo(i))
+                        {
+                            fields.image = Some(photo.to_string());
+                        }
+                        fields
+                    },
                     cookbooks: r
                         .get("cookbooks")
                         .and_then(Value::as_array)

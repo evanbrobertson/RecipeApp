@@ -428,12 +428,17 @@ impl RecipeFields {
         self.recipe_category = trim(self.recipe_category);
         self.recipe_cuisine = trim(self.recipe_cuisine);
         self.notes = trim(self.notes);
-        for (field, value) in [("url", &self.url), ("image", &self.image)] {
-            if let Some(u) = value
-                && !is_valid_url(u)
-            {
-                return Err(ValidationError(format!("{field}: Invalid URL")));
-            }
+        if self.url.as_deref().is_some_and(|u| !is_valid_url(u)) {
+            return Err(ValidationError("url: Invalid URL".into()));
+        }
+        // A photo kept in the recipe itself comes only from a backup or another Crumb's
+        // share (the API's `image` is a link), and is saved as it came
+        if self
+            .image
+            .as_deref()
+            .is_some_and(|u| !is_valid_url(u) && !crate::photo::is_embedded_photo(u))
+        {
+            return Err(ValidationError("image: Invalid URL".into()));
         }
         Ok(self)
     }

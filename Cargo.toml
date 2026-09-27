@@ -11,6 +11,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+argon2 = "0.5"
 axum = { version = "0.8", features = ["multipart"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -46,6 +47,10 @@ webp = { version = "0.3.1", default-features = false }
 wreq = { version = "=6.0.0-rc.31", features = ["gzip", "brotli", "deflate", "zstd", "cookies"] }
 wreq-util = "=3.0.0-rc.14"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+# Captures what would be sent to Sentry, for the telemetry tests
+sentry = { version = "0.49", default-features = false, features = ["test"] }
 
 [profile.release]
 opt-level = 3

@@ -49,6 +49,8 @@ src/
   lib.rs          # AppState, router, layers
   config.rs       # Env vars (APP_PASSWORD, ANTHROPIC_/OPENAI_/DEEPSEEK_*, TYPESAFE_*, SITE_URL, WEB_DIST, ...; NUXT_* fallbacks)
   db.rs           # Path resolution, pragmas, bootstrap + legacy upgrades
+  households.rs   # One SQLite file per household; Scoped extractor gives a handler its household's state
+  accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, sessions, share index); account_api.rs
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
   web.rs          # Static files + page-data injection for dynamic pages
@@ -94,6 +96,9 @@ web/src/
 - **Parallel builds:** `CRUMB_OUT_DIR=./dist-name bun run build` writes to its own folder (git-ignored).
 - **DB compatibility:** timestamps are unix seconds, JSON columns are text; the production DB on the
   Railway volume must keep working.
+- **Households:** handlers that touch recipes take `Scoped`, never `State<AppState>`: its `db` is the signed-in
+  household's file (`households/{id}/recipes.db`, or the original database for household 1). Anything cached in
+  memory or on disk per box must be keyed by `state.household`.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
@@ -101,6 +106,8 @@ web/src/
 - **Sentry:** the browser SDK gets its DSN, environment and release from a `Server-Timing` header the server adds
   to HTML responses, so there is no build-time DSN and one image serves dev and stable. The SDK loads after the
   page is idle; keep it off the critical path. Never attach recipe contents, bodies, query strings or cookies.
+  Every AI call (Wee Chef's providers and Typesafe) is a `gen_ai.chat` span via `telemetry::AiSpan` (provider, model,
+  feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 

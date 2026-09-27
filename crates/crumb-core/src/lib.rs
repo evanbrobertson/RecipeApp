@@ -11,6 +11,7 @@ pub mod fractions;
 pub mod ingredients;
 pub mod markdown;
 pub mod model;
+pub mod photo;
 pub mod source;
 pub mod suggest;
 pub mod sun;

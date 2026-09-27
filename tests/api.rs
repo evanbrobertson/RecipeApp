@@ -4963,3 +4963,726 @@ async fn a_big_shared_book_says_it_shows_the_first_500() {
     assert_eq!(doc["cookbooks"][0]["recipeCount"], 501);
     assert_eq!(doc["note"], "Showing the first 500 recipes");
 }
+
+#[tokio::test]
+async fn photos_kept_in_a_recipe_survive_shares_backups_and_json_files() {
+    use base64::Engine;
+    let photo = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png_bytes(64, 40))
+    );
+    let a = TestApp::new(None);
+    let (_, r) = a
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Photo Pie", None, "")),
+        )
+        .await;
+    let id = r["id"].as_i64().unwrap();
+    set_image(&a, id, &photo);
+    let image_of = |t: &TestApp, id: &Value| -> String {
+        t.state
+            .db
+            .lock()
+            .query_row(
+                "SELECT image FROM recipes WHERE id = ?1",
+                [id.as_i64().unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+
+    // A backup and the recipe's own .json read back with the photo, as it was
+    for uri in [
+        "/api/export",
+        &format!("/api/recipes/{id}/export?format=json"),
+    ] {
+        let (_, _, file) = a.send(get(uri)).await;
+        let c = TestApp::new(None);
+        let got = import_file_json(&c, &file).await;
+        assert_eq!(got["created"].as_array().unwrap().len(), 1, "{uri}: {got}");
+        assert_eq!(image_of(&c, &got["created"][0]["id"]), photo, "{uri}");
+    }
+
+    // A share's export links to the share's copy of the photo instead of carrying it
+    let (_, s) = a
+        .json("POST", &format!("/api/recipes/{id}/share"), None)
+        .await;
+    let (_, _, export) = a
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s["url"].as_str().unwrap())
+        )))
+        .await;
+    let export: Value = serde_json::from_str(&export).unwrap();
+    let linked = export["recipes"][0]["image"].as_str().unwrap();
+    assert!(
+        linked.contains("/img/1200?v=") && !linked.contains("data:"),
+        "{linked}"
+    );
+
+    // Another Crumb saving the share keeps the photo itself (the share can be stopped)
+    let origin = serve_app(&a).await;
+    let link = format!("{origin}{}", share_path(s["url"].as_str().unwrap()));
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json("POST", "/api/recipes/import", Some(json!({"url": link})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let kept = image_of(&b, &saved["id"]);
+    assert!(kept.starts_with("data:image/webp;base64,"), "{kept}");
+    let (status, _, _) = send_raw(
+        &b,
+        get(&format!("/img/{}/320", saved["id"].as_i64().unwrap())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // So does saving a shared cookbook holding it
+    let (_, book) = a
+        .json("POST", "/api/cookbooks", Some(json!({"name": "Pies"})))
+        .await;
+    a.json(
+        "POST",
+        &format!("/api/cookbooks/{}/recipes", book["id"]),
+        Some(json!({"recipeIds": [id]})),
+    )
+    .await;
+    let (_, bs) = a
+        .json(
+            "POST",
+            &format!("/api/cookbooks/{}/share", book["id"]),
+            None,
+        )
+        .await;
+    let book_link = format!("{origin}{}", book_path(bs["url"].as_str().unwrap()));
+    let e = TestApp::new(None);
+    let (status, saved) = e
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": book_link})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, got) = e
+        .json(
+            "GET",
+            &format!("/api/cookbooks/{}", saved["cookbook"]["id"]),
+            None,
+        )
+        .await;
+    let kept = image_of(&e, &got["recipes"][0]["id"]);
+    assert!(kept.starts_with("data:image/webp;base64,"), "{kept}");
+
+    // Sharing it on from there links to that box's own share, never to the first one
+    let (_, s2) = b
+        .json(
+            "POST",
+            &format!("/api/recipes/{}/share", saved_id(&b)),
+            None,
+        )
+        .await;
+    let (_, _, export) = b
+        .send(get(&format!(
+            "{}/crumb.json",
+            share_path(s2["url"].as_str().unwrap())
+        )))
+        .await;
+    let export: Value = serde_json::from_str(&export).unwrap();
+    let linked = export["recipes"][0]["image"].as_str().unwrap();
+    assert!(!linked.contains(&token_of(&link)), "{linked}");
+    assert!(
+        linked.contains(&token_of(s2["url"].as_str().unwrap())),
+        "{linked}"
+    );
+}
+
+/// The id of the only recipe in a box.
+fn saved_id(t: &TestApp) -> i64 {
+    t.state
+        .db
+        .lock()
+        .query_row("SELECT id FROM recipes", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_share_photo_that_cant_be_had_is_dropped_not_kept_as_a_link() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let origin_slot = std::sync::Arc::new(std::sync::OnceLock::<String>::new());
+    let o = origin_slot.clone();
+    let token = "abcdefghijklmnopqrstuv";
+    let routes = axum::Router::new()
+        .route(
+            &format!("/s/{token}"),
+            route(|| async { Html(fake_share_page("/s/abcdefghijklmnopqrstuv/crumb.json")) }),
+        )
+        .route(
+            &format!("/s/{token}/crumb.json"),
+            route(move || {
+                let o = o.clone();
+                async move {
+                    let origin = o.get().unwrap();
+                    fake_export(
+                        "Gone Pie",
+                        "https://food.test/pie",
+                        &format!("{origin}/s/{token}/img/1200?v=1"),
+                    )
+                }
+            }),
+        );
+    let origin = serve(routes).await;
+    origin_slot.set(origin.clone()).unwrap();
+    let b = TestApp::new(None);
+    let (status, saved) = b
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/s/{token}")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, got) = b
+        .json("GET", &format!("/api/recipes/{}", saved["id"]), None)
+        .await;
+    assert_eq!(got["image"], Value::Null, "{got}");
+}
+
+/// Requests as household `id` would make them once signed in: the router's state scoped
+/// to that household, as the login check does.
+async fn as_household(t: &TestApp, id: i64, req: Request<Body>) -> (StatusCode, Value) {
+    let scoped = crumb::Scoped(t.state.for_household(id).unwrap());
+    let svc = NormalizePathLayer::trim_trailing_slash()
+        .layer(app(t.state.clone()).layer(axum::Extension(scoped)));
+    let res = svc.oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+fn json_req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
+    let mut req = Request::builder().method(method).uri(uri);
+    let body = match body {
+        Some(b) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(b.to_string())
+        }
+        None => Body::empty(),
+    };
+    req.body(body).unwrap()
+}
+
+#[tokio::test]
+async fn households_each_have_their_own_box() {
+    let t = TestApp::new(None);
+    let (_, home) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Home Soup", None, "")),
+        )
+        .await;
+    let (status, theirs) = as_household(
+        &t,
+        2,
+        json_req(
+            "POST",
+            "/api/recipes",
+            Some(book_recipe("Their Pie", None, "")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{theirs}");
+    // Ids are per box, so both are recipe 1: each household sees only its own
+    assert_eq!(home["id"], theirs["id"]);
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["title"], "Home Soup");
+    let (_, list) = as_household(&t, 2, json_req("GET", "/api/recipes", None)).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["title"], "Their Pie");
+    let (_, one) = as_household(&t, 2, json_req("GET", "/api/recipes/1", None)).await;
+    assert_eq!(one["title"], "Their Pie");
+    // Cookbooks, the backup and deletes stay in their box too
+    as_household(
+        &t,
+        2,
+        json_req("POST", "/api/cookbooks", Some(json!({"name": "Theirs"}))),
+    )
+    .await;
+    let (_, books) = t.json("GET", "/api/cookbooks", None).await;
+    assert_eq!(books.as_array().unwrap().len(), 0);
+    let (_, backup) = as_household(&t, 2, json_req("GET", "/api/export", None)).await;
+    assert_eq!(backup["recipes"].as_array().unwrap().len(), 1);
+    assert_eq!(backup["recipes"][0]["title"], "Their Pie");
+    let (status, _) = as_household(&t, 2, json_req("DELETE", "/api/recipes/1", None)).await;
+    assert!(status.is_success());
+    let (_, got) = t.json("GET", "/api/recipes/1", None).await;
+    assert_eq!(
+        got["title"], "Home Soup",
+        "the home box's recipe 1 is untouched"
+    );
+}
+
+fn accounts_app(app_password: Option<&str>, open_signup: bool) -> TestApp {
+    TestApp::with_config(|c| {
+        c.auth_mode = crumb::config::AuthMode::Accounts;
+        c.open_signup = open_signup;
+        c.app_password = app_password.map(String::from);
+    })
+}
+
+/// A JSON POST that may sign in: (status, the session cookie it set, body).
+async fn auth_post(t: &TestApp, uri: &str, body: Value) -> (StatusCode, Option<String>, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, headers, text) = t.send(req).await;
+    let cookie = headers
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap().to_string())
+        .filter(|c| !c.ends_with('='));
+    (
+        status,
+        cookie,
+        serde_json::from_str(&text).unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn accounts_set_up_the_existing_box_and_sign_in() {
+    let t = accounts_app(Some("old-shared-pw"), false);
+    // A recipe from before accounts, in the one box
+    t.state
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO recipes (title, ingredients, instructions, created_at, updated_at)
+             VALUES ('Old Faithful', '[]', '[]', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let (status, _) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers, _) = t.send(get("/recipes")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/setup?next=")
+    );
+    let (_, s) = t.json("GET", "/api/auth/status", None).await;
+    assert_eq!(s["mode"], "accounts");
+    assert_eq!(s["setupNeeded"], true);
+    assert_eq!(s["setupNeedsAppPassword"], true);
+
+    // The old app password is needed to claim the box
+    let owner =
+        json!({"email": "ann@example.com", "name": "Ann Cook", "password": "correct horse"});
+    let (status, cookie, _) = auth_post(&t, "/api/auth/setup", owner.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(cookie.is_none());
+    let mut with_pw = owner.clone();
+    with_pw["appPassword"] = json!("old-shared-pw");
+    let (status, cookie, body) = auth_post(&t, "/api/auth/setup", with_pw.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let cookie = cookie.unwrap();
+    // Only once
+    let (status, _, _) = auth_post(&t, "/api/auth/setup", with_pw).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // The owner's box is the one that was here
+    let (_, list) = call(&t, "GET", "/api/recipes", None, Some(&cookie)).await;
+    assert_eq!(list[0]["title"], "Old Faithful");
+    let (_, s) = call(&t, "GET", "/api/auth/status", None, Some(&cookie)).await;
+    assert_eq!(s["user"]["name"], "Ann Cook");
+    assert_eq!(s["household"]["id"], 1);
+    assert_eq!(s["household"]["role"], "owner");
+
+    // Signing in: email and password, not the old shared password
+    let (status, _, _) =
+        auth_post(&t, "/api/auth/login", json!({"password": "old-shared-pw"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, cookie2, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ANN@example.com", "password": "wrong horse"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(cookie2.is_none());
+    let (status, cookie2, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ANN@example.com", "password": "correct horse"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie2 = cookie2.unwrap();
+
+    // Two sessions; signing the others out ends the first
+    let (_, sessions) = call(&t, "GET", "/api/auth/sessions", None, Some(&cookie2)).await;
+    assert_eq!(sessions.as_array().unwrap().len(), 2);
+    let (_, done) = call(
+        &t,
+        "POST",
+        "/api/auth/sessions/revoke-others",
+        None,
+        Some(&cookie2),
+    )
+    .await;
+    assert_eq!(done["ended"], 1);
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some(&cookie)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Signing out ends the session itself, not just the cookie
+    call(&t, "POST", "/api/auth/logout", None, Some(&cookie2)).await;
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some(&cookie2)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // A made-up or old-style cookie gets nowhere
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some("crumb_session=nope")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn accounts_sign_up_gets_a_box_of_its_own() {
+    let closed = accounts_app(None, false);
+    let (_, owner, _) = auth_post(
+        &closed,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    assert!(owner.is_some());
+    let (status, _, _) = auth_post(
+        &closed,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "sign-up is off by default");
+
+    let t = accounts_app(None, true);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+        Some(&ann),
+    )
+    .await;
+    let (status, bob, body) = auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let bob = bob.unwrap();
+    let (_, list) = call(&t, "GET", "/api/recipes", None, Some(&bob)).await;
+    assert_eq!(list.as_array().unwrap().len(), 0, "Bob's box starts empty");
+    let (_, made) = call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+        Some(&bob),
+    )
+    .await;
+    // Same id in two boxes, each seeing its own
+    let (_, mine) = call(
+        &t,
+        "GET",
+        &format!("/api/recipes/{}", made["id"]),
+        None,
+        Some(&ann),
+    )
+    .await;
+    assert_eq!(mine["title"], "Ann's Soup");
+    let (_, theirs) = call(
+        &t,
+        "GET",
+        &format!("/api/recipes/{}", made["id"]),
+        None,
+        Some(&bob),
+    )
+    .await;
+    assert_eq!(theirs["title"], "Bob's Pie");
+    let (_, s) = call(&t, "GET", "/api/auth/status", None, Some(&bob)).await;
+    assert_eq!(s["household"]["name"], "Bob's kitchen");
+    // Bob can't end Ann's sessions
+    let (_, annsessions) = call(&t, "GET", "/api/auth/sessions", None, Some(&ann)).await;
+    let id = annsessions[0]["id"].as_i64().unwrap();
+    let (status, _) = call(
+        &t,
+        "DELETE",
+        &format!("/api/auth/sessions/{id}"),
+        None,
+        Some(&bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some(&ann)).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn accounts_connect_claude_to_the_signed_in_household() {
+    let t = accounts_app(None, true);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+        Some(&ann),
+    )
+    .await;
+    let (_, bob, _) = auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    let bob = bob.unwrap();
+    call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+        Some(&bob),
+    )
+    .await;
+
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "Claude", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]})),
+        )
+        .await;
+    let client_id = client["client_id"].as_str().unwrap().to_string();
+    let verifier = "a-very-long-code-verifier-string-with-enough-entropy-1234567890";
+    use base64::Engine;
+    use sha2::Digest;
+    let challenge =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier));
+    let redirect = "https://claude.ai/api/mcp/auth_callback";
+    let q = serde_urlencoded::to_string([
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+        ("state", "xyz"),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ])
+    .unwrap();
+    let authorize = |cookie: Option<&str>, form: Option<String>| {
+        let mut req = Request::builder().uri(match &form {
+            Some(_) => "/oauth/authorize".to_string(),
+            None => format!("/oauth/authorize?{q}"),
+        });
+        if let Some(c) = cookie {
+            req = req.header(header::COOKIE, c);
+        }
+        match form {
+            Some(f) => req
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(f))
+                .unwrap(),
+            None => req.method("GET").body(Body::empty()).unwrap(),
+        }
+    };
+    // Signed out: no password box, just a way to sign in; allowing does nothing
+    let (_, _, html) = t.send(authorize(None, None)).await;
+    assert!(
+        html.contains("Sign in to Crumb") && !html.contains("App password"),
+        "{html}"
+    );
+    let (status, _, _) = t
+        .send(authorize(
+            None,
+            Some(format!("{q}&action=allow&password=correct+horse")),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK, "no code without a session");
+    // Bob approves it for his household
+    let (_, _, html) = t.send(authorize(Some(&bob), None)).await;
+    assert!(
+        html.contains("Bob&#39;s kitchen") || html.contains("Bob's kitchen"),
+        "{html}"
+    );
+    let (status, headers, _) = t
+        .send(authorize(Some(&bob), Some(format!("{q}&action=allow"))))
+        .await;
+    assert_eq!(status, StatusCode::FOUND);
+    let location = url::Url::parse(headers[header::LOCATION].to_str().unwrap()).unwrap();
+    let code = location
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let form = serde_urlencoded::to_string([
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("code_verifier", verifier),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+    ])
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/oauth/token")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form))
+        .unwrap();
+    let (_, _, text) = t.send(req).await;
+    let tokens: Value = serde_json::from_str(&text).unwrap();
+    let access = tokens["access_token"].as_str().unwrap().to_string();
+
+    let mcp = |token: Option<String>| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream");
+        if let Some(tok) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {tok}"));
+        }
+        req.body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "search_recipes", "arguments": {}}})
+            .to_string(),
+        ))
+        .unwrap()
+    };
+    let (status, _, _) = t.send(mcp(None)).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "accounts always need a token"
+    );
+    let (status, _, text) = t.send(mcp(Some(access))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(
+        text.contains("Bob's Pie") && !text.contains("Ann's Soup"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn accounts_share_links_open_the_right_box_and_old_connectors_keep_working() {
+    let t = accounts_app(None, true);
+    // A connector token issued while the box had one password
+    let old_token = "old-connector-access-token-000000000000";
+    t.state
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO oauth_tokens (hash, kind, client_id, expires_at, created_at)
+             VALUES (?1, 'access', 'c1', ?2, 1)",
+            rusqlite::params![
+                crumb::auth::sha256_hex(old_token),
+                crumb::model::now_secs() + 3600
+            ],
+        )
+        .unwrap();
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+        Some(&ann),
+    )
+    .await;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {old_token}"))
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "search_recipes", "arguments": {}}})
+            .to_string(),
+        ))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(text.contains("Ann's Soup"), "the owner's box: {text}");
+
+    // Bob shares a recipe from his own box; the public link opens it, signed out
+    let (_, bob, _) = auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    let bob = bob.unwrap();
+    let (_, pie) = call(
+        &t,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+        Some(&bob),
+    )
+    .await;
+    let (status, share) = call(
+        &t,
+        "POST",
+        &format!("/api/recipes/{}/share", pie["id"]),
+        None,
+        Some(&bob),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{share}");
+    let path = share_path(share["url"].as_str().unwrap());
+    let (status, _, html) = t.send(get(&path)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Bob&#39;s Pie") || html.contains("Bob's Pie"));
+    assert!(!html.contains("Ann's Soup"));
+    let (_, _, export) = t.send(get(&format!("{path}/crumb.json"))).await;
+    assert!(export.contains("Bob's Pie"), "{export}");
+    // Stopped: gone
+    call(
+        &t,
+        "DELETE",
+        &format!("/api/recipes/{}/share", pie["id"]),
+        None,
+        Some(&bob),
+    )
+    .await;
+    let (status, _, _) = t.send(get(&path)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

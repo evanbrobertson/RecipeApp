@@ -15,6 +15,7 @@
   import Moon from "@lucide/svelte/icons/moon"
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
+  import AccountSection from "../components/AccountSection.svelte"
   import { api, errorMessage } from "../lib/api"
   import { pageState } from "../lib/page.svelte"
   import type { ConnectorInfo, SharedLink } from "../lib/recipe"
@@ -255,6 +256,8 @@
     {/if}
   </div>
 </section>
+
+<AccountSection />
 
 {#if shares?.length}
   <section>

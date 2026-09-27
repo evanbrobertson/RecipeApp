@@ -18,8 +18,8 @@
 //!    shows. "Check all recipes" ([`check_all`]) and "Check with Wee Chef" on one recipe
 //!    only suggest: on recipes already in the box (restored, edited, or checked before)
 //!    every Jev fix becomes a review flag, and only the deterministic clean-up of
-//!    [`TidyScope::Saved`] is applied (checkbox glyphs, web codes, float quantities as
-//!    fractions, raw ISO times, a category from before the fixed list), under the same
+//!    [`TidyScope::Saved`] is applied (checkbox glyphs, web codes, stray commas in an
+//!    ingredient's brackets, float quantities as fractions, raw ISO times, a category from before the fixed list), under the same
 //!    Undo. A recipe with no category gets one question more, which of
 //!    [`crate::categories::LIST`] it is; a sure answer fills the blank in any mode. Once
 //!    the cook has undone a Wee Chef fix on a recipe, no check tidies it again. Undo is offered only while the recipe
@@ -28,7 +28,7 @@
 //!    `TYPESAFE_API_KEY`.
 
 use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use regex::Regex;
@@ -81,17 +81,16 @@ impl Mode {
     }
 }
 
-/// The queue: a semaphore for concurrency and the recipes already queued or running.
+/// The check queue: a semaphore for concurrency across households (each household keeps
+/// its own set of queued recipes, `AppState::queued`).
 pub struct Checks {
     sem: Semaphore,
-    queued: Mutex<HashSet<i64>>,
 }
 
 impl Default for Checks {
     fn default() -> Self {
         Self {
             sem: Semaphore::new(CONCURRENCY),
-            queued: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -260,6 +259,35 @@ pub fn clean_line(s: &str) -> String {
     GLYPHS.replace(&decode_entities(s), "").trim().to_string()
 }
 
+/// An ingredient line without the stray punctuation some sites leave in its brackets:
+/// a comma, semicolon or spaced dash just inside an opening bracket (`(, finely chopped)`,
+/// `( - rolled)`) or a comma or space just inside a closing one, a bracket left empty, and a closing
+/// bracket missing from a line with only one opening bracket and none closing. Anything
+/// else, like `1 (14 oz) can` or `(-5°C)`, is left as written; a second run changes nothing.
+pub fn tidy_brackets(line: &str) -> String {
+    static AFTER_OPEN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"([(\[])[\s,;]*(?:[-–—](?:\s+|$)[\s,;]*)?").unwrap());
+    static BEFORE_CLOSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s,;]+([)\]])").unwrap());
+    static EMPTY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" ?(?:\(\s*\)|\[\s*\])").unwrap());
+    if !line.contains(['(', '[']) {
+        return line.to_string();
+    }
+    let mut out = AFTER_OPEN.replace_all(line, "$1").into_owned();
+    if out.matches('(').count() == 1 && !out.contains(')') {
+        out = format!("{})", out.trim_end());
+    }
+    out = BEFORE_CLOSE.replace_all(&out, "$1").into_owned();
+    // `(())` empties in two passes
+    loop {
+        let next = EMPTY.replace_all(&out, "").into_owned();
+        if next == out {
+            break;
+        }
+        out = next;
+    }
+    out.trim().to_string()
+}
+
 /// How much [`tidy`] may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TidyScope {
@@ -269,8 +297,9 @@ pub enum TidyScope {
     /// Other outside text (pasted, a file, a photo): checkbox glyphs, HTML entities, a
     /// step repeating the one before, and a missing total time.
     Import,
-    /// A recipe already in the box: checkbox glyphs, HTML entities, decimal quantities
-    /// that are plainly fractions, and raw ISO times; nothing is dropped or filled in.
+    /// A recipe already in the box: checkbox glyphs, HTML entities, stray punctuation in
+    /// an ingredient's brackets, decimal quantities that are plainly fractions, and raw
+    /// ISO times; nothing is dropped or filled in.
     Saved,
 }
 
@@ -305,7 +334,8 @@ fn looks_like_credit(step: &str) -> bool {
 }
 
 /// Cleans up a recipe in place: strips checkbox glyphs, decodes leftover HTML entities,
-/// turns float quantities into fractions ([`crate::fractions`]) and raw ISO times of a
+/// tidies stray punctuation in an ingredient's brackets ([`tidy_brackets`]), turns float
+/// quantities into fractions ([`crate::fractions`]) and raw ISO times of a
 /// minute or more into readable ones (every scope); with [`TidyScope::Import`] or [`TidyScope::Scrape`] it
 /// also drops a step repeating the one before and fills in a missing total time from the
 /// prep and cook times, and with [`TidyScope::Scrape`] a short photo credit or ad line
@@ -351,6 +381,14 @@ pub fn tidy(fields: &mut RecipeFields, scope: TidyScope) -> Tidied {
         }
         for item in &mut section.items {
             text(item, true);
+        }
+    }
+    // Stray commas and dashes in an ingredient's brackets: "(, finely chopped)"
+    for item in fields.ingredients.iter_mut().flat_map(|s| &mut s.items) {
+        let next = tidy_brackets(item);
+        if next != *item {
+            *item = next;
+            changes += 1;
         }
     }
     // Categories come from Crumb's fixed list: a site's wording is filed under it, and
@@ -1114,6 +1152,7 @@ async fn ask_jev(
     let url = format!("{}/v1/systemone", ts.base_url);
     let mut attempt = 0;
     loop {
+        let span = crate::telemetry::AiSpan::start("typesafe", &ts.model, "check", None);
         let res = state
             .http
             .post(&url)
@@ -1124,7 +1163,23 @@ async fn ask_jev(
             .await;
         let retry = match res {
             Ok(res) if res.status().is_success() => {
-                let v: Value = res.json().await.map_err(|e| format!("bad reply: {e}"))?;
+                let v: Value = match res.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        span.failed(crate::telemetry::ai_error_type(&e));
+                        return Err(format!("bad reply: {e}"));
+                    }
+                };
+                let input_tokens = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                span.answered(
+                    v["model"].as_str(),
+                    crate::telemetry::AiUsage {
+                        input: input_tokens,
+                        output: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
+                        ..Default::default()
+                    },
+                    None,
+                );
                 let answers = v
                     .get("answers")
                     .and_then(Value::as_object)
@@ -1138,6 +1193,7 @@ async fn ask_jev(
             }
             Ok(res) => {
                 let status = res.status().as_u16();
+                span.failed(&format!("http_{status}"));
                 let text = res.text().await.unwrap_or_default();
                 let err = format!("HTTP {status}: {}", crate::telemetry::api_error_text(&text));
                 if !(status == 429 || status >= 500) {
@@ -1145,7 +1201,10 @@ async fn ask_jev(
                 }
                 err
             }
-            Err(e) => format!("request failed: {e}"),
+            Err(e) => {
+                span.failed(crate::telemetry::ai_error_type(&e));
+                format!("request failed: {e}")
+            }
         };
         if attempt >= 2 {
             return Err(retry);
@@ -1186,7 +1245,6 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
     let now = now_secs();
     for &id in ids {
         if !state
-            .checks
             .queued
             .lock()
             .map(|mut q| q.insert(id))
@@ -1213,7 +1271,7 @@ pub fn queue(state: &AppState, conn: &Connection, ids: &[i64], mode: Mode) {
 }
 
 fn forget(state: &AppState, id: i64) {
-    if let Ok(mut q) = state.checks.queued.lock() {
+    if let Ok(mut q) = state.queued.lock() {
         q.remove(&id);
     }
 }
@@ -1309,8 +1367,8 @@ fn insert_flag(conn: &Connection, id: i64, f: &Flag, state: &str, now: i64) -> A
 /// Stores a finished check and records every flag. The confident fixes are applied
 /// only to a fresh import ([`Mode::Import`]) that nobody has edited, before or during
 /// the check; on anything else they become review flags, and only the deterministic
-/// clean-up of [`TidyScope::Saved`] is applied (undoable): glyphs, entities, float
-/// quantities as fractions and raw ISO times. No clean-up at all once the cook has undone
+/// clean-up of [`TidyScope::Saved`] is applied (undoable): glyphs, entities, stray
+/// commas in brackets, float quantities as fractions and raw ISO times. No clean-up at all once the cook has undone
 /// a fix on the recipe. Returns (fixed, to review).
 fn apply(
     conn: &Connection,
@@ -2015,6 +2073,72 @@ mod tests {
         assert_eq!(format_minutes(70), "1h 10m");
         assert_eq!(format_minutes(120), "2h");
         assert_eq!(format_minutes(5), "5m");
+    }
+
+    #[test]
+    fn tidy_brackets_drops_stray_punctuation() {
+        for (line, want) in [
+            (
+                "1 tbsp rosemary leaves (, finely chopped (note 2))",
+                "1 tbsp rosemary leaves (finely chopped (note 2))",
+            ),
+            (
+                "3 garlic cloves (, finely minced)",
+                "3 garlic cloves (finely minced)",
+            ),
+            (
+                "2 lb pork belly ( - rolled and tied)",
+                "2 lb pork belly (rolled and tied)",
+            ),
+            ("1 onion (; diced)", "1 onion (diced)"),
+            ("1 onion (– diced)", "1 onion (diced)"),
+            ("1 onion (diced, )", "1 onion (diced)"),
+            ("salt () to taste", "salt to taste"),
+            ("salt ( , ) to taste", "salt to taste"),
+            ("salt (())", "salt"),
+            ("2 eggs [, beaten]", "2 eggs [beaten]"),
+            // One opening bracket, none closing: closed
+            ("1 lemon (zest and juice", "1 lemon (zest and juice)"),
+            ("1 lemon (zest, ", "1 lemon (zest)"),
+            ("1 lemon (", "1 lemon"),
+        ] {
+            assert_eq!(tidy_brackets(line), want, "{line}");
+            assert_eq!(tidy_brackets(want), want, "twice: {want}");
+        }
+        for line in [
+            "1 (14 oz) can tomatoes",
+            "2 cups flour",
+            "1 bag (-5°C) frozen peas",
+            "1 onion (red or white), diced",
+            "3 eggs (large) (room temperature)",
+            // Which bracket is missing its close isn't clear: left alone
+            "1 cup stock (low salt (or water)",
+            "1 egg)",
+            "a-b (c-d)",
+        ] {
+            assert_eq!(tidy_brackets(line), line);
+        }
+    }
+
+    #[test]
+    fn tidy_cleans_brackets_in_ingredients_only() {
+        let mut f = RecipeFields {
+            title: "Pork".into(),
+            ingredients: vec![Section::unnamed(vec![
+                "2 lb pork belly ( - rolled and tied)".into(),
+                "1 (14 oz) can tomatoes".into(),
+            ])],
+            instructions: vec![Section::unnamed(vec!["Roast (, uncovered).".into()])],
+            ..Default::default()
+        };
+        assert_eq!(tidy(&mut f, TidyScope::Saved).changes, 1);
+        assert_eq!(
+            f.ingredients[0].items[0],
+            "2 lb pork belly (rolled and tied)"
+        );
+        assert_eq!(f.ingredients[0].items[1], "1 (14 oz) can tomatoes");
+        assert_eq!(f.instructions[0].items[0], "Roast (, uncovered).");
+        assert_eq!(tidy(&mut f, TidyScope::Saved).changes, 0);
     }
 
     #[test]
