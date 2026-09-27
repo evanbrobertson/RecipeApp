@@ -99,6 +99,8 @@ web/src/
 - **Sentry:** the browser SDK gets its DSN, environment and release from a `Server-Timing` header the server adds
   to HTML responses, so there is no build-time DSN and one image serves dev and stable. The SDK loads after the
   page is idle; keep it off the critical path. Never attach recipe contents, bodies, query strings or cookies.
+  Every AI call (Wee Chef's providers and Typesafe) is a `gen_ai.chat` span via `telemetry::AiSpan` (provider, model,
+  feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 

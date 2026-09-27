@@ -22,6 +22,15 @@ impl LlmProvider {
         }
     }
 
+    /// The provider as OpenTelemetry's `gen_ai.provider.name` names it, for Sentry.
+    pub fn otel_name(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
+            Self::DeepSeek => "deepseek",
+        }
+    }
+
     fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "anthropic" | "claude" => Some(Self::Anthropic),

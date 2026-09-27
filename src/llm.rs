@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::config::{LlmConfig, LlmProvider};
 use crate::model::{RecipeFields, normalize_sections, parse_sections};
 use crate::photos::Photo;
+use crate::telemetry::{AiSpan, AiUsage};
 
 const SYSTEM: &str = "You extract recipes from messy pasted text (web pages, emails, notes, OCR).
 Return the recipe exactly as written: keep every ingredient and every step, with quantities, temperatures and times unchanged.
@@ -264,6 +265,23 @@ fn reply_json(provider: LlmProvider, msg: &Value) -> Option<Value> {
     serde_json::from_str(text.trim()).ok()
 }
 
+/// Token use, the answering model and why it stopped, from a provider's response body.
+fn usage_of(provider: LlmProvider, msg: &Value) -> (AiUsage, Option<&str>, Option<&str>) {
+    let model = msg.get("model").and_then(Value::as_str);
+    match provider {
+        LlmProvider::Anthropic => (
+            AiUsage::from_anthropic(&msg["usage"]),
+            model,
+            msg.get("stop_reason").and_then(Value::as_str),
+        ),
+        LlmProvider::OpenAi | LlmProvider::DeepSeek => (
+            AiUsage::from_openai(&msg["usage"]),
+            model,
+            msg["choices"][0]["finish_reason"].as_str(),
+        ),
+    }
+}
+
 /// Sends one structured-output request, retrying once on rate limits and server errors.
 /// None when no provider is configured or the call fails; the failure is logged.
 pub async fn ask(state: &AppState, ask: Ask<'_>) -> Option<Value> {
@@ -274,14 +292,32 @@ pub async fn ask(state: &AppState, ask: Ask<'_>) -> Option<Value> {
 async fn send(state: &AppState, ask: &Ask<'_>, content: UserContent<'_>) -> Option<Value> {
     let llm = state.config.llm.as_ref()?;
     let mut last_error = String::new();
+    let max_tokens = match llm.provider {
+        LlmProvider::DeepSeek => ask.max_tokens.min(DEEPSEEK_MAX_TOKENS),
+        _ => ask.max_tokens,
+    };
     for attempt in 0..2 {
+        let span = AiSpan::start(
+            llm.provider.otel_name(),
+            ask.model,
+            ask.tag,
+            Some(max_tokens),
+        );
         match build(state, llm, ask, content)
             .timeout(ask.timeout)
             .send()
             .await
         {
             Ok(res) if res.status().is_success() => {
-                let msg: Value = res.json().await.ok()?;
+                let msg: Value = match res.json().await {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        span.failed(crate::telemetry::ai_error_type(&err));
+                        return None;
+                    }
+                };
+                let (usage, model, finish) = usage_of(llm.provider, &msg);
+                span.answered(model, usage, finish);
                 let out = reply_json(llm.provider, &msg);
                 if out.is_none() {
                     tracing::warn!("[llm-{}] no usable reply (refused or cut off)", ask.tag);
@@ -290,6 +326,7 @@ async fn send(state: &AppState, ask: &Ask<'_>, content: UserContent<'_>) -> Opti
             }
             Ok(res) => {
                 let status = res.status();
+                span.failed(&format!("http_{}", status.as_u16()));
                 last_error = format!(
                     "API error {}: {}",
                     status.as_u16(),
@@ -300,7 +337,10 @@ async fn send(state: &AppState, ask: &Ask<'_>, content: UserContent<'_>) -> Opti
                     break;
                 }
             }
-            Err(err) => last_error = err.to_string(),
+            Err(err) => {
+                span.failed(crate::telemetry::ai_error_type(&err));
+                last_error = err.to_string();
+            }
         }
         if attempt == 0 {
             tokio::time::sleep(Duration::from_millis(800)).await;
