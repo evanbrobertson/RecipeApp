@@ -128,9 +128,15 @@ const PUBLIC_PREFIXES: [&str; 6] = [
     "/mcp",
     "/s/",
 ];
-const PUBLIC_PATHS: [&str; 10] = [
+const PUBLIC_PATHS: [&str; 15] = [
     "/login",
     "/api/auth/login",
+    // Accounts: first-run setup and sign-up (both refuse when they don't apply)
+    "/setup",
+    "/signup",
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/signup",
     "/api/health",
     "/robots.txt",
     "/manifest.webmanifest",
@@ -156,14 +162,96 @@ pub fn is_public(path: &str) -> bool {
             && !trimmed[1..].contains('/'))
 }
 
-/// Protects every page and API route behind the app password. The MCP endpoint does
+/// Who a request is signed in as, with accounts: set by [`require_login`] beside the
+/// [`crate::Scoped`] state for their household.
+#[derive(Clone)]
+pub struct SignedIn(pub crate::accounts::Session);
+
+impl axum::extract::FromRequestParts<AppState> for SignedIn {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<SignedIn>()
+            .cloned()
+            .ok_or_else(|| AppError::new(401, "Not signed in"))
+    }
+}
+
+/// The live accounts session for a request's cookie (None without accounts).
+pub fn session(state: &AppState, headers: &HeaderMap) -> Option<crate::accounts::Session> {
+    let accounts = state.accounts.as_ref()?;
+    let token = cookie_value(headers, COOKIE)?;
+    match accounts.session(&token) {
+        Ok(found) => found,
+        Err(err) => {
+            tracing::warn!("[auth] couldn't read a session: {}", err.message);
+            None
+        }
+    }
+}
+
+/// Whether the request is signed in, however this install signs people in.
+pub fn signed_in(state: &AppState, headers: &HeaderMap) -> bool {
+    if state.accounts.is_some() {
+        session(state, headers).is_some()
+    } else {
+        is_logged_in(&state.config, headers)
+    }
+}
+
+/// `Set-Cookie` for an accounts session's token.
+pub fn session_cookie(token: &str, headers: &HeaderMap) -> Option<HeaderValue> {
+    let secure = if is_https(headers) { "; Secure" } else { "" };
+    let max_age = crate::accounts::SESSION_SECS;
+    HeaderValue::from_str(&format!(
+        "{COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
+    ))
+    .ok()
+}
+
+/// Protects every page and API route behind the app password, or with accounts, a
+/// session (and scopes the request to that session's household). The MCP endpoint does
 /// its own bearer-token check; OAuth endpoints must stay public.
 pub async fn require_login(
     State(state): State<AppState>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
     let path = req.uri().path();
+    if let Some(accounts) = &state.accounts {
+        if let Some(signed) = session(&state, req.headers()) {
+            let scoped = match state.for_household(signed.household_id) {
+                Ok(scoped) => scoped,
+                Err(err) => return err.into_response(),
+            };
+            req.extensions_mut().insert(crate::Scoped(scoped));
+            req.extensions_mut().insert(SignedIn(signed));
+            return next.run(req).await;
+        }
+        if is_public(path) {
+            return next.run(req).await;
+        }
+        if path.starts_with("/api/") {
+            return AppError::new(401, "Not signed in").into_response();
+        }
+        let page = if accounts.needs_setup().unwrap_or(false) {
+            "/setup"
+        } else {
+            "/login"
+        };
+        let target = req
+            .uri()
+            .path_and_query()
+            .map(|p| p.as_str())
+            .unwrap_or("/");
+        let next_param = utf8_percent_encode(target, NON_ALPHANUMERIC);
+        return found(&format!("{page}?next={next_param}"));
+    }
     if state.config.app_password.is_none()
         || is_public(path)
         || is_logged_in(&state.config, req.headers())

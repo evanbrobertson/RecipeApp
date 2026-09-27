@@ -1,7 +1,7 @@
 //! The JSON API under /api, same routes and shapes as the Nuxt server had.
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, Query};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
@@ -125,6 +125,9 @@ async fn login(
     body: Bytes,
 ) -> AppResult<Response> {
     let body = json_body(&body)?;
+    if state.config.accounts() {
+        return crate::account_api::log_in(&state, &headers, &body).await;
+    }
     let password = body
         .get("password")
         .and_then(Value::as_str)
@@ -145,7 +148,8 @@ async fn login(
     Ok(res)
 }
 
-async fn logout(headers: HeaderMap) -> Response {
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    crate::account_api::log_out(&state, &headers);
     let mut res = Json(json!({"ok": true})).into_response();
     res.headers_mut()
         .append(header::SET_COOKIE, auth::logout_cookie(&headers));

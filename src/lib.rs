@@ -1,5 +1,7 @@
 //! Crumb: a private recipe box. Paste a link, keep just the recipe.
 
+pub mod account_api;
+pub mod accounts;
 pub mod api;
 pub mod auth;
 pub mod browser;
@@ -47,6 +49,8 @@ pub struct AppState {
     pub db: db::Db,
     /// Every household's box.
     pub households: Arc<households::Households>,
+    /// People and their sessions, with `AUTH_MODE=accounts`.
+    pub accounts: Option<Arc<accounts::Accounts>>,
     pub config: Arc<config::Config>,
     pub http: reqwest::Client,
     pub web: Arc<web::Web>,
@@ -77,7 +81,15 @@ impl AppState {
             config.households_dir.clone(),
         ));
         let home = households.home().clone();
+        let accounts = config.accounts().then(|| {
+            let opened = match &config.accounts_db {
+                Some(path) => accounts::Accounts::open(path),
+                None => accounts::Accounts::open_in_memory(),
+            };
+            Arc::new(opened.expect("accounts database"))
+        });
         Self {
+            accounts,
             household: home.id,
             db: home.db,
             households,
@@ -155,6 +167,7 @@ fn security_header(name: &'static str, value: &'static str) -> SetResponseHeader
 pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(api::routes())
+        .merge(account_api::routes())
         .merge(oauth::routes())
         .merge(mcp::routes())
         .merge(images::routes())

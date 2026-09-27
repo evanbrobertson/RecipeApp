@@ -384,7 +384,7 @@ pub async fn review_hint(
 }
 
 async fn login(crate::Scoped(state): crate::Scoped, req: Request) -> Response {
-    if crate::auth::is_logged_in(&state.config, req.headers()) {
+    if crate::auth::signed_in(&state, req.headers()) {
         return crate::auth::found("/");
     }
     static_files(crate::Scoped(state), req).await

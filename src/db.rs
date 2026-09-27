@@ -107,7 +107,9 @@ fn bootstrap_sql() -> String {
     code_challenge text,
     redirect_uri text,
     expires_at integer NOT NULL,
-    created_at integer NOT NULL
+    created_at integer NOT NULL,
+    user_id integer,
+    household_id integer
   );
   CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at);
 
@@ -265,6 +267,16 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
         .any(|c| c.name == "source_share_url")
     {
         conn.execute_batch("ALTER TABLE cookbooks ADD COLUMN source_share_url text")?;
+    }
+    // With accounts, whose connector a token is and which household it works on (NULL:
+    // the one-password box's)
+    let tokens = columns(conn, "oauth_tokens")?;
+    for name in ["user_id", "household_id"] {
+        if !tokens.iter().any(|c| c.name == name) {
+            conn.execute_batch(&format!(
+                "ALTER TABLE oauth_tokens ADD COLUMN {name} integer"
+            ))?;
+        }
     }
     // Wee Chef's checks: what a fix wrote (for Undo), why a recipe was queued, and the
     // recipe's updated_at when a check last left it (so later edits are re-checked)
