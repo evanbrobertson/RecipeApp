@@ -761,10 +761,11 @@
   .on-tile .tab:not([aria-selected="true"]):hover {
     background: rgb(255 253 248 / 0.24);
   }
-  /* 1px into the field, so no hairline of tile shows through the join */
+  /* 2px into the field, so no hairline of tile shows through the join and the focus ring's clip
+     (1px up from the bottom) cuts through paper, never through the ring */
   .tab[aria-selected="true"] {
-    height: calc(2.75rem + 1px);
-    margin-bottom: -1px;
+    height: calc(2.75rem + 2px);
+    margin-bottom: -2px;
     background: var(--paper);
     color: var(--text);
     font-weight: 700;
@@ -772,29 +773,31 @@
   .tab:focus-visible {
     outline-color: var(--butter);
   }
-  /* Folder-tab feet: inverted corners where the active tab meets the field */
+  /* Folder-tab feet: inverted corners where the active tab meets the field. Like the tab, they
+     run 2px into the field, so each curve ends on the field's top edge and its ring meets the field's,
+     and 1px under the tab, so no seam of the ring shows between them */
   .tab[aria-selected="true"]::before,
   .tab[aria-selected="true"]::after {
     --cut: transparent var(--foot), var(--paper) calc(var(--foot) + 0.5px);
     content: "";
     position: absolute;
     bottom: 0;
-    width: var(--foot);
-    height: var(--foot);
+    width: calc(var(--foot) + 1px);
+    height: calc(var(--foot) + 2px);
     pointer-events: none;
   }
   .tab[aria-selected="true"]::before {
-    right: 100%;
+    right: calc(100% - 1px);
     background: radial-gradient(circle at 0 0, var(--cut));
   }
   .tab[aria-selected="true"]::after {
-    left: 100%;
+    left: calc(100% - 1px);
     background: radial-gradient(circle at 100% 0, var(--cut));
   }
   /* With the field focused, the ring runs up and around the active tab and its feet too */
   .topbox:has(.search:focus-within, .add:focus-within) .tab[aria-selected="true"] {
     box-shadow: 0 0 0 3px var(--ring);
-    clip-path: inset(-3px calc(-1 * var(--foot)) 0);
+    clip-path: inset(-3px calc(-1 * var(--foot)) 1px);
   }
   .topbox:has(.search:focus-within, .add:focus-within) .tab[aria-selected="true"]::before,
   .topbox:has(.search:focus-within, .add:focus-within) .tab[aria-selected="true"]::after {
