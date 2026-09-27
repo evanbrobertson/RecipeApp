@@ -3,18 +3,18 @@ import Layout from "../layouts/Layout.astro"
 import LoginForm from "../islands/LoginForm.svelte"
 ---
 
-<Layout title="Sign in" bare hand themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}>
+<Layout title="Create account" bare hand themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}>
   <div class="flex min-h-dvh flex-col">
     <header class="tile-surface">
       <div
         class="mx-auto flex w-full max-w-sm flex-col gap-2 px-5 pt-[calc(env(safe-area-inset-top)+3rem)] pb-10 sm:pt-20 sm:pb-14"
       >
         <h1 class="page-title">Crumb</h1>
-        <p class="hand text-[2.375rem]">welcome back, cook</p>
+        <p class="hand text-[2.375rem]">pull up a chair</p>
       </div>
     </header>
     <main class="mx-auto w-full max-w-sm flex-1 px-5 pt-7 pb-10">
-      <LoginForm client:load />
+      <LoginForm client:load kind="signup" />
     </main>
   </div>
 </Layout>
