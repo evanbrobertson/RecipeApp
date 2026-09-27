@@ -544,14 +544,14 @@ pub struct RecipeSummary {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cookbook {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
     pub color: Option<String>,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub created_at: i64,
 }
 
@@ -567,14 +567,14 @@ pub struct CookbookListItem {
     pub recipe_count: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CookbookWithRecipes {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
     pub color: Option<String>,
-    #[serde(serialize_with = "ser_iso")]
+    #[serde(serialize_with = "ser_iso", deserialize_with = "de_iso")]
     pub created_at: i64,
     pub recipes: Vec<RecipeSummary>,
 }

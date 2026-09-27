@@ -6,7 +6,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Weekday};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -516,7 +516,7 @@ pub fn similarity(a: &Features, b: &Features) -> f64 {
 
 // ─── Ranking ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasonKind {
     Like,

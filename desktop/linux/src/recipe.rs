@@ -467,7 +467,7 @@ impl qobject::RecipeView {
                 None => return,
             };
             let _ = qt_thread.queue(move |mut object| match result {
-                Ok(()) => object.as_mut().set_toast(QString::from("Marked as cooked")),
+                Ok(_) => object.as_mut().set_toast(QString::from("Marked as cooked")),
                 Err(Error::Unauthorized) => object.as_mut().unauthorized(),
                 Err(err) => object
                     .as_mut()

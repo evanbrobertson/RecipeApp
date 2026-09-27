@@ -1,7 +1,9 @@
 //! End-to-end tests: the real server router, served on a local port, driven by the client.
 
 use crumb::{AppState, app, browser::Browser, config::Config, db};
-use crumb_client::{Client, Error, ImportInput, SESSION_COOKIE, Section};
+use crumb_client::{
+    AiStatus, Client, Error, ImportInput, RecipeFormat, SESSION_COOKIE, Section, ShareKind,
+};
 use serde_json::{Value, json};
 
 /// A running Crumb server on a random local port, with a throwaway database.
@@ -55,7 +57,7 @@ impl Server {
     }
 }
 
-/// Saves a recipe straight through the REST API (the client has no create method).
+/// Saves a recipe straight through the REST API, independent of the client under test.
 async fn create(origin: &str, body: Value) -> Value {
     reqwest::Client::new()
         .post(format!("{origin}/api/recipes"))
@@ -263,4 +265,377 @@ fn image_url_uses_the_webs_fnv1a() {
         client.image_url(1, 160, ""),
         "http://127.0.0.1:3000/img/1/160?v=811c9dc5"
     );
+}
+
+#[tokio::test]
+async fn creates_patches_and_deletes_a_recipe() {
+    let server = Server::start(None).await;
+    let client = Client::new(&server.origin).unwrap();
+
+    let (recipe, is_new) = client
+        .create_recipe(&json!({
+            "title": "Soda Bread",
+            "description": "Quick and plain",
+            "ingredients": [{"items": ["500 g flour", "400 ml buttermilk"]}],
+            "url": "https://food.test/soda-bread",
+        }))
+        .await
+        .unwrap();
+    assert!(is_new);
+    // The same URL again returns the saved recipe rather than a copy
+    let (again, is_new) = client
+        .create_recipe(&json!({"title": "Other", "url": "https://food.test/soda-bread"}))
+        .await
+        .unwrap();
+    assert!(!is_new);
+    assert_eq!(again.id, recipe.id);
+
+    let patched = client
+        .patch_recipe(recipe.id, &json!({"title": "Irish Soda Bread"}))
+        .await
+        .unwrap();
+    assert_eq!(patched.title, "Irish Soda Bread");
+    assert_eq!(patched.description.as_deref(), Some("Quick and plain"));
+    assert_eq!(patched.ingredients, recipe.ingredients);
+
+    let cleared = client
+        .patch_recipe(recipe.id, &json!({"description": null}))
+        .await
+        .unwrap();
+    assert_eq!(cleared.description, None);
+
+    client.delete_recipe(recipe.id).await.unwrap();
+    assert!(matches!(
+        client.recipe(recipe.id).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+    assert!(matches!(
+        client.delete_recipe(recipe.id).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+
+    match client.create_recipe(&json!({"title": ""})).await {
+        Err(Error::Api {
+            status: 400,
+            message,
+        }) => assert!(!message.is_empty()),
+        other => panic!("expected an Api 400, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn bulk_deletes_recipes() {
+    let server = Server::start(None).await;
+    let a = create(&server.origin, json!({"title": "A"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let b = create(&server.origin, json!({"title": "B"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+    assert_eq!(client.bulk_delete(&[a, b, 999_999]).await.unwrap(), 2);
+    assert!(client.recipes(None, None).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_cook_can_be_undone() {
+    let server = Server::start(None).await;
+    let id = create(&server.origin, json!({"title": "Pancakes"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let cooked = client.cooked(id).await.unwrap();
+    assert_eq!(cooked.stats.count, 1);
+    assert!(cooked.stats.last_cooked_at.is_some());
+    let event = cooked.event_id.expect("a new cook has an event to undo");
+
+    // Cooking again straight away is the same cook: nothing new to undo
+    let again = client.cooked(id).await.unwrap();
+    assert_eq!(again.stats.count, 1);
+    assert_eq!(again.event_id, None);
+
+    let undone = client.undo_cooked(id, Some(event)).await.unwrap();
+    assert_eq!(undone.count, 0);
+    assert_eq!(undone.last_cooked_at, None);
+}
+
+#[tokio::test]
+async fn files_recipes_in_cookbooks() {
+    let server = Server::start(None).await;
+    let recipe = create(&server.origin, json!({"title": "Scones"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let book = client
+        .create_cookbook("Baking", Some("Weekend things"), None)
+        .await
+        .unwrap();
+    assert_eq!(book.name, "Baking");
+    assert_eq!(book.description.as_deref(), Some("Weekend things"));
+
+    assert_eq!(client.add_to_cookbook(book.id, &[recipe]).await.unwrap(), 1);
+    assert_eq!(client.add_to_cookbook(book.id, &[recipe]).await.unwrap(), 0);
+    let full = client.cookbook(book.id).await.unwrap();
+    assert_eq!(full.recipes.len(), 1);
+    assert_eq!(full.recipes[0].title, "Scones");
+    assert_eq!(
+        client.recipe_cookbooks(recipe).await.unwrap(),
+        vec![book.id]
+    );
+    let listed = client.cookbooks().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].recipe_count, 1);
+
+    client.remove_from_cookbook(book.id, recipe).await.unwrap();
+    assert!(client.recipe_cookbooks(recipe).await.unwrap().is_empty());
+
+    let color = crumb::model::BOOK_COLORS[1];
+    let renamed = client
+        .patch_cookbook(
+            book.id,
+            &json!({"name": "Bakes", "color": color, "description": null}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.name, "Bakes");
+    assert_eq!(renamed.color.as_deref(), Some(color));
+    assert_eq!(renamed.description, None);
+
+    client.delete_cookbook(book.id).await.unwrap();
+    assert!(client.cookbooks().await.unwrap().is_empty());
+    assert!(matches!(
+        client.cookbook(book.id).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+    // The recipe stays in the box
+    assert_eq!(client.recipe(recipe).await.unwrap().title, "Scones");
+}
+
+#[tokio::test]
+async fn exports_recipes_books_and_the_whole_box() {
+    let server = Server::start(None).await;
+    let id = create(
+        &server.origin,
+        json!({"title": "Crème Brûlée", "ingredients": [{"items": ["4 egg yolks"]}]}),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let json_file = client.export_recipe(id, RecipeFormat::Json).await.unwrap();
+    assert_eq!(json_file.file_name, "crème-brûlée.json");
+    assert!(json_file.content_type.starts_with("application/json"));
+    let doc: serde_json::Value = serde_json::from_slice(&json_file.bytes).unwrap();
+    assert!(doc.to_string().contains("4 egg yolks"));
+
+    let md = client
+        .export_recipe(id, RecipeFormat::Markdown)
+        .await
+        .unwrap();
+    assert_eq!(md.file_name, "crème-brûlée.md");
+    assert!(md.content_type.starts_with("text/markdown"));
+    assert!(
+        String::from_utf8(md.bytes)
+            .unwrap()
+            .contains("Crème Brûlée")
+    );
+
+    let book = client
+        .create_cookbook("Puddings", None, None)
+        .await
+        .unwrap();
+    client.add_to_cookbook(book.id, &[id]).await.unwrap();
+    let book_file = client.export_cookbook(book.id).await.unwrap();
+    assert_eq!(book_file.file_name, "puddings.json");
+    assert!(!book_file.bytes.is_empty());
+
+    let all = client.export_all().await.unwrap();
+    assert!(all.file_name.starts_with("crumb-") && all.file_name.ends_with(".json"));
+    assert!(
+        String::from_utf8(all.bytes)
+            .unwrap()
+            .contains("Crème Brûlée")
+    );
+}
+
+#[tokio::test]
+async fn an_exported_recipe_imports_back_from_a_file() {
+    let server = Server::start(None).await;
+    let id = create(
+        &server.origin,
+        json!({"title": "Flapjacks", "ingredients": [{"items": ["250 g oats"]}]}),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let file = client.export_recipe(id, RecipeFormat::Json).await.unwrap();
+    client.delete_recipe(id).await.unwrap();
+
+    let results = client
+        .import_files(vec![(file.file_name.clone(), file.bytes)])
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file, file.file_name);
+    assert_eq!(results[0].error, None);
+    assert_eq!(results[0].created.len(), 1);
+    let back = client.recipe(results[0].created[0].id).await.unwrap();
+    assert_eq!(back.title, "Flapjacks");
+    assert_eq!(back.ingredients[0].items, vec!["250 g oats".to_string()]);
+
+    assert!(matches!(
+        client.import_files(Vec::new()).await,
+        Err(Error::Api { status: 400, .. })
+    ));
+}
+
+#[tokio::test]
+async fn shares_a_recipe_link() {
+    let server = Server::start(None).await;
+    let id = create(&server.origin, json!({"title": "Shortbread"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let share = client.create_share(ShareKind::Recipe, id).await.unwrap();
+    assert!(
+        share.url.contains(&format!("/s/{}", share.token)),
+        "{}",
+        share.url
+    );
+    assert!(share.include_notes, "a new link shows the cook's notes");
+    assert_eq!(
+        client.create_share(ShareKind::Recipe, id).await.unwrap(),
+        share
+    );
+
+    let with_notes = client
+        .update_share(ShareKind::Recipe, id, false)
+        .await
+        .unwrap();
+    assert!(!with_notes.include_notes);
+    assert_eq!(with_notes.token, share.token);
+
+    let links = client.shares().await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].kind, ShareKind::Recipe);
+    assert_eq!(links[0].id, id);
+    assert_eq!(links[0].title, "Shortbread");
+
+    client.stop_share(ShareKind::Recipe, id).await.unwrap();
+    assert!(client.shares().await.unwrap().is_empty());
+
+    let book = client
+        .create_cookbook("Biscuits", None, None)
+        .await
+        .unwrap();
+    let book_share = client
+        .create_share(ShareKind::Cookbook, book.id)
+        .await
+        .unwrap();
+    assert_ne!(book_share.token, share.token);
+    assert_eq!(client.shares().await.unwrap()[0].kind, ShareKind::Cookbook);
+}
+
+#[tokio::test]
+async fn suggests_and_picks_at_random() {
+    let server = Server::start(None).await;
+    let client = Client::new(&server.origin).unwrap();
+    assert!(matches!(
+        client.random_recipe(None, &[]).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+
+    // Try next only suggests dishes: two ingredients and a step at least
+    let dish = |title: &str| {
+        json!({
+            "title": title,
+            "ingredients": [{"items": ["1 onion", "500 g beef"]}],
+            "instructions": [{"items": ["Cook it slowly."]}],
+        })
+    };
+    let a = create(&server.origin, dish("Stew")).await["id"]
+        .as_i64()
+        .unwrap();
+    let b = create(&server.origin, dish("Curry")).await["id"]
+        .as_i64()
+        .unwrap();
+
+    let picked = client.random_recipe(Some(a), &[]).await.unwrap();
+    assert_eq!(picked.id, b, "the recipe on screen isn't picked again");
+
+    let suggestions = client.suggestions(4, 0, &[]).await.unwrap();
+    assert_eq!(suggestions.ai, AiStatus::Off, "no AI key in tests");
+    assert!(!suggestions.items.is_empty());
+    assert!(suggestions.items.iter().all(|item| !item.reason.is_empty()));
+    let excluded = client.suggestions(4, 0, &[a]).await.unwrap();
+    assert!(excluded.items.iter().all(|item| item.recipe.id != a));
+}
+
+#[tokio::test]
+async fn wee_chef_checks_report_that_they_are_off() {
+    let server = Server::start(None).await;
+    let id = create(&server.origin, json!({"title": "Soup"})).await["id"]
+        .as_i64()
+        .unwrap();
+    let client = Client::new(&server.origin).unwrap();
+
+    let connector = client.connector().await.unwrap();
+    assert!(!connector.wee_chef);
+    assert!(!connector.wee_chef_checks);
+    assert!(connector.mcp_url.ends_with("/mcp"));
+
+    let status = client.checks_status().await.unwrap();
+    assert!(!status.enabled);
+    assert_eq!(status.pending, 0);
+    assert_eq!(status.queued, None);
+    assert!(!crumb_core::checks::checks_status_text(status.counts(), None).is_empty());
+
+    assert!(client.recipe_checks(id).await.unwrap().is_none());
+    assert!(client.checks_review().await.unwrap().is_empty());
+    assert!(matches!(
+        client.check_recipe(id).await,
+        Err(Error::Api { status: 409, .. })
+    ));
+    assert!(matches!(
+        client.check_all().await,
+        Err(Error::Api { status: 409, .. })
+    ));
+    assert!(matches!(
+        client.undo_checks(id).await,
+        Err(Error::Api { status: 409, .. })
+    ));
+    assert!(matches!(
+        client.dismiss_flag(id, 1).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+}
+
+#[tokio::test]
+async fn every_area_needs_a_session() {
+    let server = Server::start(Some("secret")).await;
+    let client = Client::new(&server.origin).unwrap();
+    let results = [
+        client.create_recipe(&json!({"title": "x"})).await.err(),
+        client.suggestions(4, 0, &[]).await.err(),
+        client.cookbook(1).await.err(),
+        client.export_all().await.err(),
+        client.shares().await.err(),
+        client.checks_status().await.err(),
+        client
+            .import_files(vec![("a.json".into(), b"{}".to_vec())])
+            .await
+            .err(),
+        client.connector().await.err(),
+    ];
+    for result in results {
+        assert!(matches!(result, Some(Error::Unauthorized)), "{result:?}");
+    }
+    client.login("secret").await.unwrap();
+    assert!(client.connector().await.unwrap().auth_enabled);
 }

@@ -1,5 +1,6 @@
-//! A typed HTTP client for the Crumb REST API. No UI, no Qt: just the routes the
-//! desktop app needs, over `reqwest`, with a cookie jar for the app-password session.
+//! A typed HTTP client for the Crumb REST API. No UI, no Qt: every `/api` route, over
+//! `reqwest`, with a cookie jar for the app-password session. Routes are grouped by area:
+//! recipes here and in `recipes`, then `cookbooks`, `checks` (Wee Chef) and `shares`.
 
 use std::sync::Arc;
 
@@ -10,10 +11,18 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use url::Url;
 
-pub use crumb_core::model::{CookbookListItem, Recipe, RecipeSummary, Section};
+pub use crumb_core::model::{
+    Cookbook, CookbookListItem, CookbookWithRecipes, Recipe, RecipeSummary, Section,
+};
 
+mod checks;
+mod cookbooks;
 mod error;
+mod recipes;
+mod shares;
+mod types;
 pub use error::Error;
+pub use types::*;
 
 /// Name of the session cookie the server sets (`src/auth.rs`). The desktop app keeps
 /// this value in the keyring so a signed-in session survives a restart.
@@ -117,6 +126,12 @@ impl Client {
         self.expect_ok(res, false).await
     }
 
+    /// `GET /api/connector`: what this server can do (Wee Chef, photos, checks).
+    pub async fn connector(&self) -> Result<Connector, Error> {
+        self.fetch(self.http.get(self.endpoint("api/connector")))
+            .await
+    }
+
     /// `POST /api/auth/login`; a wrong password is an [`Error::Api`] with status 401.
     pub async fn login(&self, password: &str) -> Result<(), Error> {
         let res = self
@@ -206,15 +221,16 @@ impl Client {
         self.expect_ok(res, false).await
     }
 
-    /// `POST /api/recipes/{id}/cooked`.
-    pub async fn cooked(&self, id: i64) -> Result<(), Error> {
+    /// `POST /api/recipes/{id}/cooked`: the new stats, and the event [`Client::undo_cooked`]
+    /// takes (None when this cook was already logged).
+    pub async fn cooked(&self, id: i64) -> Result<Cooked, Error> {
         let res = self
             .send(
                 self.http
                     .post(self.endpoint(&format!("api/recipes/{id}/cooked"))),
             )
             .await?;
-        self.expect_ok(res, false).await
+        self.json(res, false).await
     }
 
     /// `GET /api/cookbooks`.
@@ -271,6 +287,82 @@ impl Client {
             .await
             .map_err(|err| Error::Decode(err.to_string()))
     }
+
+    /// Sends `req` and decodes a successful JSON answer.
+    async fn fetch<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T, Error> {
+        let res = self.send(req).await?;
+        self.json(res, false).await
+    }
+
+    /// Sends `req` and only checks that it succeeded.
+    async fn call(&self, req: reqwest::RequestBuilder) -> Result<(), Error> {
+        let res = self.send(req).await?;
+        self.expect_ok(res, false).await
+    }
+
+    /// Sends `req` and keeps the answer as a file.
+    async fn download(&self, req: reqwest::RequestBuilder) -> Result<Download, Error> {
+        let res = self.send(req).await?;
+        if !res.status().is_success() {
+            return Err(self.error_for(res, false).await);
+        }
+        let header = |name| {
+            res.headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(String::from)
+        };
+        let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_default();
+        let file_name = header(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|value| attachment_name(&value))
+            .unwrap_or_else(|| "crumb-export".into());
+        let bytes = res
+            .bytes()
+            .await
+            .map_err(|err| Error::Network(err.to_string()))?
+            .to_vec();
+        Ok(Download {
+            file_name,
+            content_type,
+            bytes,
+        })
+    }
+}
+
+/// The file name in a `Content-Disposition` header: the UTF-8 `filename*` when there is
+/// one (RFC 6266, as `api::attachment` writes it), else the plain `filename`.
+fn attachment_name(header: &str) -> Option<String> {
+    let param = |key: &str| {
+        header.split(';').find_map(|part| {
+            let (name, value) = part.trim().split_once('=')?;
+            name.eq_ignore_ascii_case(key).then(|| value.trim())
+        })
+    };
+    if let Some(name) = param("filename*")
+        .and_then(|v| v.strip_prefix("UTF-8''"))
+        .and_then(percent_decode)
+    {
+        return Some(name);
+    }
+    param("filename")
+        .map(|v| v.trim_matches('"').to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn percent_decode(text: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        if b == b'%' {
+            let hex = std::str::from_utf8(tail.get(..2)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            rest = &tail[2..];
+        } else {
+            bytes.push(b);
+            rest = tail;
+        }
+    }
+    String::from_utf8(bytes).ok()
 }
 
 /// Validates an http(s) base URL and normalizes it to no trailing slash.
