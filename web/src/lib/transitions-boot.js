@@ -26,7 +26,10 @@
   const name = (el, vt) => {
     if (!el || !vt) return
     el.style.viewTransitionName = "photo"
-    vt.finished.finally(() => (el.style.viewTransitionName = ""))
+    // `finished` rejects when the browser skips the transition (say the other page has
+    // opted out); clear the name either way, without leaving an unhandled rejection
+    const clear = () => (el.style.viewTransitionName = "")
+    vt.finished.then(clear, clear)
   }
   addEventListener("pageswap", (e) =>
     name(pick(recipeId(e.activation?.entry?.url)), e.viewTransition),
