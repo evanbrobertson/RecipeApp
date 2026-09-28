@@ -394,6 +394,9 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `CRUMB_RUN_AS_ROOT` | No         | Docker only: `1` skips the entrypoint's drop to the unprivileged `crumb` user |
 | `SCRAPE_WORDPRESS`  | No         | Set to `off` to stop blocked WordPress recipe sites being read through their REST API |
 | `SCRAPE_ARCHIVE`    | No         | Set to `off` to stop blocked recipe sites being read from the Internet Archive's copy |
+| `SCRAPE_RELAYS`     | No         | Comma-separated base URLs of `crumb-relay`s (see [docs/RELAY.md](docs/RELAY.md)), asked for a page when both of the server's own fetches were blocked |
+| `SCRAPE_RELAY_TOKEN` | With relays | The token the relays were started with (their `RELAY_TOKEN`); without it relays are off |
+| `SCRAPE_RELAY_PROXY` | No        | A proxy (e.g. `socks5h://host:1055`) to reach the relays through, for Tailscale in userspace mode |
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |
