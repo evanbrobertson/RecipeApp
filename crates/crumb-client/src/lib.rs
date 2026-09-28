@@ -14,6 +14,7 @@ use url::Url;
 pub use crumb_core::model::{
     Cookbook, CookbookListItem, CookbookWithRecipes, Recipe, RecipeSummary, Section,
 };
+pub use crumb_core::staples::{Staple, Staples};
 
 mod checks;
 mod cookbooks;

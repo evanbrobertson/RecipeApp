@@ -915,6 +915,30 @@ async fn add_recipe(t: &TestApp, title: &str, category: &str, ingredient: &str, 
 }
 
 #[tokio::test]
+async fn staples_count_normalised_ingredients() {
+    let t = TestApp::new(None);
+    let (_, body) = t.json("GET", "/api/staples", None).await;
+    assert_eq!(body, json!({"recipes": 0, "staples": []}));
+
+    for (title, ing) in [
+        ("Omelette", "2 large eggs, beaten"),
+        ("Pancakes", "1 egg"),
+        ("Stir Fry", "3 garlic cloves, minced"),
+    ] {
+        add_recipe(&t, title, "Main", ing, "20m").await;
+    }
+    let (status, body) = t.json("GET", "/api/staples", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"recipes": 3, "staples": [
+            {"name": "salt", "recipes": 3},
+            {"name": "eggs", "recipes": 2},
+        ]})
+    );
+}
+
+#[tokio::test]
 async fn cook_log_and_views() {
     let t = TestApp::new(None);
     let id = add_recipe(&t, "Chili", "Main", "1 lb beef", "1h").await;

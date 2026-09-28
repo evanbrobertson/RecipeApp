@@ -1364,6 +1364,26 @@ pub fn cook_stats(conn: &Connection, id: i64) -> AppResult<CookStats> {
     })
 }
 
+/// Wee Chef's "keep these on hand" tip: the ingredients most of the box's recipes use.
+pub fn staples(conn: &Connection) -> AppResult<crumb_core::staples::Staples> {
+    let mut stmt = conn.prepare("SELECT ingredients FROM recipes")?;
+    let lists: Vec<Vec<String>> = stmt
+        .query_map([], |r| json_column(r, "ingredients"))?
+        .map(|v| {
+            v.map(|v| {
+                normalize_sections_value(&v)
+                    .into_iter()
+                    .flat_map(|s| s.items)
+                    .collect()
+            })
+        })
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(crumb_core::staples::Staples {
+        recipes: lists.len(),
+        staples: crumb_core::staples::staples(&lists, crumb_core::staples::LIMIT),
+    })
+}
+
 /// Summaries for these ids, in the order given (unknown ids are skipped).
 pub fn summaries_by_ids(conn: &Connection, ids: &[i64]) -> AppResult<Vec<RecipeSummary>> {
     if ids.is_empty() {
