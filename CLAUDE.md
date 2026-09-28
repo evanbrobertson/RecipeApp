@@ -7,7 +7,8 @@ in a clean UI. Also a remote MCP connector for Claude.
 
 - **Server:** Rust (axum 0.8, tokio, rusqlite bundled, scraper, reqwest/rustls), crate `crumb` at the repo root
 - **Shared crates (`crates/`):** `crumb-core` (pure logic: model, validation, fractions, categories, text parser,
-  Markdown, Try next, ingredient scaling, mise en place, timers, text export, sun clock, check wording),
+  Markdown, Try next, ingredient scaling, mise en place and prep groups, timers, text export, sun clock, check
+  wording, shelf geometry, the Add box, Home's wording, editor drafts and one-tap fixes),
   `crumb-client` (typed Rust client for the API), `crumb-ffi` (UniFFI bindings to crumb-core for Kotlin and Swift).
   Thin clients, fat server: the native apps call these instead of re-implementing logic
 - **Frontend:** Astro 7 static build + Svelte 5 islands, in `web/`

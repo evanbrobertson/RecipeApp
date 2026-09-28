@@ -57,7 +57,7 @@ pub fn review_text(kind: &str) -> &'static str {
     }
 }
 
-fn plural(n: u32, one: &str) -> String {
+pub fn plural(n: u32, one: &str) -> String {
     if n == 1 {
         format!("{n} {one}")
     } else {
