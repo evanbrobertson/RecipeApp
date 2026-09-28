@@ -50,6 +50,18 @@ impl TestApp {
             ),
         )
         .unwrap();
+        // The preview's, which is the share page's layout with its own island
+        std::fs::create_dir_all(dist.path().join("shell/preview")).unwrap();
+        std::fs::write(
+            dist.path().join("shell/preview/index.html"),
+            format!(
+                "<!doctype html><html><head><title>Recipe · Crumb</title>\
+                 <script>previewBoot()</script></head><body>{marker}<!--share:back--><!--share:photo-->\
+                 <!--share:intro--><h2>Ingredients</h2><!--share:ingredients--><h2>Method</h2>\
+                 <!--share:method--><!--share:source--></body></html>"
+            ),
+        )
+        .unwrap();
         // And the shared cookbook's
         std::fs::create_dir_all(dist.path().join("shell/share-book")).unwrap();
         std::fs::write(
@@ -6900,4 +6912,142 @@ async fn a_video_link_is_queued_and_polled() {
 
     let (status, _) = t.json("GET", "/api/import/jobs/nope", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The JSON in a page's `#page-data`.
+fn page_data(html: &str) -> Value {
+    let start = html.find(r#"id="page-data">"#).unwrap() + r#"id="page-data">"#.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    serde_json::from_str(&html[start..end]).unwrap()
+}
+
+fn preview_req(uri: &str, site: Option<&str>) -> Request<Body> {
+    let mut req = Request::builder().uri(uri);
+    if let Some(site) = site {
+        req = req.header("sec-fetch-site", site);
+    }
+    req.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn previews_read_a_recipe_before_it_is_saved() {
+    // A recipe site that counts its visits
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let counter = hits.clone();
+    let origin = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Leek Soup",
+                        "image": "https://images.example/leek.jpg",
+                        "recipeIngredient": ["2 leeks", "1 potato"],
+                        "recipeInstructions": ["Sweat the leeks.", "Simmer & blend."]})
+                ))
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let t = TestApp::new(None);
+    let url = format!("{site}/soup");
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+
+    // From the extension's new tab: "reading…" at once, which carries on by itself
+    let (status, headers, html) = t
+        .send(preview_req(&format!("/preview?url={q}"), Some("none")))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page_data(&html)["preview"]["state"], "loading");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // From another site: only the question, never a scrape, even with go=1
+    for uri in [
+        format!("/preview?url={q}"),
+        format!("/preview?url={q}&go=1"),
+    ] {
+        let (_, _, html) = t.send(preview_req(&uri, Some("cross-site"))).await;
+        assert_eq!(page_data(&html)["preview"]["state"], "ask", "{uri}");
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Carrying on from Crumb's own page: the recipe, in the share layout, not saved
+    let (status, headers, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "ready");
+    assert_eq!(data["preview"]["title"], "Leek Soup");
+    assert_eq!(data["preview"]["url"], url);
+    assert!(html.contains("<title>Leek Soup · Crumb</title>"));
+    assert!(html.contains("2 leeks") && html.contains("Simmer &amp; blend."));
+    assert!(html.contains(r#"src="https://images.example/leek.jpg""#));
+    assert!(
+        !html.contains("og:title"),
+        "a preview has no link-preview tags"
+    );
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("img-src 'self' data: https: http:"), "{csp}");
+    assert!(
+        csp.contains("'sha256-"),
+        "the template's script runs by its hash"
+    );
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0, "{list}");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Adding it saves what the preview showed, without fetching the page again
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["isNew"], true);
+    assert_eq!(res["title"], "Leek Soup");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Once it's in the box, a preview opens the recipe itself
+    let id = res["id"].as_i64().unwrap();
+    let (status, headers, _) = t
+        .send(preview_req(
+            &format!("/preview?url={q}"),
+            Some("cross-site"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], format!("/recipes/{id}"));
+
+    // A page without a recipe says why, on the same page
+    let missing: String =
+        url::form_urlencoded::byte_serialize(format!("{site}/nothing").as_bytes()).collect();
+    let (status, _, html) = t
+        .send(preview_req(&format!("/preview?url={missing}&go=1"), None))
+        .await;
+    assert!(status.is_client_error(), "{status}");
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "failed");
+    assert!(data["preview"]["message"].as_str().unwrap().contains("404"));
+
+    // No link: the Add page
+    let (status, headers, _) = t.send(get("/preview?url=nope")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/add");
+}
+
+#[tokio::test]
+async fn previews_are_behind_the_login() {
+    let t = TestApp::new(Some("pw"));
+    let (status, headers, _) = t
+        .send(get("/preview?url=https%3A%2F%2Fexample.com%2Fsoup"))
+        .await;
+    assert!(status.is_redirection(), "{status}");
+    let to = headers[header::LOCATION].to_str().unwrap();
+    assert!(to.starts_with("/login?next=%2Fpreview%3Furl%3D"), "{to}");
 }

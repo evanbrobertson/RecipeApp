@@ -8,25 +8,35 @@
 #   version.sh last [REV]          last stable tag reachable from REV, or nothing
 #   version.sh stable-at REV       the stable tag on REV itself, or nothing
 #   version.sh notes FROM TO       markdown release notes for FROM..TO (FROM may be empty)
+#
+# Another product in the repository keeps its own versions with these (the browser extension:
+# VERSION_TAG_PREFIX=extension-v VERSION_PATHS=extension VERSION_INITIAL=<its package.json>):
+#   VERSION_TAG_PREFIX  its tags, `<prefix>X.Y.Z` (default `v`)
+#   VERSION_PATHS       only commits touching these paths count, space-separated (default: all)
+#   VERSION_INITIAL     the first release, with no tag yet (default: Cargo.toml's version)
 set -euo pipefail
 
-stable_re='^v[0-9]+\.[0-9]+\.[0-9]+$'
+prefix=${VERSION_TAG_PREFIX:-v}
+read -r -a paths <<<"${VERSION_PATHS:-}"
+# The prefix as a literal in a regex
+prefix_re=$(sed 's/[][\.^$*+?(){}|/]/\\&/g' <<<"$prefix")
+stable_re="^${prefix_re}[0-9]+\.[0-9]+\.[0-9]+$"
 
 last_stable() {
-  git tag --merged "${1:-HEAD}" --list 'v*' --sort=-v:refname | grep -E "$stable_re" | head -n1 || true
+  git tag --merged "${1:-HEAD}" --list "${prefix}*" --sort=-v:refname | grep -E "$stable_re" | head -n1 || true
 }
 
 stable_at() {
-  git tag --points-at "$1" --list 'v*' --sort=-v:refname | grep -E "$stable_re" | head -n1 || true
+  git tag --points-at "$1" --list "${prefix}*" --sort=-v:refname | grep -E "$stable_re" | head -n1 || true
 }
 
 # Subjects and bodies of FROM..TO, one record per commit, NUL-separated.
 commits() {
   local from=$1 to=$2
   if [[ -n $from ]]; then
-    git log --no-merges --format='%s%n%b%x00' "$from..$to"
+    git log --no-merges --format='%s%n%b%x00' "$from..$to" -- "${paths[@]}"
   else
-    git log --no-merges --format='%s%n%b%x00' "$to"
+    git log --no-merges --format='%s%n%b%x00' "$to" -- "${paths[@]}"
   fi
 }
 
@@ -34,10 +44,14 @@ next() {
   local rev=${1:-HEAD} tag base
   tag=$(last_stable "$rev")
   if [[ -z $tag ]]; then
+    if [[ -n ${VERSION_INITIAL:-} ]]; then
+      echo "$VERSION_INITIAL"
+      return
+    fi
     git show "$rev:Cargo.toml" | sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' | head -n1
     return
   fi
-  base=${tag#v}
+  base=${tag#"$prefix"}
   local bump=patch subject
   while IFS= read -r -d '' record; do
     # Every record after the first starts with the newline that followed the last NUL
@@ -92,7 +106,7 @@ notes() {
     fi
   done < <(
     if [[ -n $from ]]; then range="$from..$to"; else range=$to; fi
-    git log --no-merges --format='%H%n%s%n%b%x00' "$range"
+    git log --no-merges --format='%H%n%s%n%b%x00' "$range" -- "${paths[@]}"
   )
   section() {
     local title=$1

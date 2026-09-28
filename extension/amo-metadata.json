@@ -1,0 +1,6 @@
+{
+  "categories": { "firefox": ["shopping", "other"], "android": ["other"] },
+  "summary": { "en-US": "Read any recipe in your Crumb recipe box, then add it in one click." },
+  "homepage": { "en-US": "https://github.com/evanbrobertson/RecipeApp" },
+  "version": { "license": "MIT" }
+}

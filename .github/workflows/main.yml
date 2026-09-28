@@ -11,6 +11,8 @@ on:
       - "**.md"
       - "docs/**"
       - "site/**"
+      # The browser extension ships from extension.yml, not in the image
+      - "extension/**"
       - "LICENSE"
   workflow_dispatch:
 

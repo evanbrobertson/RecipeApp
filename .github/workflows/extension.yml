@@ -1,0 +1,123 @@
+# The browser extension (extension/): a push to master that changes it releases it. Its own
+# version stream (tags `extension-vX.Y.Z`, from conventional commits touching extension/),
+# a GitHub Release with the Chrome and Firefox zips, and, once their secrets exist, uploads
+# to the Chrome Web Store and addons.mozilla.org (each store reviews before it goes out).
+# See docs/RELEASING.md.
+name: Extension
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "extension/**"
+      - ".github/workflows/extension.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: extension
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION_TAG_PREFIX: extension-v
+      VERSION_PATHS: extension
+      CHROME_EXTENSION_ID: ${{ vars.CHROME_EXTENSION_ID }}
+      CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+      CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+      CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+      AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+      AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: version
+        run: |
+          export VERSION_INITIAL
+          VERSION_INITIAL=$(jq -r .version extension/package.json)
+          last=$(scripts/release/version.sh last "$GITHUB_SHA")
+          if [[ -n $last ]] && [[ -z $(git log --format=%H "$last..$GITHUB_SHA" -- extension) ]]; then
+            echo "Nothing in extension/ changed since $last; no release." >> "$GITHUB_STEP_SUMMARY"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version=$(scripts/release/version.sh next "$GITHUB_SHA")
+          {
+            echo "release=true"
+            echo "version=$version"
+            echo "tag=extension-v$version"
+            echo "last=$last"
+          } >> "$GITHUB_OUTPUT"
+          echo "Crumb extension $version" >> "$GITHUB_STEP_SUMMARY"
+      - if: steps.version.outputs.release == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3"
+      - if: steps.version.outputs.release == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-extension-${{ runner.os }}-${{ hashFiles('extension/bun.lock') }}
+          restore-keys: bun-extension-${{ runner.os }}-
+      # The same gates as a pull request, then the zips at the release's version
+      - if: steps.version.outputs.release == 'true'
+        working-directory: extension
+        env:
+          EXTENSION_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bun install --frozen-lockfile
+          bun run check
+          bun test
+          bun run build --zip
+          bun run lint
+      - if: steps.version.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          LAST: ${{ steps.version.outputs.last }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; not replacing it"
+            exit 0
+          fi
+          {
+            echo "Install from the Chrome Web Store or addons.mozilla.org once listed, or load"
+            echo "a zip below by hand (see extension/README.md)."
+            echo
+            scripts/release/version.sh notes "$LAST" "$GITHUB_SHA"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Crumb extension $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            extension/dist/crumb-chrome-"$VERSION".zip extension/dist/crumb-firefox-"$VERSION".zip
+      # Chrome Web Store: set the variable CHROME_EXTENSION_ID and the three secrets
+      - if: steps.version.outputs.release == 'true' && env.CHROME_EXTENSION_ID != '' && env.CHROME_REFRESH_TOKEN != ''
+        working-directory: extension
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bunx chrome-webstore-upload-cli@3.5.0 --source "dist/crumb-chrome-$VERSION.zip" \
+            --extension-id "$CHROME_EXTENSION_ID" --client-id "$CHROME_CLIENT_ID" \
+            --client-secret "$CHROME_CLIENT_SECRET" --refresh-token "$CHROME_REFRESH_TOKEN"
+      # addons.mozilla.org: submitted for review as a listed version; not waited for
+      - if: steps.version.outputs.release == 'true' && env.AMO_JWT_ISSUER != '' && env.AMO_JWT_SECRET != ''
+        working-directory: extension
+        run: |
+          bun run web-ext sign --source-dir dist/firefox --artifacts-dir dist/signed \
+            --channel listed --amo-metadata amo-metadata.json --approval-timeout 0 \
+            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"

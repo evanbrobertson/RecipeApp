@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crumb settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1><img src="icons/icon-48.png" alt="" width="32" height="32" /> Crumb</h1>
+      <p class="muted">
+        On a recipe page, the extension asks “Read this recipe in Crumb?”. Say yes and your Crumb
+        opens it, ready to add.
+      </p>
+
+      <form id="address-form" novalidate>
+        <label for="address">Your Crumb address</label>
+        <div class="row">
+          <input
+            id="address"
+            type="text"
+            inputmode="url"
+            autocomplete="url"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="crumb.example.com"
+            aria-describedby="address-hint"
+          />
+          <button type="submit" class="primary">Save</button>
+        </div>
+        <p id="address-hint" class="hint" aria-live="polite">
+          Or open your Crumb while signed in and choose “Use this Crumb”.
+        </p>
+      </form>
+
+      <label class="check">
+        <input id="prompt" type="checkbox" />
+        Offer to read recipe pages
+      </label>
+      <p class="hint">Off, the toolbar button still reads the page you're on.</p>
+
+      <section id="muted-section" hidden>
+        <h2>Not offered on</h2>
+        <ul id="muted"></ul>
+      </section>
+
+      <p class="hint privacy">
+        The extension looks for recipe data on the pages you open, in your browser. It sends nothing
+        anywhere until you choose to read a page, and then only that page's address, to your Crumb.
+      </p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

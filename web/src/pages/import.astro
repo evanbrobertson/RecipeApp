@@ -1,6 +1,6 @@
 ---
 import Icon from "../components/Icon.astro"
-import { BookmarkPlus, ChevronDown, Copy } from "lucide"
+import { BookmarkPlus, ChevronDown, Copy, Puzzle } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import ImportTools from "../islands/ImportTools.svelte"
 import { bookmarklet } from "../lib/jtr-export.js"
@@ -21,6 +21,40 @@ const exporter = bookmarklet()
         <div class="skeleton rounded-ui h-40"></div>
       </div>
     </ImportTools>
+
+    <section class="card space-y-3 p-4 text-sm" aria-labelledby="read-in-crumb">
+      <h2 id="read-in-crumb" class="font-bold">Read recipes in Crumb from any site</h2>
+      <p class="text-ink-muted">
+        The <em>Crumb</em> browser extension asks “Read this recipe in Crumb?” whenever you open a
+        recipe, then shows it here, ready to add. For Chrome, Edge and Firefox.
+      </p>
+      <a
+        href="https://github.com/evanbrobertson/RecipeApp/releases?q=extension"
+        class="btn btn-outline btn-sm"
+        target="_blank"
+        rel="noopener"
+      >
+        <Icon icon={Puzzle} /> Get the extension
+      </a>
+      <p class="text-ink-muted">
+        No extension (Safari, or a phone)? Drag this to your bookmarks bar, or copy it into a
+        bookmark's address, and open it on a recipe page.
+      </p>
+      <span class="flex flex-wrap gap-2">
+        <a
+          href="#read-in-crumb"
+          id="read-bookmarklet"
+          class="btn btn-outline btn-sm"
+          data-no-prerender
+          title="Drag to your bookmarks bar"
+        >
+          <Icon icon={BookmarkPlus} /> Read in Crumb
+        </a>
+        <button type="button" id="read-copy" class="btn btn-soft btn-sm">
+          <Icon icon={Copy} /> Copy
+        </button>
+      </span>
+    </section>
 
     <details class="card group px-4 py-1 text-sm">
       <summary
@@ -76,20 +110,15 @@ const exporter = bookmarklet()
   import { toast } from "../lib/toast"
   import { IMPORT_URL } from "../lib/jtr-export.js"
 
-  const link = document.getElementById("jtr-bookmarklet")
-  const copy = document.getElementById("jtr-copy")
-  if (link) {
-    // The finished message links back to this Crumb, wherever it's hosted
-    const here = encodeURIComponent(new URL("/import", location.href).href)
-    link.setAttribute("href", link.getAttribute("href")!.replace(IMPORT_URL, here))
+  /** A bookmarklet button: dragged to the bookmarks bar, or copied as a bookmark's address. */
+  function bookmarklet(linkId: string, copyId: string, then: string) {
+    const link = document.getElementById(linkId)
+    if (!link) return
     link.addEventListener("click", (e) => {
       e.preventDefault()
-      toast({
-        title: "Drag it to your bookmarks bar",
-        description: "Then open it on justtherecipe.com.",
-      })
+      toast({ title: "Drag it to your bookmarks bar", description: then })
     })
-    copy?.addEventListener("click", async () => {
+    document.getElementById(copyId)?.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(link.getAttribute("href")!)
         toast({ title: "Copied", description: "Paste it as a bookmark's address.", tone: "success" })
@@ -98,4 +127,22 @@ const exporter = bookmarklet()
       }
     })
   }
+
+  // Opens the page it's used on in this Crumb's preview (src/preview.rs)
+  const preview = JSON.stringify(new URL("/preview?url=", location.href).href)
+  document
+    .getElementById("read-bookmarklet")
+    ?.setAttribute(
+      "href",
+      `javascript:void(window.open(${preview}+encodeURIComponent(location.href)))`,
+    )
+  bookmarklet("read-bookmarklet", "read-copy", "Then open it on any recipe page.")
+
+  const jtr = document.getElementById("jtr-bookmarklet")
+  if (jtr) {
+    // The finished message links back to this Crumb, wherever it's hosted
+    const here = encodeURIComponent(new URL("/import", location.href).href)
+    jtr.setAttribute("href", jtr.getAttribute("href")!.replace(IMPORT_URL, here))
+  }
+  bookmarklet("jtr-bookmarklet", "jtr-copy", "Then open it on justtherecipe.com.")
 </script>
