@@ -2,7 +2,9 @@
 
 use crumb::{AppState, app, browser::Browser, config::Config, db};
 use crumb_client::{
-    AiStatus, Client, Error, ImportInput, RecipeFormat, SESSION_COOKIE, Section, ShareKind,
+    AiStatus, Client, CookStats, Cooked, Credentials, Device, Error, ImportInput, Imported,
+    ImportedCookbook, Mode, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section, ShareKind,
+    Status, StatusHousehold,
 };
 use serde_json::{Value, json};
 
@@ -14,6 +16,19 @@ struct Server {
 
 impl Server {
     async fn start(password: Option<&str>) -> Self {
+        Self::configured(|config| config.app_password = password.map(String::from)).await
+    }
+
+    /// `AUTH_MODE=accounts`, with sign-up open or not.
+    async fn accounts(open_signup: bool) -> Self {
+        Self::configured(|config| {
+            config.auth_mode = crumb::config::AuthMode::Accounts;
+            config.open_signup = open_signup;
+        })
+        .await
+    }
+
+    async fn configured(configure: impl FnOnce(&mut Config)) -> Self {
         let dist = tempfile::tempdir().unwrap();
         // The router also serves pages and static files; give it the minimal build
         // `tests/api.rs` uses, so nothing 404s into a panic.
@@ -37,11 +52,11 @@ impl Server {
             .unwrap();
         }
 
-        let config = Config {
-            app_password: password.map(String::from),
+        let mut config = Config {
             web_dist: dist.path().to_path_buf(),
             ..Config::default()
         };
+        configure(&mut config);
         let state = AppState::new(db::open_in_memory().unwrap(), config, Browser::disabled());
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -638,4 +653,610 @@ async fn every_area_needs_a_session() {
     }
     client.login("secret").await.unwrap();
     assert!(client.connector().await.unwrap().auth_enabled);
+}
+
+#[test]
+fn responses_serialize_with_the_apis_names() {
+    let recipe: Recipe = serde_json::from_value(json!({
+        "id": 1, "title": "Pie", "source": "manual", "ingredients": [], "instructions": [],
+        "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+    }))
+    .unwrap();
+    let imported = Imported {
+        recipe,
+        is_new: true,
+        from_video: false,
+        dropped_photo: true,
+        cookbook: Some(ImportedCookbook {
+            id: 3,
+            name: "Weeknights".into(),
+            added: 2,
+            duplicates: 0,
+            skipped: 1,
+        }),
+    };
+    let out = serde_json::to_value(&imported).unwrap();
+    let mut keys: Vec<&str> = out
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        ["cookbook", "droppedPhoto", "fromVideo", "isNew", "recipe"]
+    );
+    assert_eq!(out["recipe"]["title"], "Pie");
+    assert_eq!(out["cookbook"]["added"], 2);
+
+    let cooked = Cooked {
+        stats: CookStats {
+            count: 2,
+            last_cooked_at: Some("2026-01-01T00:00:00.000Z".into()),
+        },
+        event_id: Some(9),
+    };
+    assert_eq!(
+        serde_json::to_value(&cooked).unwrap(),
+        json!({"count": 2, "lastCookedAt": "2026-01-01T00:00:00.000Z", "eventId": 9})
+    );
+
+    let status = Status {
+        mode: Mode::Hosted,
+        signed_in: true,
+        household: Some(StatusHousehold {
+            id: 4,
+            name: "Kitchen".into(),
+            role: "owner".into(),
+        }),
+        ..Status::default()
+    };
+    let out = serde_json::to_value(&status).unwrap();
+    assert_eq!(out["mode"], "hosted");
+    assert_eq!(out["signedIn"], true);
+    assert_eq!(out["setupNeedsAppPassword"], false);
+    assert_eq!(out["household"]["role"], "owner");
+
+    let device = Device {
+        id: "1".into(),
+        user_agent: None,
+        last_seen_at: 5,
+        current: true,
+    };
+    assert_eq!(
+        serde_json::to_value(&device).unwrap(),
+        json!({"id": "1", "userAgent": null, "lastSeenAt": 5, "current": true})
+    );
+    let back: Device = serde_json::from_value(serde_json::to_value(&device).unwrap()).unwrap();
+    assert_eq!(back, device);
+}
+
+#[tokio::test]
+async fn password_mode_is_the_status_fallback() {
+    let server = Server::start(Some("secret")).await;
+    let client = Client::new(&server.origin).unwrap();
+    let status = client.auth_status().await;
+    assert_eq!(status.mode, Mode::Password);
+    assert!(status.password_required && !status.signed_in);
+
+    let down = Client::new("http://127.0.0.1:1").unwrap();
+    assert_eq!(down.auth_status().await.mode, Mode::Password);
+}
+
+#[tokio::test]
+async fn accounts_set_up_sign_in_and_out() {
+    let server = Server::accounts(false).await;
+    let client = Client::new(&server.origin).unwrap();
+    let status = client.auth_status().await;
+    assert_eq!(status.mode, Mode::Accounts);
+    assert!(status.setup_needed && !status.signed_in);
+
+    let accounts = client.accounts(status.mode);
+    accounts
+        .set_up("Ann Cook", "ann@example.com", "correct horse", None)
+        .await
+        .unwrap();
+    let status = client.auth_status().await;
+    assert!(status.signed_in && !status.setup_needed);
+    assert_eq!(status.user.unwrap().name, "Ann Cook");
+    assert_eq!(status.household.unwrap().role, "owner");
+    assert!(client.recipes(None, None).await.is_ok());
+
+    // Once, and sign-up is closed
+    assert!(matches!(
+        accounts
+            .set_up("Ann", "b@example.com", "correct horse", None)
+            .await,
+        Err(Error::Api { status: 409, .. })
+    ));
+    assert!(matches!(
+        accounts
+            .sign_up("Bob", "bob@example.com", "correct horse")
+            .await,
+        Err(Error::Api { status: 403, .. })
+    ));
+    assert!(!accounts.can_reset_password());
+    assert!(matches!(
+        accounts.request_reset("ann@example.com").await,
+        Err(Error::Api { status: 404, .. })
+    ));
+
+    // The session is the plain cookie, and restores
+    let saved = client.session_cookie().unwrap();
+    assert!(!saved.contains("crumb_session"));
+    let restored = Client::with_session(&server.origin, &saved).unwrap();
+    assert!(restored.recipes(None, None).await.is_ok());
+    assert_eq!(restored.session_cookie().as_deref(), Some(saved.as_str()));
+
+    accounts.sign_out().await.unwrap();
+    assert!(client.session_cookie().is_none());
+    assert!(matches!(
+        client.recipes(None, None).await,
+        Err(Error::Unauthorized)
+    ));
+
+    match accounts.sign_in("ann@example.com", "wrong").await {
+        Err(Error::Api { status, message }) => {
+            assert_eq!(status, 401);
+            assert_eq!(message, "Incorrect email or password");
+        }
+        other => panic!("expected an Api 401, got {other:?}"),
+    }
+    accounts
+        .sign_in("ann@example.com", "correct horse")
+        .await
+        .unwrap();
+    assert!(client.recipes(None, None).await.is_ok());
+}
+
+#[tokio::test]
+async fn accounts_household_invites_and_devices() {
+    let server = Server::accounts(false).await;
+    let ann = Client::new(&server.origin).unwrap();
+    let accounts = ann.accounts(Mode::Accounts);
+    accounts
+        .set_up("Ann Cook", "ann@example.com", "correct horse", None)
+        .await
+        .unwrap();
+
+    let home = accounts.household().await.unwrap();
+    assert_eq!(home.role, "owner");
+    assert_eq!(home.members.len(), 1);
+    assert!(home.members[0].you && home.members[0].email == "ann@example.com");
+    assert_eq!(home.households.len(), 1);
+    accounts.rename("Ann's Kitchen").await.unwrap();
+    assert_eq!(accounts.household().await.unwrap().name, "Ann's Kitchen");
+
+    // A link made and taken back
+    let link = accounts.invite(None).await.unwrap();
+    assert!(link.url.contains("/invite#"), "{}", link.url);
+    let pending = accounts.household().await.unwrap().invites;
+    assert_eq!(pending.len(), 1);
+    accounts.cancel_invite(&pending[0].id).await.unwrap();
+    assert!(accounts.household().await.unwrap().invites.is_empty());
+
+    // A link used by someone new
+    let link = accounts.invite(None).await.unwrap();
+    let token = link.url.split_once('#').unwrap().1;
+    let bob = Client::new(&server.origin).unwrap();
+    let theirs = bob.accounts(Mode::Accounts);
+    let preview = theirs.preview_invite(token).await.unwrap().unwrap();
+    assert_eq!(preview.household_name.as_deref(), Some("Ann's Kitchen"));
+    assert!(theirs.preview_invite("nope").await.unwrap().is_none());
+    let creds = Credentials {
+        name: Some("Bob".into()),
+        email: "bob@example.com".into(),
+        password: "correct horse".into(),
+    };
+    assert!(
+        !theirs
+            .accept_invite(token, Some(&creds))
+            .await
+            .unwrap()
+            .verify
+    );
+    assert!(bob.auth_status().await.signed_in);
+    let home = accounts.household().await.unwrap();
+    assert_eq!(home.members.len(), 2);
+    let bobs = home.members.iter().find(|m| !m.you).unwrap();
+    assert_eq!(bobs.name, "Bob");
+    assert!(home.invites.is_empty(), "the link was used");
+
+    // The owner takes a member out
+    accounts.remove_member(&bobs.id).await.unwrap();
+    assert_eq!(accounts.household().await.unwrap().members.len(), 1);
+    let bobs_own = theirs.household().await.unwrap();
+    assert_ne!(bobs_own.id, home.id, "Bob is on his own again");
+
+    // Devices: this one is current; a second sign-in shows and can be ended
+    let phone = Client::new(&server.origin).unwrap();
+    phone
+        .accounts(Mode::Accounts)
+        .sign_in("ann@example.com", "correct horse")
+        .await
+        .unwrap();
+    let devices = accounts.devices().await.unwrap();
+    assert_eq!(devices.len(), 2);
+    assert_eq!(devices.iter().filter(|d| d.current).count(), 1);
+    accounts.sign_out_others().await.unwrap();
+    assert_eq!(accounts.devices().await.unwrap().len(), 1);
+    assert!(matches!(
+        phone.recipes(None, None).await,
+        Err(Error::Unauthorized)
+    ));
+
+    // The account's own pages
+    let methods = accounts.sign_in_methods().await.unwrap();
+    assert!(methods.password && methods.linked.is_empty());
+    assert!(ann.connected_apps().await.unwrap().is_empty());
+    let export = ann.export_account().await.unwrap();
+    assert!(
+        export.file_name.starts_with("crumb-account-"),
+        "{}",
+        export.file_name
+    );
+    let data: Value = serde_json::from_slice(&export.bytes).unwrap();
+    assert_eq!(data["households"].as_array().unwrap().len(), 1);
+
+    assert!(matches!(
+        ann.delete_account(Some("wrong"), None).await,
+        Err(Error::Api { status: 401, .. })
+    ));
+    ann.delete_account(Some("correct horse"), None)
+        .await
+        .unwrap();
+    assert!(ann.session_cookie().is_none());
+}
+
+/// What the Better Auth stub was asked.
+#[derive(Clone, Debug)]
+struct Seen {
+    method: String,
+    path: String,
+    origin: Option<String>,
+    cookie: Option<String>,
+    body: Value,
+}
+
+type Log = std::sync::Arc<std::sync::Mutex<Vec<Seen>>>;
+
+/// Answers the few Better Auth routes the client calls, with the shapes `auth/src` sends.
+async fn better_auth_stub() -> (String, Log) {
+    use axum::body::Body;
+    use axum::extract::{Request, State};
+    use axum::http::{HeaderMap, StatusCode, header};
+    use axum::response::{IntoResponse, Response};
+
+    async fn answer(State(log): State<Log>, req: Request) -> Response {
+        let (parts, body) = req.into_parts();
+        let bytes = axum::body::to_bytes(Body::new(body), 1 << 20)
+            .await
+            .unwrap();
+        let header_of = |name| {
+            parts
+                .headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        };
+        let query = parts.uri.query().unwrap_or("").to_string();
+        let seen = Seen {
+            method: parts.method.to_string(),
+            path: parts.uri.path().to_string(),
+            origin: header_of(header::ORIGIN),
+            cookie: header_of(header::COOKIE),
+            body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        };
+        let route = format!("{} {}", seen.method, seen.path);
+        log.lock().unwrap().push(seen);
+        let ok = |v: Value| (StatusCode::OK, axum::Json(v)).into_response();
+        match route.as_str() {
+            "POST /api/auth/sign-in/email" => {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    header::SET_COOKIE,
+                    "crumb.session_token=tok.sig%2B; Path=/; HttpOnly"
+                        .parse()
+                        .unwrap(),
+                );
+                (
+                    headers,
+                    axum::Json(json!({"redirect": false, "token": "tok", "user": {}})),
+                )
+                    .into_response()
+            }
+            "POST /api/auth/sign-up/email" => ok(json!({"token": null, "user": {}})),
+            "POST /api/auth/sign-out" => ok(json!({"success": true})),
+            "GET /api/auth/list-sessions" => ok(json!([
+                {"id": "s2", "token": "t2", "userAgent": null, "updatedAt": "2026-02-01T00:00:00.000Z"},
+                {"id": "s1", "token": "t1", "userAgent": "Firefox/1 (X11; Linux)", "updatedAt": "2026-01-01T00:00:00.000Z"},
+            ])),
+            "GET /api/auth/get-session" => {
+                ok(json!({"session": {"id": "s1"}, "user": {"id": "u1"}}))
+            }
+            "GET /api/auth/organization/get-full-organization" => ok(json!({
+                "id": "o1", "name": "Kitchen",
+                "members": [
+                    {"id": "m2", "userId": "u2", "role": "member", "user": {"name": "Bob", "email": "bob@example.com"}},
+                    {"id": "m1", "userId": "u1", "role": "owner", "user": {"name": "Ann", "email": "ann@example.com"}},
+                ],
+                "invitations": [
+                    {"id": "i1", "email": "c@example.com", "status": "pending", "expiresAt": "2999-01-01T00:00:00.000Z"},
+                    {"id": "i2", "email": "d@example.com", "status": "accepted", "expiresAt": "2999-01-01T00:00:00.000Z"},
+                    {"id": "i3", "email": "e@example.com", "status": "pending", "expiresAt": "2000-01-01T00:00:00.000Z"},
+                ],
+            })),
+            "GET /api/auth/organization/list" => ok(json!([
+                {"id": "o1", "name": "Kitchen"}, {"id": "o2", "name": "Ann's"},
+            ])),
+            "POST /api/auth/organization/invite-member" => ok(json!({"id": "inv1"})),
+            "GET /api/auth/organization/get-invitation" if query == "id=inv1" => ok(json!({
+                "organizationName": "Kitchen", "inviterEmail": "ann@example.com", "email": "c@example.com",
+            })),
+            "GET /api/auth/organization/get-invitation" => (
+                StatusCode::NOT_FOUND,
+                axum::Json(json!({"message": "Invitation not found"})),
+            )
+                .into_response(),
+            "POST /api/auth/organization/accept-invitation" => {
+                ok(json!({"member": {"organizationId": "o2"}}))
+            }
+            "GET /api/auth/list-accounts" => ok(json!([
+                {"id": "a1", "providerId": "credential", "createdAt": "2026-01-01T00:00:00.000Z"},
+                {"id": "a2", "providerId": "google", "createdAt": "2026-03-01T00:00:00.000Z"},
+            ])),
+            "POST /api/auth/organization/update"
+            | "POST /api/auth/organization/cancel-invitation"
+            | "POST /api/auth/organization/remove-member"
+            | "POST /api/auth/organization/leave"
+            | "POST /api/auth/organization/set-active"
+            | "POST /api/auth/revoke-session"
+            | "POST /api/auth/revoke-other-sessions"
+            | "POST /api/auth/unlink-account"
+            | "POST /api/auth/request-password-reset"
+            | "POST /api/auth/reset-password" => ok(json!({"status": true})),
+            _ => (
+                StatusCode::NOT_FOUND,
+                axum::Json(json!({"message": "Not found"})),
+            )
+                .into_response(),
+        }
+    }
+
+    let log = Log::default();
+    let app = axum::Router::new().fallback(answer).with_state(log.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (origin, log)
+}
+
+/// The requests made to `route` (`"POST /api/auth/sign-out"`), oldest first.
+fn seen(log: &Log, route: &str) -> Vec<Seen> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|s| format!("{} {}", s.method, s.path) == route)
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn hosted_sign_in_keeps_better_auths_cookie() {
+    let (origin, log) = better_auth_stub().await;
+    let client = Client::new(&origin).unwrap();
+    let accounts = client.accounts(Mode::Hosted);
+    accounts
+        .sign_in("ann@example.com", "correct horse")
+        .await
+        .unwrap();
+
+    let sent = &seen(&log, "POST /api/auth/sign-in/email")[0];
+    assert_eq!(
+        sent.body,
+        json!({"email": "ann@example.com", "password": "correct horse"})
+    );
+    assert_eq!(
+        sent.origin.as_deref(),
+        Some(origin.as_str()),
+        "Better Auth wants an origin"
+    );
+
+    // Not `crumb_session`: the cookie is kept with its name
+    let saved = client.session_cookie().unwrap();
+    assert_eq!(saved, "crumb.session_token=tok.sig%2B");
+    let restored = Client::with_session(&origin, &saved).unwrap();
+    assert_eq!(restored.session_cookie().as_deref(), Some(saved.as_str()));
+    restored.accounts(Mode::Hosted).devices().await.unwrap();
+    let sent = &seen(&log, "GET /api/auth/list-sessions")[0];
+    assert_eq!(
+        sent.cookie.as_deref(),
+        Some("crumb.session_token=tok.sig%2B")
+    );
+
+    // A value saved before hosted mode existed is still a `crumb_session`
+    let old = Client::with_session(&origin, "abc.def").unwrap();
+    assert_eq!(old.session_cookie().as_deref(), Some("abc.def"));
+
+    accounts.sign_out().await.unwrap();
+    assert_eq!(seen(&log, "POST /api/auth/sign-out")[0].body, json!({}));
+}
+
+#[tokio::test]
+async fn hosted_devices_and_household_map_to_the_shared_shapes() {
+    let (origin, log) = better_auth_stub().await;
+    let client = Client::new(&origin).unwrap();
+    let accounts = client.accounts(Mode::Hosted);
+
+    let devices = accounts.devices().await.unwrap();
+    let ids: Vec<&str> = devices.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["t1", "t2"], "the current device first, by its token");
+    assert!(devices[0].current && !devices[1].current);
+    assert_eq!(devices[0].last_seen_at, 1_767_225_600);
+    assert_eq!(devices[1].user_agent, None);
+    accounts.sign_out_device("t2").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/revoke-session")[0].body,
+        json!({"token": "t2"})
+    );
+    accounts.sign_out_others().await.unwrap();
+    assert_eq!(seen(&log, "POST /api/auth/revoke-other-sessions").len(), 1);
+
+    let home = accounts.household().await.unwrap();
+    assert_eq!(
+        (home.id.as_str(), home.name.as_str(), home.role.as_str()),
+        ("o1", "Kitchen", "owner")
+    );
+    let members: Vec<(&str, bool)> = home
+        .members
+        .iter()
+        .map(|m| (m.id.as_str(), m.you))
+        .collect();
+    assert_eq!(members, [("m1", true), ("m2", false)], "the owner first");
+    assert_eq!(
+        home.invites.len(),
+        1,
+        "only the pending one that hasn't expired"
+    );
+    assert_eq!(home.invites[0].id, "i1");
+    assert_eq!(home.invites[0].email.as_deref(), Some("c@example.com"));
+    assert_eq!(home.households.len(), 2);
+
+    accounts.rename("Home").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/update")[0].body,
+        json!({"data": {"name": "Home"}})
+    );
+    accounts.cancel_invite("i1").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/cancel-invitation")[0].body,
+        json!({"invitationId": "i1"})
+    );
+    accounts.remove_member("m2").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/remove-member")[0].body,
+        json!({"memberIdOrEmail": "m2"})
+    );
+    accounts.leave("o1").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/leave")[0].body,
+        json!({"organizationId": "o1"})
+    );
+    accounts.switch_to("o2").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/set-active")[0].body,
+        json!({"organizationId": "o2"})
+    );
+}
+
+#[tokio::test]
+async fn hosted_invites_sign_up_and_reset() {
+    let (origin, log) = better_auth_stub().await;
+    let client = Client::new(&origin).unwrap();
+    let accounts = client.accounts(Mode::Hosted);
+
+    let link = accounts.invite(Some("c@example.com")).await.unwrap();
+    assert_eq!(link.url, format!("{origin}/invite#inv1"));
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/invite-member")[0].body,
+        json!({"email": "c@example.com", "role": "member"})
+    );
+    let preview = accounts.preview_invite("inv1").await.unwrap().unwrap();
+    assert_eq!(preview.household_name.as_deref(), Some("Kitchen"));
+    assert_eq!(preview.invited_by.as_deref(), Some("ann@example.com"));
+    assert_eq!(preview.email.as_deref(), Some("c@example.com"));
+    assert!(accounts.preview_invite("gone").await.unwrap().is_none());
+
+    // Without a token back, the account waits on its email
+    let made = accounts
+        .sign_up("Cy", "c@example.com", "correct horse")
+        .await
+        .unwrap();
+    assert!(made.verify);
+    let sent = &seen(&log, "POST /api/auth/sign-up/email")[0];
+    assert_eq!(sent.body["callbackURL"], "/");
+    assert_eq!(sent.body["name"], "Cy");
+
+    // Joining signed out with an existing account: sign in, accept, then work there
+    let creds = Credentials {
+        name: None,
+        email: "c@example.com".into(),
+        password: "correct horse".into(),
+    };
+    assert!(
+        !accounts
+            .accept_invite("inv1", Some(&creds))
+            .await
+            .unwrap()
+            .verify
+    );
+    assert_eq!(seen(&log, "POST /api/auth/sign-in/email").len(), 1);
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/accept-invitation")[0].body,
+        json!({"invitationId": "inv1"})
+    );
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/set-active")[0].body,
+        json!({"organizationId": "o2"})
+    );
+    // A new account has to verify first, and never reaches the accept
+    let fresh = Credentials {
+        name: Some("Cy".into()),
+        ..creds
+    };
+    assert!(
+        accounts
+            .accept_invite("inv1", Some(&fresh))
+            .await
+            .unwrap()
+            .verify
+    );
+    assert_eq!(
+        seen(&log, "POST /api/auth/sign-up/email")[1].body["callbackURL"],
+        "/invite#inv1"
+    );
+    assert_eq!(
+        seen(&log, "POST /api/auth/organization/accept-invitation").len(),
+        1
+    );
+
+    assert!(accounts.can_reset_password());
+    accounts.request_reset("c@example.com").await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/request-password-reset")[0].body,
+        json!({"email": "c@example.com", "redirectTo": "/reset-password"})
+    );
+    accounts
+        .reset_password("tok", "new password")
+        .await
+        .unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/reset-password")[0].body,
+        json!({"token": "tok", "newPassword": "new password"})
+    );
+}
+
+#[tokio::test]
+async fn hosted_sign_in_methods_and_unlink() {
+    let (origin, log) = better_auth_stub().await;
+    let client = Client::new(&origin).unwrap();
+    let accounts = client.accounts(Mode::Hosted);
+
+    let methods = accounts.sign_in_methods().await.unwrap();
+    assert!(methods.password);
+    assert_eq!(methods.linked.len(), 1);
+    assert_eq!(methods.linked[0].provider, Provider::Google);
+    assert_eq!(methods.linked[0].created_at, 1_772_323_200);
+
+    accounts.unlink(Provider::Google).await.unwrap();
+    assert_eq!(
+        seen(&log, "POST /api/auth/unlink-account")[0].body,
+        json!({"accountId": "a2"})
+    );
+    // Nothing linked for Apple: nothing to do
+    accounts.unlink(Provider::Apple).await.unwrap();
+    assert_eq!(seen(&log, "POST /api/auth/unlink-account").len(), 1);
 }

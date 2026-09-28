@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use crumb_core::suggest::ReasonKind;
@@ -11,7 +11,7 @@ pub use crumb_core::suggest::ReasonKind;
 use crate::{Recipe, RecipeSummary};
 
 /// How often a recipe has been cooked (`recipes::CookStats`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CookStats {
     pub count: i64,
@@ -21,7 +21,7 @@ pub struct CookStats {
 
 /// `POST /api/recipes/{id}/cooked`: the new stats and the event to undo, which is None
 /// when this cook was already logged within the last few hours.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cooked {
     #[serde(flatten)]
@@ -30,7 +30,7 @@ pub struct Cooked {
 }
 
 /// `GET /api/suggestions` (`suggestions::Suggestions`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Suggestions {
     pub items: Vec<Suggestion>,
     pub ai: AiStatus,
@@ -39,7 +39,7 @@ pub struct Suggestions {
 }
 
 /// One Try next pick and why it was chosen.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Suggestion {
     pub recipe: RecipeSummary,
@@ -50,7 +50,7 @@ pub struct Suggestion {
 }
 
 /// Whether Wee Chef's re-rank is in the list, still running, or off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AiStatus {
     Ready,
@@ -59,7 +59,7 @@ pub enum AiStatus {
     Off,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Idea {
     pub title: String,
@@ -69,7 +69,7 @@ pub struct Idea {
 }
 
 /// `GET /api/connector` (`api::connector_info`): what this server can do.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connector {
     pub mcp_url: String,
@@ -99,7 +99,7 @@ pub enum RecipeFormat {
 }
 
 /// One uploaded file's result from `POST /api/import/files` (`recipes::ImportSummary`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileImport {
     pub file: String,
     pub created: Vec<Created>,
@@ -109,14 +109,14 @@ pub struct FileImport {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Created {
     pub id: i64,
     pub title: String,
 }
 
 /// A recipe's Wee Chef check (`checks::for_recipe`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeChecks {
     /// `pending`, `running`, `done`, `failed` or `tidied`.
@@ -127,7 +127,7 @@ pub struct RecipeChecks {
 }
 
 /// A line Wee Chef fixed (`state` `fixed`) or wants the cook to look at (`review`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckFlag {
     pub id: i64,
@@ -141,14 +141,14 @@ pub struct CheckFlag {
 }
 
 /// `POST /api/recipes/{id}/checks/undo`: the recipe as imported, and its check now.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UndoneChecks {
     pub recipe: Recipe,
     pub checks: Option<RecipeChecks>,
 }
 
 /// `GET /api/checks` (`checks::status`), and `POST /api/checks` with `queued` set.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChecksStatus {
     pub enabled: bool,
@@ -183,7 +183,7 @@ impl ChecksStatus {
 }
 
 /// A recipe with suggestions waiting (`checks::to_review`), newest first.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
     pub id: i64,
     pub title: String,
@@ -194,7 +194,7 @@ pub struct Review {
 }
 
 /// A public link to a recipe or cookbook (`share::to_json`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Share {
     pub token: String,
@@ -204,7 +204,7 @@ pub struct Share {
 }
 
 /// What a share link shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShareKind {
     Recipe,
@@ -212,7 +212,7 @@ pub enum ShareKind {
 }
 
 /// One live link in `GET /api/shares` (`share::list`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SharedLink {
     pub kind: ShareKind,
