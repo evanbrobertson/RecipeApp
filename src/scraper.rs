@@ -3,7 +3,10 @@
 //! Pages are fetched with `wreq`, which sends a real browser's TLS and HTTP/2 fingerprint and
 //! headers. Many recipe sites (behind Cloudflare, Akamai, PerimeterX and the like) refuse a
 //! plain Rust client on its fingerprint alone, whatever its User-Agent says. The order is
-//! Firefox, then Safari when the site blocks it, then headless Chromium when installed.
+//! Firefox, then Safari when the site blocks it. When both were refused or challenged (not
+//! for a page that simply has no recipe), the ways round the block come next: the site's own
+//! WordPress API, then the Internet Archive's copy ([`fallbacks`]). Last is headless Chromium
+//! when installed, the dearest, which also takes pages that need JavaScript.
 
 use http_body_util::BodyExt;
 use regex::Regex;
@@ -16,6 +19,8 @@ use std::time::Duration;
 use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::model::{RecipeFields, Section, normalize_sections};
+
+pub mod fallbacks;
 
 /// The User-Agent for the plain `reqwest` image fallback (wreq's profiles set their own).
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -32,6 +37,10 @@ pub const MAX_PAGE_BYTES: usize = 10 * 1024 * 1024;
 pub enum Method {
     Firefox,
     Safari,
+    /// The site's own WordPress REST API, for a blog that blocks its pages.
+    WordPress,
+    /// The Internet Archive's copy of the page.
+    Archive,
     Browser,
 }
 
@@ -41,6 +50,8 @@ impl Method {
         match self {
             Method::Firefox => "wreq-firefox",
             Method::Safari => "wreq-safari",
+            Method::WordPress => "wordpress-api",
+            Method::Archive => "wayback",
             Method::Browser => "browser",
         }
     }
@@ -53,6 +64,8 @@ pub enum Fetched {
     Page { status: u16, html: String },
     /// No response (DNS, connection, TLS, timeout); the reason is for the log.
     Unreachable(String),
+    /// A recipe read without a page (see [`fallbacks::fetch_wordpress`]).
+    Recipe(Box<Scraped>),
 }
 
 /// The shared browser-profile client for `method` (Firefox or Safari). Built on first use;
@@ -63,7 +76,7 @@ pub fn wreq_client(method: Method) -> Option<&'static wreq::Client> {
     let (cell, emulation) = match method {
         Method::Firefox => (&FIREFOX, wreq_util::Emulation::Firefox151),
         Method::Safari => (&SAFARI, wreq_util::Emulation::Safari26_4),
-        Method::Browser => return None,
+        _ => return None,
     };
     cell.get_or_init(|| {
         wreq::Client::builder()
@@ -240,6 +253,7 @@ enum Verdict {
 
 fn judge(fetched: Fetched, url: &str) -> Verdict {
     match fetched {
+        Fetched::Recipe(scraped) => Verdict::Recipe(scraped),
         Fetched::Unreachable(_) => Verdict::Failed("Couldn't reach that site.".into()),
         Fetched::Page { status, .. } if is_block_status(status) => {
             Verdict::Blocked(format!("The site responded with {status}."))
@@ -257,28 +271,75 @@ fn judge(fetched: Fetched, url: &str) -> Verdict {
     }
 }
 
+/// Which steps after Firefox and Safari are on.
+#[derive(Clone, Copy, Debug)]
+pub struct Steps {
+    /// Headless Chromium: only if it's installed and not switched off.
+    pub browser: bool,
+    /// The site's WordPress API; `SCRAPE_WORDPRESS=off` turns it off.
+    pub wordpress: bool,
+    /// The Internet Archive's copy; `SCRAPE_ARCHIVE=off` turns it off.
+    pub archive: bool,
+}
+
+impl Steps {
+    /// Every step on, less the ones the environment switches off; the browser is on only
+    /// if it can run (`browser`).
+    pub fn from_env(browser: bool) -> Self {
+        Self {
+            browser,
+            wordpress: !crate::config::switched_off("SCRAPE_WORDPRESS"),
+            archive: !crate::config::switched_off("SCRAPE_ARCHIVE"),
+        }
+    }
+
+    fn on(self, method: Method) -> bool {
+        match method {
+            Method::Firefox | Method::Safari => true,
+            Method::WordPress => self.wordpress,
+            Method::Archive => self.archive,
+            Method::Browser => self.browser,
+        }
+    }
+}
+
+/// The ways round a block, in order: tried when Firefox and Safari were both refused, and
+/// before the browser. A new one goes in here.
+const BLOCKED_STEPS: [Method; 2] = [Method::WordPress, Method::Archive];
+
 /// The fetch order, with the fetchers passed in (so it's testable without a network):
-/// Firefox; Safari if Firefox was blocked; then the browser (when `browser` is true) if
-/// neither gave a recipe. Returns the method that worked, or the message for the cook.
+/// Firefox; Safari if Firefox was blocked; if Safari was blocked too, the [`BLOCKED_STEPS`];
+/// then the browser (when `steps.browser` is true) if nothing gave a recipe. Returns the
+/// method that worked, or the message for the cook.
 pub async fn scrape_with<F, Fut>(
     url: &str,
-    browser: bool,
+    steps: Steps,
     mut fetch: F,
 ) -> Result<(Method, Scraped), String>
 where
     F: FnMut(Method) -> Fut,
     Fut: Future<Output = Fetched>,
 {
-    let mut problem = match judge(fetch(Method::Firefox).await, url) {
+    let (mut problem, blocked) = match judge(fetch(Method::Firefox).await, url) {
         Verdict::Recipe(recipe) => return Ok((Method::Firefox, *recipe)),
         Verdict::Blocked(_) => match judge(fetch(Method::Safari).await, url) {
             Verdict::Recipe(recipe) => return Ok((Method::Safari, *recipe)),
-            Verdict::Blocked(p) | Verdict::Failed(p) => p,
+            Verdict::Blocked(p) => (p, true),
+            Verdict::Failed(p) => (p, false),
         },
-        Verdict::Failed(p) => p,
+        Verdict::Failed(p) => (p, false),
     };
 
-    if browser {
+    // A step that gets nothing leaves the block's own message as the problem
+    if blocked {
+        for method in BLOCKED_STEPS.into_iter().filter(|m| steps.on(*m)) {
+            if let Verdict::Recipe(recipe) = judge(fetch(method).await, url) {
+                return Ok((method, *recipe));
+            }
+        }
+    }
+
+    if steps.browser {
         match fetch(Method::Browser).await {
             Fetched::Page { html, .. } => match Scraped::from_page(&html, url) {
                 Some(scraped) => return Ok((Method::Browser, scraped)),
@@ -286,6 +347,7 @@ where
                     problem = "Couldn't find a recipe on that page, even in a real browser.".into()
                 }
             },
+            Fetched::Recipe(scraped) => return Ok((Method::Browser, *scraped)),
             Fetched::Unreachable(err) => {
                 tracing::warn!(
                     "[scraper] browser fallback failed for {}: {err}",
@@ -317,7 +379,7 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
     }
 
     let browser = state.browser.clone();
-    let result = scrape_with(url, browser.available(), |method| {
+    let result = scrape_with(url, Steps::from_env(browser.available()), |method| {
         let browser = browser.clone();
         async move {
             match method {
@@ -325,6 +387,8 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
                     Ok(html) => Fetched::Page { status: 200, html },
                     Err(err) => Fetched::Unreachable(err),
                 },
+                Method::WordPress => fallbacks::fetch_wordpress(url).await,
+                Method::Archive => fallbacks::fetch_archive(url).await,
                 wreq => fetch_wreq(wreq, url).await,
             }
         }
@@ -1187,16 +1251,29 @@ mod tests {
         assert!(!is_challenge_page(GRAPH));
     }
 
-    /// Runs `scrape_with` against scripted responses, returning the result and the methods asked.
+    /// [`scripted_steps`] with the ways round a block off (just Firefox, Safari and the browser).
     fn scripted(
         browser: bool,
+        responses: Vec<(Method, Fetched)>,
+    ) -> (Result<(Method, Scraped), String>, Vec<Method>) {
+        let steps = Steps {
+            browser,
+            wordpress: false,
+            archive: false,
+        };
+        scripted_steps(steps, responses)
+    }
+
+    /// Runs `scrape_with` against scripted responses, returning the result and the methods asked.
+    fn scripted_steps(
+        steps: Steps,
         mut responses: Vec<(Method, Fetched)>,
     ) -> (Result<(Method, Scraped), String>, Vec<Method>) {
         let asked = std::cell::RefCell::new(Vec::new());
         let result = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
-            .block_on(scrape_with("https://food.test/r", browser, |method| {
+            .block_on(scrape_with("https://food.test/r", steps, |method| {
                 asked.borrow_mut().push(method);
                 let at = responses
                     .iter()
@@ -1321,6 +1398,159 @@ mod tests {
             result
                 .unwrap_err()
                 .contains("A real browser was blocked too.")
+        );
+    }
+
+    fn all_steps() -> Steps {
+        Steps {
+            browser: true,
+            wordpress: true,
+            archive: true,
+        }
+    }
+
+    /// A recipe as a fallback step hands it over.
+    fn recipe_from_step() -> Fetched {
+        let recipe = parse_recipe_html(GRAPH, "https://food.test/r").unwrap();
+        Fetched::Recipe(Box::new(Scraped {
+            recipe,
+            crumb: None,
+        }))
+    }
+
+    /// Firefox and Safari both refused.
+    fn refused() -> Vec<(Method, Fetched)> {
+        vec![
+            (Method::Firefox, status(403)),
+            (Method::Safari, ok(CHALLENGE)),
+        ]
+    }
+
+    #[test]
+    fn wordpress_after_both_profiles_are_blocked() {
+        let mut script = refused();
+        script.push((Method::WordPress, recipe_from_step()));
+        let (result, asked) = scripted_steps(all_steps(), script);
+        let (method, scraped) = result.unwrap();
+        assert_eq!(method, Method::WordPress);
+        assert_eq!(scraped.recipe.title, "Lemon & Herb Chicken");
+        assert_eq!(
+            asked,
+            vec![Method::Firefox, Method::Safari, Method::WordPress]
+        );
+    }
+
+    #[test]
+    fn archive_when_wordpress_has_nothing() {
+        for nothing in [
+            Fetched::Unreachable("no post at that link".into()),
+            status(404),
+            ok("<p>not a recipe</p>"),
+        ] {
+            let mut script = refused();
+            script.push((Method::WordPress, nothing));
+            script.push((Method::Archive, ok(GRAPH)));
+            let (result, asked) = scripted_steps(all_steps(), script);
+            assert_eq!(result.unwrap().0, Method::Archive);
+            assert_eq!(
+                asked,
+                vec![
+                    Method::Firefox,
+                    Method::Safari,
+                    Method::WordPress,
+                    Method::Archive
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn browser_when_neither_has_a_recipe() {
+        let mut script = refused();
+        script.push((Method::WordPress, Fetched::Unreachable("no post".into())));
+        script.push((Method::Archive, status(404)));
+        script.push((Method::Browser, ok(GRAPH)));
+        let (result, asked) = scripted_steps(all_steps(), script);
+        assert_eq!(result.unwrap().0, Method::Browser);
+        assert_eq!(
+            asked,
+            vec![
+                Method::Firefox,
+                Method::Safari,
+                Method::WordPress,
+                Method::Archive,
+                Method::Browser
+            ]
+        );
+
+        // With nothing working, the block is what the cook is told
+        let mut script = refused();
+        script.push((Method::WordPress, Fetched::Unreachable("no post".into())));
+        script.push((Method::Archive, status(404)));
+        let steps = Steps {
+            browser: false,
+            ..all_steps()
+        };
+        let (result, _) = scripted_steps(steps, script);
+        let message = result.unwrap_err();
+        assert!(
+            message.starts_with("The site showed a bot check"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_plain_failure_skips_the_ways_round_a_block() {
+        // A page rendered by scripts, a 404, or Safari failing differently from Firefox
+        let cases = [
+            vec![(Method::Firefox, ok("<p>loading</p>"))],
+            vec![(Method::Firefox, status(404))],
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, status(404)),
+            ],
+        ];
+        for mut script in cases {
+            script.push((Method::Browser, ok(GRAPH)));
+            let (result, asked) = scripted_steps(all_steps(), script);
+            assert_eq!(result.unwrap().0, Method::Browser);
+            assert!(!asked.contains(&Method::WordPress), "{asked:?}");
+            assert!(!asked.contains(&Method::Archive), "{asked:?}");
+        }
+    }
+
+    #[test]
+    fn switched_off_steps_are_skipped() {
+        let mut script = refused();
+        script.push((Method::Archive, ok(GRAPH)));
+        let steps = Steps {
+            wordpress: false,
+            ..all_steps()
+        };
+        let (result, asked) = scripted_steps(steps, script);
+        assert_eq!(result.unwrap().0, Method::Archive);
+        assert_eq!(
+            asked,
+            vec![Method::Firefox, Method::Safari, Method::Archive]
+        );
+
+        let mut script = refused();
+        script.push((Method::WordPress, Fetched::Unreachable("no post".into())));
+        script.push((Method::Browser, ok(GRAPH)));
+        let steps = Steps {
+            archive: false,
+            ..all_steps()
+        };
+        let (result, asked) = scripted_steps(steps, script);
+        assert_eq!(result.unwrap().0, Method::Browser);
+        assert_eq!(
+            asked,
+            vec![
+                Method::Firefox,
+                Method::Safari,
+                Method::WordPress,
+                Method::Browser
+            ]
         );
     }
 
