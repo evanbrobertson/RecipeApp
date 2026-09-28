@@ -1,14 +1,15 @@
 ---
 /**
- * A shared recipe, served by the Rust server at /s/:token (src/share.rs), never directly.
+ * A recipe read from a site before it's saved, served by the Rust server at /preview?url=…
+ * (src/preview.rs), never directly. What the browser extension and the "Read in Crumb"
+ * bookmark open.
  *
- * Also a recipe inside a shared cookbook (/s/:token/:recipeId), with a link back to the book
- * in <!--share:back-->.
- *
- * The server fills the <!--share:*--> markers with the recipe as plain HTML, so the page
- * reads (and scrapes) fine without JavaScript, and adds the title, link-preview tags,
- * JSON-LD and #page-data. Its own shell: no nav, timers or speculation rules, and a strict
- * CSP that allows the inline scripts here by hash.
+ * The share page's layout and markers (src/share.rs fills them the same way), with
+ * PreviewActions in place of the share's actions. Before the recipe is read the server
+ * fills the markers with a skeleton and sets `preview.state` to "loading", and the script
+ * at the end reloads the page with `go=1`, which reads it: the tab shows this page, not a
+ * blank one, while the site is fetched. Its own shell, like a share's: no nav, timers or
+ * speculation rules, and a strict CSP that allows the inline scripts here by hash.
  */
 import "../../../styles/app.css"
 import "../../../styles/share.css"
@@ -16,7 +17,7 @@ import nunito from "../../../assets/fonts/nunito-sans.woff2?url"
 import dmSerif from "../../../assets/fonts/dm-serif-display.woff2?url"
 import caveat from "../../../assets/fonts/caveat.woff2?url"
 import themeBoot from "../../../lib/theme-boot.js?raw"
-import ShareActions from "../../../islands/ShareActions.svelte"
+import PreviewActions from "../../../islands/PreviewActions.svelte"
 import ShareScale from "../../../islands/ShareScale.svelte"
 ---
 
@@ -25,7 +26,7 @@ import ShareScale from "../../../islands/ShareScale.svelte"
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Shared recipe · Crumb</title>
+    <title>Recipe · Crumb</title>
     <meta name="robots" content="noindex, noimageindex" />
     <meta name="referrer" content="no-referrer" />
     <meta name="theme-color" content="#f5f1e6" data-light="#f5f1e6" data-dark="#141c17" />
@@ -44,7 +45,7 @@ import ShareScale from "../../../islands/ShareScale.svelte"
   <body>
     <script type="application/json" id="page-data">null</script>
     <div class="share-wrap">
-      <p class="share-mark page-title">Crumb</p>
+      <a class="share-mark page-title" href="/">Crumb</a>
       <!--share:back-->
       <article class="share-article">
         <section class="share-hero">
@@ -52,9 +53,9 @@ import ShareScale from "../../../islands/ShareScale.svelte"
           <div class="share-intro">
             <!--share:intro-->
             <div class="no-print">
-              <ShareActions client:only="svelte">
+              <PreviewActions client:only="svelte">
                 <div slot="fallback" class="share-actions-skeleton" aria-hidden="true"></div>
-              </ShareActions>
+              </PreviewActions>
             </div>
           </div>
         </section>
@@ -77,9 +78,35 @@ import ShareScale from "../../../islands/ShareScale.svelte"
 
         <footer class="share-foot">
           <!--share:source-->
-          <p class="share-made meta">Shared from Crumb, a private recipe box.</p>
         </footer>
       </article>
     </div>
+    <script is:inline>
+      try {
+        const data = JSON.parse(document.getElementById("page-data").textContent)
+        if (data && data.preview && data.preview.state === "loading") {
+          const next = new URL(location.href)
+          next.searchParams.set("go", "1")
+          // After the first paint, so "Reading…" shows while the site is fetched
+          requestAnimationFrame(() => setTimeout(() => location.replace(next), 0))
+        }
+      } catch {}
+    </script>
   </body>
 </html>
+
+<style is:global>
+  .share-mark {
+    display: inline-block;
+    text-decoration: none;
+  }
+  .preview-skeleton > .skeleton {
+    height: 2.75rem;
+  }
+  .share-split:has(.preview-empty) {
+    display: none;
+  }
+  .preview-skeleton > * + * {
+    margin-top: 0.5rem;
+  }
+</style>

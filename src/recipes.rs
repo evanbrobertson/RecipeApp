@@ -314,7 +314,7 @@ pub fn delete_recipes(conn: &Connection, ids: &[i64]) -> AppResult<usize> {
     )?)
 }
 
-fn is_http(s: &str) -> bool {
+pub(crate) fn is_http(s: &str) -> bool {
     let lower = s.get(..8).unwrap_or(s).to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")
 }
@@ -413,7 +413,11 @@ pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
 
 /// A recipe page, or another Crumb's share.
 async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
-    let scraped = crate::scraper::scrape_page(state, url).await?;
+    // What a preview of the link just showed, else the page as it is now
+    let scraped = match crate::preview::take(state, url) {
+        Some(scraped) => scraped,
+        None => crate::scraper::scrape_page(state, url).await?,
+    };
     // Another Crumb's share page: take its export (sections, notes and the original link
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {

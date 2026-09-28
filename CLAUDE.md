@@ -68,6 +68,7 @@ src/
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
+  preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
@@ -77,6 +78,7 @@ src/
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
+extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", opens /preview
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
@@ -128,6 +130,10 @@ web/src/
   feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
 - **Env vars:** a new or changed variable goes in `.env.schema` (`auth/.env.schema` for the auth service) with its
   type, default and `@sensitive`/`@required`, and in the README's Configuration table.
+- **Previews** (`/preview?url=`, `src/preview.rs`) scrape on GET, so they only scrape for `Sec-Fetch-Site` `none` or
+  `same-origin`; from another site they ask first. The Add button posts to `/api/recipes/import`, which takes the
+  preview's kept scrape. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
+  `extension/`, released by `.github/workflows/extension.yml`.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 
