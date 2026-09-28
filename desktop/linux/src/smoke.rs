@@ -38,6 +38,28 @@ pub fn page() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// The value after `--<name>` (or `--<name>=value`).
+fn arg(name: &str) -> Option<String> {
+    let flag = format!("--{name}");
+    let prefix = format!("--{name}=");
+    let mut args = std::env::args();
+    while let Some(a) = args.next() {
+        if a == flag {
+            return args.next();
+        }
+        if let Some(value) = a.strip_prefix(&prefix) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// `--shot <file.png>`: open `--route` (default `home`), wait for its calls to settle, save a
+/// screenshot and quit. For comparing each screen with the web.
+pub fn shot() -> Option<String> {
+    arg("shot")
+}
+
 /// Records a failed smoke assertion on the Rust side, alongside the Qt message handler.
 static FAILED: AtomicBool = AtomicBool::new(false);
 
@@ -75,6 +97,12 @@ pub mod qobject {
         #[qml_singleton]
         #[qproperty(bool, enabled)]
         #[qproperty(QString, page)]
+        /// `--route <name[:id]>`: the page to open first.
+        #[qproperty(QString, route)]
+        /// `--shot <file.png>`: where to save a screenshot of it.
+        #[qproperty(QString, shot)]
+        /// `--size <width>x<height>` for the window.
+        #[qproperty(QString, size)]
         type Smoke = super::SmokeRust;
 
         /// Fails the smoke run with a reason; a no-op outside a smoke run.
@@ -87,6 +115,9 @@ pub mod qobject {
 pub struct SmokeRust {
     enabled: bool,
     page: QString,
+    route: QString,
+    shot: QString,
+    size: QString,
 }
 
 impl Default for SmokeRust {
@@ -94,6 +125,9 @@ impl Default for SmokeRust {
         Self {
             enabled: enabled(),
             page: QString::from(&page().unwrap_or_default()),
+            route: QString::from(&arg("route").unwrap_or_default()),
+            shot: QString::from(&shot().unwrap_or_default()),
+            size: QString::from(&arg("size").unwrap_or_default()),
         }
     }
 }

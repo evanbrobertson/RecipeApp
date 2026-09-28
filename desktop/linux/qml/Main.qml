@@ -4,13 +4,18 @@ import QtQuick.Layouts
 
 import app.crumb.desktop 1.0
 
+// The window: sign-in until there's a session, then the nav rail and one page at a time.
+//
+// Pages are files named in `pages` below. Each gets `session`, `routeId` (the id in
+// `recipe:7`) and `params`, and moves around with `ApplicationWindow.window.go(name, params)`,
+// `.back()` and `.toast({...})`, like the web's links, history and toasts.
 ApplicationWindow {
     id: window
     visible: true
-    width: 1100
-    height: 760
-    minimumWidth: 480
-    minimumHeight: 400
+    width: sizeFrom(Smoke.size, 0, 1280)
+    height: sizeFrom(Smoke.size, 1, 900)
+    minimumWidth: 720
+    minimumHeight: 480
     title: "Crumb"
     color: Palette.bg
 
@@ -18,31 +23,135 @@ ApplicationWindow {
         ColorAnimation { duration: 150 }
     }
 
+    function sizeFrom(text, index, fallback) {
+        var parts = String(text).split("x")
+        var n = parseInt(parts[index])
+        return parts.length === 2 && n > 0 ? n : fallback
+    }
+
     Session {
         id: appSession
     }
 
-    // ─── Navigation ───
-    // The signed-in half is a StackView: RecipesPage is the root, a card pushes RecipePage.
-    // Keeping RecipesPage alive preserves its scroll position and search text.
-    function openRecipe(id) {
-        var stack = rootLoader.item
-        if (stack && typeof stack.push === "function")
-            stack.push(recipePageComponent, {
-                "recipeId": id
-            })
+    // ─── Routes ───
+    readonly property var pages: ({
+            "home": "HomePage.qml",
+            "recipes": "RecipesPage.qml",
+            "recipe": "RecipePage.qml",
+            "cook": "CookPage.qml",
+            "prep": "PrepPage.qml",
+            "edit": "EditPage.qml",
+            "new": "EditPage.qml",
+            "shelf": "ShelfPage.qml",
+            "cookbook": "CookbookPage.qml",
+            "suggestions": "SuggestionsPage.qml",
+            "add": "AddPage.qml",
+            "import": "ImportPage.qml",
+            "more": "MorePage.qml",
+            "account": "AccountPage.qml",
+            "connect": "ConnectPage.qml",
+            "connections": "ConnectionsPage.qml"
+        })
+    // The nav item each page belongs to (the web's `section`)
+    readonly property var sections: ({
+            "home": "kitchen",
+            "recipes": "recipes",
+            "recipe": "recipes",
+            "cook": "recipes",
+            "prep": "recipes",
+            "edit": "recipes",
+            "new": "add",
+            "shelf": "shelf",
+            "cookbook": "shelf",
+            "suggestions": "suggestions",
+            "add": "add",
+            "import": "more",
+            "more": "more",
+            "account": "more",
+            "connect": "more",
+            "connections": "more"
+        })
+    // Pages with no nav rail (cook mode fills the window)
+    readonly property var bare: ({ "cook": true })
+
+    property var route: ({ "name": "home", "id": 0, "params": {} })
+    property var history: []
+    // What the nav rail needs from the server: Wee Chef checks, and lines to review.
+    property var connector: ({})
+    property int reviewCount: 0
+
+    // Opens a page: go("recipe", {id: 7}). `replace` leaves no history entry.
+    function go(name, params, replace) {
+        if (!pages[name]) {
+            console.warn("no such page:", name)
+            return
+        }
+        params = params || {}
+        if (!replace)
+            history.push(route)
+        route = { "name": name, "id": params.id || 0, "params": params }
     }
 
-    function goBack() {
-        var stack = rootLoader.item
-        if (stack && stack.depth !== undefined && stack.depth > 1)
-            stack.pop()
+    function back() {
+        if (history.length === 0) {
+            if (route.name !== "home")
+                route = { "name": "home", "id": 0, "params": {} }
+            return
+        }
+        route = history.pop()
     }
 
-    function focusSearch() {
-        var stack = rootLoader.item
-        if (stack && stack.currentItem && typeof stack.currentItem.focusSearch === "function")
-            stack.currentItem.focusSearch()
+    function toast(t) {
+        toaster.show(t)
+    }
+
+    // `recipe:7` (from --route) as a route
+    function parseRoute(text) {
+        var parts = String(text || "home").split(":")
+        var params = {}
+        if (parts.length > 1) {
+            var id = parseInt(parts[1])
+            if (id > 0)
+                params.id = id
+            else
+                params.title = parts.slice(1).join(":")
+        }
+        return { "name": pages[parts[0]] ? parts[0] : "home", "id": params.id || 0, "params": params }
+    }
+
+    function refreshNav() {
+        navRequests.call("connector", {}, function (c) {
+            window.connector = c
+        }, function () {})
+        navRequests.call("checksReview", {}, function (list) {
+            window.reviewCount = list ? list.length : 0
+        }, function () {
+            window.reviewCount = 0
+        })
+    }
+
+    Requests {
+        id: navRequests
+    }
+
+    Connections {
+        target: Api
+
+        function onUnauthorized() {
+            appSession.requireLogin()
+        }
+    }
+
+    Connections {
+        target: appSession
+
+        function onStateChanged() {
+            if (appSession.state === "ready") {
+                window.history = []
+                window.route = window.parseRoute(Smoke.route)
+                window.refreshNav()
+            }
+        }
     }
 
     Component.onCompleted: {
@@ -56,7 +165,7 @@ ApplicationWindow {
         visible: Smoke.page !== "recipe"
         sourceComponent: {
             if (appSession.state === "ready")
-                return readyShell
+                return shell
             if (appSession.state === "checking")
                 return checkingPage
             return loginPage
@@ -65,32 +174,63 @@ ApplicationWindow {
 
     Component {
         id: loginPage
+
         LoginPage {
             session: appSession
         }
     }
 
     Component {
-        id: readyShell
-        StackView {
-            anchors.fill: parent
-            initialItem: recipesPageComponent
-        }
-    }
+        id: shell
 
-    Component {
-        id: recipesPageComponent
-        RecipesPage {
-            session: appSession
-            onOpenRecipe: (id) => window.openRecipe(id)
-        }
-    }
+        RowLayout {
+            spacing: 0
 
-    Component {
-        id: recipePageComponent
-        RecipePage {
-            session: appSession
-            onGoBack: window.goBack()
+            NavRail {
+                visible: !window.bare[window.route.name]
+                Layout.fillHeight: true
+                Layout.preferredWidth: 240
+                section: window.sections[window.route.name] || ""
+                showSuggestions: !!window.connector.weeChefChecks
+                reviewCount: window.reviewCount
+                onNavigate: (name) => window.go(name, {})
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Loader {
+                    id: pageLoader
+                    anchors.fill: parent
+                    focus: true
+
+                    function load() {
+                        setSource(window.pages[window.route.name], {
+                            "session": appSession,
+                            "routeId": window.route.id,
+                            "params": window.route.params
+                        })
+                    }
+
+                    Component.onCompleted: load()
+
+                    Connections {
+                        target: window
+
+                        function onRouteChanged() {
+                            pageLoader.load()
+                        }
+                    }
+                }
+
+                TimerDock {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 24
+                }
+            }
         }
     }
 
@@ -103,14 +243,16 @@ ApplicationWindow {
 
     Component {
         id: smokeRecipePage
+
         RecipePage {
             session: appSession
-            recipeId: 1
+            routeId: 1
         }
     }
 
     Component {
         id: checkingPage
+
         Item {
             ColumnLayout {
                 anchors.centerIn: parent
@@ -121,34 +263,66 @@ ApplicationWindow {
                     running: true
                 }
 
-                Label {
+                Body {
                     text: "Connecting…"
-                    color: Palette.text
-                    font.pixelSize: 15
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
         }
     }
 
+    Toaster {
+        id: toaster
+        anchors.fill: parent
+        z: 100
+    }
+
     Shortcut {
         sequence: "Escape"
-        onActivated: window.goBack()
+        onActivated: window.back()
     }
 
     Shortcut {
         sequence: "Alt+Left"
-        onActivated: window.goBack()
+        onActivated: window.back()
     }
 
     Shortcut {
         sequence: "Ctrl+F"
-        onActivated: window.focusSearch()
+        onActivated: if (appSession.state === "ready") window.go("recipes", { "focusSearch": true })
+    }
+
+    Shortcut {
+        sequence: "Ctrl+N"
+        onActivated: if (appSession.state === "ready") window.go("add", {})
     }
 
     TapHandler {
         acceptedButtons: Qt.BackButton
-        onTapped: window.goBack()
+        onTapped: window.back()
+    }
+
+    // ─── `--shot <file.png>` ───
+    // Once the page's calls have been quiet for a moment, save the window and quit.
+    property int quietTicks: 0
+
+    Timer {
+        interval: 250
+        repeat: true
+        running: Smoke.shot !== "" && (appSession.state === "ready" || appSession.state === "login"
+                                         || appSession.state === "setup")
+        onTriggered: {
+            window.quietTicks = Api.pending === 0 ? window.quietTicks + 1 : 0
+            // About two seconds of quiet, for photos to arrive
+            if (window.quietTicks < 8)
+                return
+            running = false
+            rootLoader.grabToImage(function (result) {
+                if (!result.saveToFile(Smoke.shot))
+                    console.warn("couldn't save the screenshot to", Smoke.shot)
+                Qt.quit()
+            })
+        }
     }
 
     // The `--smoke` login-page regression check (state "setup", no server configured).

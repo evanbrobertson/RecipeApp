@@ -14,7 +14,7 @@ use std::sync::Mutex as StdMutex;
 
 use core::pin::Pin;
 
-use crumb_client::{Client, Error};
+use crumb_client::{Client, Error, Mode, Status};
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use tokio::sync::Mutex;
@@ -125,6 +125,10 @@ pub struct SessionCore {
     state: State,
     error: String,
     reachable: bool,
+    /// How the server signs people in, and who's signed in (`/api/auth/status`).
+    status: Status,
+    /// A sign-up that needs its email confirmed before it can sign in.
+    verify: bool,
 }
 
 impl SessionCore {
@@ -136,7 +140,22 @@ impl SessionCore {
             state: State::Setup,
             error: String::new(),
             reachable: false,
+            status: Status::default(),
+            verify: false,
         }
+    }
+
+    pub fn status(&self) -> &Status {
+        &self.status
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.status.mode
+    }
+
+    /// Whether the last sign-up is waiting on its confirmation email.
+    pub fn verify(&self) -> bool {
+        self.verify
     }
 
     pub fn state(&self) -> State {
@@ -209,6 +228,7 @@ impl SessionCore {
             return;
         }
         self.reachable = true;
+        self.status = client.auth_status().await;
 
         match client.recipes(None, Some(1)).await {
             Ok(_) => self.adopt(client),
@@ -242,10 +262,83 @@ impl SessionCore {
         }
     }
 
+    /// Signs in with an email and password (the `accounts` and `hosted` modes).
+    pub async fn sign_in(&mut self, email: &str, password: &str) {
+        let Some(client) = self.client.clone() else {
+            self.state = State::Login;
+            self.error = "Connect to a Crumb server first.".to_string();
+            return;
+        };
+        self.error.clear();
+        self.verify = false;
+        match client.accounts(self.mode()).sign_in(email, password).await {
+            Ok(()) => {
+                self.adopt(client);
+                self.refresh_status().await;
+            }
+            Err(err) => {
+                self.state = State::Login;
+                self.error = err.to_string();
+            }
+        }
+    }
+
+    /// Makes an account, or the first one on a new Crumb (`set_up`, which may ask for the old
+    /// app password). A hosted sign-up that must confirm its email stays at login, with
+    /// [`Self::verify`] set.
+    pub async fn sign_up(&mut self, name: &str, email: &str, password: &str, app_password: &str) {
+        let Some(client) = self.client.clone() else {
+            self.state = State::Login;
+            self.error = "Connect to a Crumb server first.".to_string();
+            return;
+        };
+        self.error.clear();
+        self.verify = false;
+        let accounts = client.accounts(self.mode());
+        let result = if self.status.setup_needed {
+            let app_password = (!app_password.is_empty()).then_some(app_password);
+            accounts
+                .set_up(name, email, password, app_password)
+                .await
+                .map(|()| false)
+        } else {
+            accounts
+                .sign_up(name, email, password)
+                .await
+                .map(|done| done.verify)
+        };
+        match result {
+            Ok(true) => {
+                self.verify = true;
+                self.state = State::Login;
+            }
+            Ok(false) => {
+                self.adopt(client);
+                self.refresh_status().await;
+            }
+            Err(err) => {
+                self.state = State::Login;
+                self.error = err.to_string();
+            }
+        }
+    }
+
+    /// Reads who's signed in again (after signing in, or switching household).
+    pub async fn refresh_status(&mut self) {
+        if let Some(client) = &self.client {
+            self.status = client.auth_status().await;
+        }
+    }
+
     /// Signs out: best-effort server call, then forget the local cookie.
     pub async fn logout(&mut self) {
         if let Some(client) = self.client.take() {
-            let _ = client.logout().await;
+            let _ = match self.mode() {
+                Mode::Password => client.logout().await,
+                mode => client.accounts(mode).sign_out().await,
+            };
+            // Keep a client for the next sign-in on the same server
+            self.client = Client::new(&self.server).ok();
         }
         self.store.clear(&self.server);
         crate::network::sync(&self.server, None);
@@ -295,6 +388,12 @@ pub mod qobject {
         #[qproperty(QString, state)]
         #[qproperty(QString, error)]
         #[qproperty(bool, busy)]
+        /// `password`, `accounts` or `hosted`.
+        #[qproperty(QString, mode)]
+        /// The server's `/api/auth/status`, as JSON: who's signed in, and whether sign-up is open.
+        #[qproperty(QString, status_json, cxx_name = "statusJson")]
+        /// A sign-up is waiting on its confirmation email.
+        #[qproperty(bool, verify)]
         type Session = super::SessionRust;
 
         #[qinvokable]
@@ -302,6 +401,24 @@ pub mod qobject {
 
         #[qinvokable]
         fn login(self: Pin<&mut Session>, password: QString);
+
+        #[qinvokable]
+        #[cxx_name = "signIn"]
+        fn sign_in(self: Pin<&mut Session>, email: QString, password: QString);
+
+        #[qinvokable]
+        #[cxx_name = "signUp"]
+        fn sign_up(
+            self: Pin<&mut Session>,
+            name: QString,
+            email: QString,
+            password: QString,
+            app_password: QString,
+        );
+
+        #[qinvokable]
+        #[cxx_name = "refreshStatus"]
+        fn refresh_status(self: Pin<&mut Session>);
 
         #[qinvokable]
         fn logout(self: Pin<&mut Session>);
@@ -320,6 +437,9 @@ pub struct SessionRust {
     state: QString,
     error: QString,
     busy: bool,
+    mode: QString,
+    status_json: QString,
+    verify: bool,
 }
 
 impl Default for SessionRust {
@@ -344,11 +464,92 @@ impl Default for SessionRust {
             state: QString::from(state.as_str()),
             error: QString::default(),
             busy: false,
+            mode: QString::from("password"),
+            status_json: QString::from("{}"),
+            verify: false,
+        }
+    }
+}
+
+/// What the `Session` QObject shows after a call: copied out of the core under its lock.
+struct Shown {
+    state: State,
+    error: String,
+    mode: String,
+    status: String,
+    verify: bool,
+}
+
+impl Shown {
+    fn of(core: &SessionCore) -> Self {
+        let status = serde_json::to_value(core.status()).unwrap_or_default();
+        Self {
+            state: core.state(),
+            error: core.error().to_string(),
+            mode: status["mode"].as_str().unwrap_or("password").to_string(),
+            status: status.to_string(),
+            verify: core.verify(),
         }
     }
 }
 
 impl qobject::Session {
+    fn show(mut self: Pin<&mut Self>, shown: Shown) {
+        self.as_mut().set_state(QString::from(shown.state.as_str()));
+        self.as_mut().set_error(QString::from(&shown.error));
+        self.as_mut().set_mode(QString::from(&shown.mode));
+        self.as_mut().set_status_json(QString::from(&shown.status));
+        self.as_mut().set_verify(shown.verify);
+        self.as_mut().set_busy(false);
+    }
+
+    /// Runs `work` on the core off the Qt thread, then shows where it left things.
+    fn run<F>(mut self: Pin<&mut Self>, work: F)
+    where
+        F: for<'a> FnOnce(
+                &'a mut SessionCore,
+            )
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>
+            + Send
+            + 'static,
+    {
+        self.as_mut().set_busy(true);
+        self.as_mut().set_error(QString::default());
+        let qt_thread = self.as_mut().qt_thread();
+        let core = self.rust().core.clone();
+        drop(crate::runtime::spawn(async move {
+            let shown = {
+                let mut core = core.lock().await;
+                work(&mut core).await;
+                Shown::of(&core)
+            };
+            let _ = qt_thread.queue(move |object| object.show(shown));
+        }));
+    }
+
+    pub fn sign_in(self: Pin<&mut Self>, email: QString, password: QString) {
+        let (email, password) = (email.to_string(), password.to_string());
+        self.run(move |core| Box::pin(async move { core.sign_in(&email, &password).await }));
+    }
+
+    pub fn sign_up(
+        self: Pin<&mut Self>,
+        name: QString,
+        email: QString,
+        password: QString,
+        app_password: QString,
+    ) {
+        let (name, email) = (name.to_string(), email.to_string());
+        let (password, app_password) = (password.to_string(), app_password.to_string());
+        self.run(move |core| {
+            Box::pin(async move { core.sign_up(&name, &email, &password, &app_password).await })
+        });
+    }
+
+    pub fn refresh_status(self: Pin<&mut Self>) {
+        self.run(|core| Box::pin(core.refresh_status()));
+    }
+
     pub fn connect(mut self: Pin<&mut Self>, url: QString) {
         let url = url.to_string();
         self.as_mut().set_busy(true);
@@ -360,12 +561,11 @@ impl qobject::Session {
         let qt_thread = self.as_mut().qt_thread();
         let core = self.rust().core.clone();
         drop(crate::runtime::spawn(async move {
-            let (state, error, server, reachable) = {
+            let (shown, server, reachable) = {
                 let mut core = core.lock().await;
                 core.connect(&url).await;
                 (
-                    core.state(),
-                    core.error().to_string(),
+                    Shown::of(&core),
                     core.server().to_string(),
                     core.reachable(),
                 )
@@ -376,53 +576,17 @@ impl qobject::Session {
             {
                 eprintln!("crumb-desktop: couldn't save settings: {err}");
             }
-            let _ = qt_thread.queue(move |mut object| {
-                object.as_mut().set_state(QString::from(state.as_str()));
-                object.as_mut().set_error(QString::from(&error));
-                object.as_mut().set_busy(false);
-            });
+            let _ = qt_thread.queue(move |object| object.show(shown));
         }));
     }
 
-    pub fn login(mut self: Pin<&mut Self>, password: QString) {
+    pub fn login(self: Pin<&mut Self>, password: QString) {
         let password = password.to_string();
-        self.as_mut().set_busy(true);
-        self.as_mut().set_error(QString::default());
-
-        let qt_thread = self.as_mut().qt_thread();
-        let core = self.rust().core.clone();
-        drop(crate::runtime::spawn(async move {
-            let (state, error) = {
-                let mut core = core.lock().await;
-                core.login(&password).await;
-                (core.state(), core.error().to_string())
-            };
-            let _ = qt_thread.queue(move |mut object| {
-                object.as_mut().set_state(QString::from(state.as_str()));
-                object.as_mut().set_error(QString::from(&error));
-                object.as_mut().set_busy(false);
-            });
-        }));
+        self.run(move |core| Box::pin(async move { core.login(&password).await }));
     }
 
-    pub fn logout(mut self: Pin<&mut Self>) {
-        self.as_mut().set_busy(true);
-        self.as_mut().set_error(QString::default());
-
-        let qt_thread = self.as_mut().qt_thread();
-        let core = self.rust().core.clone();
-        drop(crate::runtime::spawn(async move {
-            let (state, error) = {
-                let mut core = core.lock().await;
-                core.logout().await;
-                (core.state(), core.error().to_string())
-            };
-            let _ = qt_thread.queue(move |mut object| {
-                object.as_mut().set_state(QString::from(state.as_str()));
-                object.as_mut().set_error(QString::from(&error));
-                object.as_mut().set_busy(false);
-            });
-        }));
+    pub fn logout(self: Pin<&mut Self>) {
+        self.run(|core| Box::pin(core.logout()));
     }
 
     pub fn require_login(mut self: Pin<&mut Self>) {

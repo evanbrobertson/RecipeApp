@@ -14,6 +14,7 @@ use crate::native;
 pub const SANS_FALLBACK: &str = "Nunito Sans";
 pub const SERIF_FALLBACK: &str = "DM Serif Display";
 pub const HAND_FALLBACK: &str = "Caveat";
+pub const NOTES_FALLBACK: &str = "Kalam";
 
 /// The families that actually registered, if any.
 #[derive(Debug, Clone, Default)]
@@ -21,6 +22,8 @@ pub struct Families {
     sans: Option<String>,
     serif: Option<String>,
     hand: Option<String>,
+    /// Kalam, for the cook's own notes.
+    notes: Option<String>,
 }
 
 impl Families {
@@ -36,9 +39,13 @@ impl Families {
         self.hand.as_deref().unwrap_or(HAND_FALLBACK)
     }
 
-    /// True when all three fonts registered.
+    pub fn notes(&self) -> &str {
+        self.notes.as_deref().unwrap_or(NOTES_FALLBACK)
+    }
+
+    /// True when all four fonts registered.
     pub fn all_registered(&self) -> bool {
-        self.sans.is_some() && self.serif.is_some() && self.hand.is_some()
+        self.sans.is_some() && self.serif.is_some() && self.hand.is_some() && self.notes.is_some()
     }
 }
 
@@ -49,13 +56,14 @@ pub fn families() -> &'static Families {
     FAMILIES.get_or_init(Families::default)
 }
 
-/// Registers the three bundled fonts and sets Nunito Sans as the application font.
-/// Returns whether all three registered.
+/// Registers the four bundled fonts and sets Nunito Sans as the application font.
+/// Returns whether all four registered.
 pub fn install(mut app: Pin<&mut QGuiApplication>) -> bool {
     let families = Families {
         sans: register(":/fonts/nunito-sans.woff2"),
         serif: register(":/fonts/dm-serif-display.woff2"),
         hand: register(":/fonts/caveat.woff2"),
+        notes: register(":/fonts/kalam.woff2"),
     };
 
     let mut font = QFont::default();

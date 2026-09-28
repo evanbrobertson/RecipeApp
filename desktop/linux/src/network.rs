@@ -50,23 +50,13 @@ pub fn origin_allows(origin: &str, request_url: &str) -> bool {
     }
 }
 
-/// The `Cookie` header for a stored session: `name=value` as kept, or a bare value as the
-/// app-password session cookie.
-pub fn cookie_header(stored: &str) -> String {
-    if stored.contains('=') {
-        stored.to_string()
-    } else {
-        format!("{}={stored}", crumb_client::SESSION_COOKIE)
-    }
-}
-
 /// Points the photo loader at `server` with `session` (the stored cookie), or signs it out.
 pub fn sync(server: &str, session: Option<&str>) {
     use cxx_qt_lib::QString;
     match (origin_of(server), session) {
         (Some(origin), Some(cookie)) if !cookie.is_empty() => crate::native::set_photo_session(
             &QString::from(&origin),
-            &QString::from(&cookie_header(cookie)),
+            &QString::from(&crumb_client::session_header(cookie)),
         ),
         _ => crate::native::set_photo_session(&QString::default(), &QString::default()),
     }
@@ -118,15 +108,6 @@ mod tests {
             "https://crumb.example.com:8443/img/7/320"
         ));
         assert!(!origin_allows(origin, "qrc:/img/fixture.png"));
-    }
-
-    #[test]
-    fn cookies_keep_their_name() {
-        assert_eq!(cookie_header("abc"), "crumb_session=abc");
-        assert_eq!(
-            cookie_header("crumb.session_token=x.y"),
-            "crumb.session_token=x.y"
-        );
     }
 
     #[test]

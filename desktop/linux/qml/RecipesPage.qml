@@ -8,7 +8,12 @@ import app.crumb.desktop 1.0
 Item {
     id: page
     property var session
-    signal openRecipe(int recipeId)
+    property int routeId: 0
+    property var params: ({})
+
+    function openRecipe(id) {
+        ApplicationWindow.window.go("recipe", { "id": id })
+    }
 
     function focusSearch() {
         searchField.forceActiveFocus()
@@ -229,5 +234,9 @@ Item {
         }
     }
 
-    Component.onCompleted: list.refresh("")
+    Component.onCompleted: {
+        list.refresh("")
+        if (params && params.focusSearch)
+            focusSearch()
+    }
 }

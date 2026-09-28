@@ -3,6 +3,7 @@
 //! The crate is a library so cargo's integration tests (and the `--smoke` test) can link
 //! the cxx-qt generated symbols; `main.rs` is a thin wrapper calling [`run`].
 
+mod api;
 pub mod config;
 mod core_bridge;
 mod fonts;

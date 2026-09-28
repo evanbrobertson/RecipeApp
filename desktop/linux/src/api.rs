@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use core::pin::Pin;
 
-use crumb_client::{Client, Error, ImportInput, RecipeFormat, ShareKind};
+use crumb_client::{
+    Client, Credentials, Error, ImportInput, Mode, Provider, RecipeFormat, ShareKind,
+};
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use serde::Serialize;
@@ -141,13 +143,16 @@ async fn save(download: crumb_client::Download, dir: &str) -> Result<Value, Erro
     Ok(json!({ "path": path.to_string_lossy() }))
 }
 
-/// Runs one API operation. `progress` hears a video import's queue lines.
+/// Runs one API operation. `mode` is how the server signs people in (for the account
+/// calls); `progress` hears a video import's queue lines.
 pub async fn dispatch(
     client: &Client,
+    mode: Mode,
     op: &str,
     args: &Value,
     progress: impl FnMut(&str),
 ) -> Result<Value, Error> {
+    let accounts = client.accounts(mode);
     match op {
         "health" => client.health().await.map(|()| Value::Null),
         "connector" => to_json(client.connector().await?),
@@ -181,11 +186,7 @@ pub async fn dispatch(
                     (name, kind, bytes)
                 })
                 .collect();
-            to_json(
-                client
-                    .import_photos(photos, opt_text(args, "hint"))
-                    .await?,
-            )
+            to_json(client.import_photos(photos, opt_text(args, "hint")).await?)
         }
         "createRecipe" => {
             let (recipe, is_new) = client.create_recipe(&object(args, "fields")?).await?;
@@ -266,11 +267,13 @@ pub async fn dispatch(
             .remove_from_cookbook(int(args, "id")?, int(args, "recipeId")?)
             .await
             .map(|()| Value::Null),
-        "exportCookbook" => save(
-            client.export_cookbook(int(args, "id")?).await?,
-            text(args, "dir")?,
-        )
-        .await,
+        "exportCookbook" => {
+            save(
+                client.export_cookbook(int(args, "id")?).await?,
+                text(args, "dir")?,
+            )
+            .await
+        }
 
         // Wee Chef's checks
         "recipeChecks" => to_json(client.recipe_checks(int(args, "id")?).await?),
@@ -307,6 +310,78 @@ pub async fn dispatch(
             .await
             .map(|()| Value::Null),
         "shares" => to_json(client.shares().await?),
+
+        // Account and household
+        "authStatus" => to_json(client.auth_status().await),
+        "devices" => to_json(accounts.devices().await?),
+        "signOutDevice" => accounts
+            .sign_out_device(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "signOutOthers" => accounts.sign_out_others().await.map(|()| Value::Null),
+        "household" => to_json(accounts.household().await?),
+        "renameHousehold" => accounts
+            .rename(text(args, "name")?)
+            .await
+            .map(|()| Value::Null),
+        "invite" => to_json(accounts.invite(opt_text(args, "email")).await?),
+        "cancelInvite" => accounts
+            .cancel_invite(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "removeMember" => accounts
+            .remove_member(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "leaveHousehold" => accounts
+            .leave(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "switchHousehold" => accounts
+            .switch_to(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "previewInvite" => to_json(accounts.preview_invite(text(args, "token")?).await?),
+        "acceptInvite" => {
+            let creds = opt_text(args, "email").map(|email| Credentials {
+                name: opt_text(args, "name").map(str::to_string),
+                email: email.to_string(),
+                password: opt_text(args, "password").unwrap_or_default().to_string(),
+            });
+            to_json(
+                accounts
+                    .accept_invite(text(args, "token")?, creds.as_ref())
+                    .await?,
+            )
+        }
+        "requestReset" => accounts
+            .request_reset(text(args, "email")?)
+            .await
+            .map(|()| Value::Null),
+        "signInMethods" => to_json(accounts.sign_in_methods().await?),
+        "unlink" => {
+            let provider = match text(args, "provider")? {
+                "google" => Provider::Google,
+                "apple" => Provider::Apple,
+                other => return Err(bad(format!("no such provider: {other}"))),
+            };
+            accounts.unlink(provider).await.map(|()| Value::Null)
+        }
+        "connectedApps" => to_json(client.connected_apps().await?),
+        "disconnectApp" => client
+            .disconnect_app(text(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "exportAccount" => save(client.export_account().await?, text(args, "dir")?).await,
+        "deleteAccount" => client
+            .delete_account(opt_text(args, "password"), opt_text(args, "confirm"))
+            .await
+            .map(|()| Value::Null),
+        "changeEmail" => to_json(
+            client
+                .change_email(text(args, "email")?, text(args, "password")?)
+                .await?,
+        ),
 
         other => Err(bad(format!("unknown operation: {other}"))),
     }
@@ -385,14 +460,17 @@ impl qobject::Api {
         let core = self.core.clone();
         let qt_thread = self.as_mut().qt_thread();
         drop(crate::runtime::spawn(async move {
-            let client = { core.lock().await.client() };
+            let (client, mode) = {
+                let core = core.lock().await;
+                (core.client(), core.mode())
+            };
             let progress_thread = qt_thread.clone();
             let progress = move |line: &str| {
                 let line = QString::from(line);
                 let _ = progress_thread.queue(move |object| object.progress(id, line));
             };
             let result = match client {
-                Some(client) => dispatch(&client, &op, &args, progress).await,
+                Some(client) => dispatch(&client, mode, &op, &args, progress).await,
                 None => Err(Error::Unauthorized),
             };
             let _ = qt_thread.queue(move |mut object| {
@@ -406,7 +484,9 @@ impl qobject::Api {
                     Err(err) => {
                         let unauthorized = matches!(err, Error::Unauthorized);
                         let message = QString::from(&err.to_string());
-                        object.as_mut().replied(id, false, QString::default(), message);
+                        object
+                            .as_mut()
+                            .replied(id, false, QString::default(), message);
                         if unauthorized {
                             object.unauthorized();
                         }

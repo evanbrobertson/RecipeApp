@@ -50,6 +50,7 @@ pub mod qobject {
         #[qproperty(QString, font_sans, cxx_name = "fontSans")]
         #[qproperty(QString, font_serif, cxx_name = "fontSerif")]
         #[qproperty(QString, font_hand, cxx_name = "fontHand")]
+        #[qproperty(QString, font_notes, cxx_name = "fontNotes")]
         type Palette = super::PaletteRust;
     }
 
@@ -89,6 +90,7 @@ pub struct PaletteRust {
     font_sans: QString,
     font_serif: QString,
     font_hand: QString,
+    font_notes: QString,
     /// The last applied theme, so redundant signals are skipped.
     theme: Theme,
     /// Kept alive for the lifetime of the singleton.
@@ -117,6 +119,7 @@ impl Default for PaletteRust {
             font_sans: QString::from(fonts.sans()),
             font_serif: QString::from(fonts.serif()),
             font_hand: QString::from(fonts.hand()),
+            font_notes: QString::from(fonts.notes()),
             theme,
             watch: None,
         }

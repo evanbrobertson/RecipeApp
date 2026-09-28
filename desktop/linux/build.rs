@@ -4,16 +4,24 @@ use cxx_qt_build::{CxxQtBuilder, QResource, QResources, QmlModule};
 use qt_build_utils::QResourceFile;
 
 /// The bundled fonts, by file stem, in `web/src/assets/fonts`.
-const FONTS: &[&str] = &["nunito-sans", "dm-serif-display", "caveat"];
+const FONTS: &[&str] = &["nunito-sans", "dm-serif-display", "caveat", "kalam"];
 
 fn main() {
+    // Every QML file in `qml/`, so a new page or component needs no change here.
+    let mut qml_files: Vec<_> = std::fs::read_dir("qml")
+        .expect("the qml folder")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "qml"))
+        .collect();
+    qml_files.sort();
+    println!("cargo::rerun-if-changed=qml");
+    let mut module = QmlModule::new("app.crumb.desktop");
+    for file in &qml_files {
+        module = module.qml_file(file);
+    }
     let builder = CxxQtBuilder::new_qml_module(
-        QmlModule::new("app.crumb.desktop")
-            .qml_file("qml/Main.qml")
-            .qml_file("qml/LoginPage.qml")
-            .qml_file("qml/RecipesPage.qml")
-            .qml_file("qml/RecipePage.qml")
-            .qml_file("qml/StyledField.qml")
+        module
             // QColor properties need QtQuick for qmllint/qmlls.
             .depends([
                 "QtQuick",
@@ -32,6 +40,7 @@ fn main() {
     .file("src/smoke.rs")
     .file("src/core_bridge.rs")
     .file("src/store.rs")
+    .file("src/api.rs")
     .file("src/native.rs")
     .qrc_resources(resources());
 
@@ -78,7 +87,11 @@ fn resources() -> QResources {
         .unwrap_or_default();
     names.sort();
     for path in names {
-        let alias = path.file_name().expect("a file name").to_string_lossy().into_owned();
+        let alias = path
+            .file_name()
+            .expect("a file name")
+            .to_string_lossy()
+            .into_owned();
         icon_resource = icon_resource.file(QResourceFile::new(&path).alias(alias));
     }
     println!("cargo::rerun-if-changed=assets/icons");

@@ -11,8 +11,13 @@ Item {
     id: page
 
     property var session
-    property int recipeId: 0
-    signal goBack()
+    property int routeId: 0
+    property var params: ({})
+    property int recipeId: routeId
+
+    function goBack() {
+        ApplicationWindow.window.back()
+    }
 
     readonly property int gutter: width >= 1000 ? 32 : 20
     readonly property bool wide: width >= 1000
