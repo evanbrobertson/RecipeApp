@@ -21,6 +21,7 @@ pub mod oauth;
 pub mod photos;
 pub mod preview;
 pub mod recipes;
+pub mod relay;
 pub mod scraper;
 pub mod share;
 pub mod social;
@@ -73,6 +74,8 @@ pub struct AppState {
     pub share_misses: Arc<share::Misses>,
     /// Video imports waiting and running, across households (see [`video_jobs`]).
     pub video_jobs: Arc<video_jobs::VideoJobs>,
+    /// `crumb-relay`s asked for pages the server's own fetches were blocked on (see [`relay`]).
+    pub relays: Arc<relay::Relays>,
 }
 
 impl AppState {
@@ -87,6 +90,7 @@ impl AppState {
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .expect("HTTP client");
+        let relays = Arc::new(relay::Relays::from_config(&config));
         let households = Arc::new(households::Households::new(
             db,
             config.households_dir.clone(),
@@ -131,6 +135,7 @@ impl AppState {
             queued: home.queued,
             share_misses: Arc::default(),
             video_jobs,
+            relays,
         }
     }
 }

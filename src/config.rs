@@ -206,6 +206,14 @@ pub struct Config {
     /// Threads per whisper.cpp run (`WHISPER_THREADS`); default the cores split between
     /// the workers.
     pub whisper_threads: Option<usize>,
+    /// `SCRAPE_RELAYS`: base URLs of `crumb-relay`s, asked for a page when the server's own
+    /// fetches were both blocked (see `src/relay.rs`).
+    pub scrape_relays: Vec<String>,
+    /// `SCRAPE_RELAY_TOKEN`: the bearer token the relays were started with.
+    pub scrape_relay_token: Option<String>,
+    /// `SCRAPE_RELAY_PROXY`: a proxy to reach the relays through (`socks5h://...` for a
+    /// Tailscale sidecar in userspace mode). None = directly.
+    pub scrape_relay_proxy: Option<String>,
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
@@ -238,6 +246,9 @@ impl Default for Config {
             video_workers: 1,
             video_queue_max: 4,
             whisper_threads: None,
+            scrape_relays: Vec::new(),
+            scrape_relay_token: None,
+            scrape_relay_proxy: None,
             households_dir: None,
             host: "0.0.0.0".into(),
             port: 3000,
@@ -269,6 +280,23 @@ fn count(keys: &[&str], min: usize) -> Option<usize> {
 
 pub(crate) fn switched_off(key: &str) -> bool {
     env(&[key]).is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "off" | "false" | "0"))
+}
+
+/// The relay addresses in a comma-separated list, without trailing slashes. Ones that aren't
+/// http(s) addresses are warned about and dropped.
+fn relay_urls(list: &str) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    for item in list.split(',').map(str::trim).filter(|u| !u.is_empty()) {
+        let url = item.trim_end_matches('/');
+        let ok = url::Url::parse(url)
+            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some());
+        if !ok {
+            tracing::warn!("SCRAPE_RELAYS: \"{item}\" isn't an http(s) address, ignored");
+        } else if !urls.iter().any(|u| u == url) {
+            urls.push(url.to_string());
+        }
+    }
+    urls
 }
 
 fn typesafe_from_env() -> Option<TypesafeConfig> {
@@ -360,6 +388,9 @@ impl Config {
             video_workers,
             video_queue_max: count(&["VIDEO_QUEUE_MAX"], 0).unwrap_or(4 * video_workers),
             whisper_threads: count(&["WHISPER_THREADS"], 1),
+            scrape_relays: relay_urls(env(&["SCRAPE_RELAYS"]).as_deref().unwrap_or("")),
+            scrape_relay_token: env(&["SCRAPE_RELAY_TOKEN"]),
+            scrape_relay_proxy: env(&["SCRAPE_RELAY_PROXY"]),
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),
@@ -406,5 +437,21 @@ impl Config {
             .or_else(|| first("host"))
             .unwrap_or_else(|| format!("localhost:{}", self.port));
         format!("{proto}://{host}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relay_urls;
+
+    #[test]
+    fn relay_list_is_trimmed_deduplicated_and_checked() {
+        assert_eq!(
+            relay_urls(
+                " http://pi1.tail.ts.net:8787/, http://100.101.102.103:8787 ,,http://pi1.tail.ts.net:8787,pi2:8787,ftp://x"
+            ),
+            ["http://pi1.tail.ts.net:8787", "http://100.101.102.103:8787"]
+        );
+        assert!(relay_urls("").is_empty());
     }
 }
