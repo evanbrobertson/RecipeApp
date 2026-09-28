@@ -3,6 +3,7 @@ import Icon from "../components/Icon.astro"
 import { BookmarkPlus, ChevronDown, Copy, Puzzle } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import ImportTools from "../islands/ImportTools.svelte"
+import { extensionUrl } from "../lib/extension"
 import { bookmarklet } from "../lib/jtr-export.js"
 
 const exporter = bookmarklet()
@@ -29,7 +30,7 @@ const exporter = bookmarklet()
         recipe, then shows it here, ready to add. For Chrome, Edge and Firefox.
       </p>
       <a
-        href="https://github.com/evanbrobertson/RecipeApp/releases?q=extension"
+        href={extensionUrl()}
         class="btn btn-outline btn-sm"
         target="_blank"
         rel="noopener"

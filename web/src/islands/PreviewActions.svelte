@@ -10,6 +10,7 @@
   import Plus from "@lucide/svelte/icons/plus"
   import RotateCw from "@lucide/svelte/icons/rotate-cw"
   import BookOpen from "@lucide/svelte/icons/book-open"
+  import BlockedNudge from "../components/BlockedNudge.svelte"
   import { errorMessage, inlineData } from "../lib/api"
   import { importRecipe } from "../lib/importLink"
   import { flash, toast } from "../lib/toast"
@@ -21,6 +22,8 @@
       host?: string
       title?: string
       message?: string
+      /** Why it failed, when the server says: `site_blocked` is a bot check. */
+      code?: string
     }
   }
 
@@ -73,6 +76,9 @@
     <button type="button" class="btn btn-primary btn-xl w-full sm:w-auto" onclick={read}>
       <BookOpen /> Read it in Crumb
     </button>
+  {:else if step === "failed" && preview?.code === "site_blocked"}
+    <BlockedNudge {url} />
+    <button type="button" class="btn btn-ghost" onclick={read}><RotateCw /> Try again</button>
   {:else if step === "failed"}
     <div class="flex flex-wrap gap-2">
       <button type="button" class="btn btn-primary" onclick={read}><RotateCw /> Try again</button>

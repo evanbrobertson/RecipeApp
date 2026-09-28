@@ -156,6 +156,9 @@ function onYouTube(settings: Awaited<ReturnType<typeof load>>) {
 
 async function main() {
   if (window.top !== window) return
+  // Tells a Crumb page the extension is here (web/src/lib/extension.ts), so it can nudge
+  if (isCrumbApp())
+    document.documentElement.dataset.crumbExtension = chrome.runtime.getManifest().version
   const settings = await load()
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) return onYouTube(settings)
   if (!settings.crumb) {
