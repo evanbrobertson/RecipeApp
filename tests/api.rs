@@ -7191,6 +7191,61 @@ async fn a_video_link_is_queued_and_polled() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn a_video_read_in_the_browser_is_saved_without_asking_the_site() {
+    // No Wee Chef and no video tools: the description the extension read is the recipe
+    let t = TestApp::new(None);
+    let url = "https://www.youtube.com/watch?v=Xy_djhH3WE4&t=122s";
+    let body = json!({
+        "url": url,
+        "video": {
+            "title": "Weeknight pad thai",
+            "description": "My go-to pad thai.\n\nIngredients\n200 g rice noodles\n2 tbsp fish sauce\n1 tbsp tamarind paste\n2 eggs\n\nMethod\n1. Soak the noodles.\n2. Fry everything together.",
+            "author": "Noodle Co",
+            "thumbnail": "http://127.0.0.1:1/not-youtube.jpg",
+            "duration": 600,
+            "transcript": "so today we're making pad thai"
+        }
+    });
+    let (status, job) = t.json("POST", "/api/recipes/import", Some(body)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{job}");
+    let id = job["jobId"].as_str().unwrap().to_string();
+    let mut done = Value::Null;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (_, now) = t.json("GET", &format!("/api/import/jobs/{id}"), None).await;
+        if now["status"] == "done" || now["status"] == "failed" {
+            done = now;
+            break;
+        }
+    }
+    assert_eq!(done["status"], "done", "{done}");
+    let recipe_id = done["recipe"]["id"].as_i64().unwrap();
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{recipe_id}"), None)
+        .await;
+    assert_eq!(recipe["author"], "Noodle Co");
+    assert_eq!(recipe["url"], url);
+    assert_eq!(
+        recipe["ingredients"][0]["items"].as_array().unwrap().len(),
+        4
+    );
+    assert_eq!(
+        recipe["image"],
+        Value::Null,
+        "only YouTube's own images are fetched"
+    );
+
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": "https://www.youtube.com/watch?v=abc", "video": {"duration": "long"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 /// The JSON in a page's `#page-data`.
 fn page_data(html: &str) -> Value {
     let start = html.find(r#"id="page-data">"#).unwrap() + r#"id="page-data">"#.len();

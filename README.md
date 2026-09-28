@@ -306,6 +306,8 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
   recipe. Otherwise `yt-dlp` downloads it (up to 20 minutes long), what the cook says comes from its English subtitles
   (YouTube's automatic captions) or else whisper.cpp transcribes it on the server itself, and
   `ffmpeg` takes stills for on-screen text; Wee Chef reads all three together. Without an AI key only captions work.
+  YouTube often refuses servers ("Sign in to confirm you're not a bot"); the browser extension then reads the video's
+  description and captions in the cook's own browser and sends them with the link, so no download is needed.
   Videos wait in one queue shared by every household: `VIDEO_WORKERS` of them are watched at once (each gets its
   share of the cores), up to `VIDEO_QUEUE_MAX` more wait, and past that an import is refused with "try again in a
   minute". One still waiting after 10 minutes gives up. The Add box shows its place ("Queued (2nd)…") and opens
