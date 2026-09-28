@@ -6,6 +6,7 @@
 // on the new one) and cleared when the transition finishes. Elsewhere pages crossfade.
 ;(() => {
   if (!("onpageswap" in window)) return
+  const noop = () => {}
   const recipeId = (url) => {
     if (!url) return null
     const m = /^\/recipes\/(\d+)\/?$/.exec(new URL(url, location.href).pathname)
@@ -24,10 +25,14 @@
     return null
   }
   const name = (el, vt) => {
-    if (!el || !vt) return
+    if (!vt) return
+    // A skipped transition (the other page opted out, the tab was hidden, a quick second
+    // navigation) rejects `ready` and can reject `finished` with "AbortError: Transition was
+    // skipped". That's routine, so handle both on every transition, photo or plain crossfade,
+    // or they surface as unhandled rejections
+    vt.ready.catch(noop)
+    if (!el) return void vt.finished.catch(noop)
     el.style.viewTransitionName = "photo"
-    // `finished` rejects when the browser skips the transition (say the other page has
-    // opted out); clear the name either way, without leaving an unhandled rejection
     const clear = () => (el.style.viewTransitionName = "")
     vt.finished.then(clear, clear)
   }

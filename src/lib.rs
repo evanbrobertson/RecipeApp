@@ -19,6 +19,7 @@ pub mod llm;
 pub mod mcp;
 pub mod oauth;
 pub mod photos;
+pub mod preview;
 pub mod recipes;
 pub mod scraper;
 pub mod share;
@@ -200,6 +201,7 @@ pub fn app(state: AppState) -> Router {
         .merge(images::routes())
         .merge(share::api_routes())
         .merge(share::public_routes())
+        .merge(preview::routes())
         .merge(web::routes())
         .fallback(web::static_files)
         // Inside the login check, so only signed-in page loads learn the count

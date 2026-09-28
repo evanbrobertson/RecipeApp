@@ -17,8 +17,34 @@ type Passkey = { name?: string | null; createdAt: Date; deviceType: string }
 
 const secs = (d: Date | string) => Math.floor(new Date(d).getTime() / 1000)
 
-function refuse(status: number, message: string) {
+export function refuse(status: number, message: string) {
   return Response.json({ message }, { status })
+}
+
+/**
+ * Proof that it's really them before a change they can't easily take back: the password when
+ * the account has one, or else a sign-in (a passkey, Google, Apple) from the last day, Better
+ * Auth's `freshAge`. The refusal to answer with, or null to go ahead.
+ */
+export async function reauthenticate(
+  auth: Auth,
+  userId: string,
+  session: { createdAt: Date },
+  password: string,
+  action: string,
+): Promise<Response | null> {
+  const ctx = await auth.$context
+  const credential = (await ctx.internalAdapter.findCredentialAccount(userId)) as Account | null
+  if (credential?.password) {
+    const ok =
+      !!password && (await ctx.password.verify({ hash: credential.password, password }))
+    return ok ? null : refuse(401, "password: Incorrect password")
+  }
+  const age = Date.now() - new Date(session.createdAt).getTime()
+  if (age > ctx.sessionConfig.freshAge * 1000) {
+    return refuse(403, `For your safety, sign out and in again, then ${action}.`)
+  }
+  return null
 }
 
 export async function exportAccount(auth: Auth, headers: Headers): Promise<Response> {
@@ -84,17 +110,8 @@ export async function deleteAccount(
   if (!found) return refuse(401, "Not signed in")
   const { user, session } = found
   const ctx = await auth.$context
-  const credential = (await ctx.internalAdapter.findCredentialAccount(user.id)) as Account | null
-  if (credential?.password) {
-    const ok =
-      !!password && (await ctx.password.verify({ hash: credential.password, password }))
-    if (!ok) return refuse(401, "password: Incorrect password")
-  } else {
-    const age = Date.now() - new Date(session.createdAt).getTime()
-    if (age > ctx.sessionConfig.freshAge * 1000) {
-      return refuse(403, "For your safety, sign out and in again, then delete your account.")
-    }
-  }
+  const refused = await reauthenticate(auth, user.id, session, password, "delete your account")
+  if (refused) return refused
 
   const deletedHouseholds: string[] = []
   const owned = await ctx.adapter.findMany<Member>({

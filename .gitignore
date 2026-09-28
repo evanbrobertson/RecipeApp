@@ -27,4 +27,4 @@ docs/plans/
 # Local env files
 .env
 .env.*
-!.env.example
+!.env.schema

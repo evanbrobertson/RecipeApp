@@ -14,16 +14,18 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Styling:** Tailwind CSS 4, "Green Tile" design language: semantic tokens and shared classes in
   `web/src/styles/app.css` (cream/paper/tint/line, tile green, one butter accent), no component library
 - **Fonts:** self-hosted woff2 in `web/src/assets/fonts`: Nunito Sans (body), DM Serif Display (titles), Caveat
-  (greetings and the cook's notes only), each with metric-matched fallbacks
+  (greetings and tips only), Kalam (the cook's notes), each with metric-matched fallbacks
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
   HTML/microdata fallback, headless Chromium over CDP for sites that still block or need JavaScript
-- **Videos:** TikTok / Instagram Reels / YouTube Shorts links go to `src/video.rs`: the caption first, else `yt-dlp`
+- **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
   `src/video_jobs.rs`: `VIDEO_WORKERS` at once (a heavy-work budget Chromium shares), `VIDEO_QUEUE_MAX` waiting,
-  429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job
+  429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job. YouTube turns servers away, so
+  the extension (`extension/src/youtube.ts`) reads a video's description and captions in the browser and the Add page
+  posts them with the link as `video` (`video::FromBrowser`); never ask for or store anyone's YouTube cookies
 - **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
@@ -71,6 +73,7 @@ src/
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
+  preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
@@ -81,6 +84,7 @@ src/
 tests/api.rs      # Router integration tests against a temp DB
 desktop/linux/    # Native Linux desktop app (Qt6/QML via cxx-qt), a crumb-client app following the Omarchy theme
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
+extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", opens /preview
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
@@ -130,6 +134,15 @@ web/src/
   page is idle; keep it off the critical path. Never attach recipe contents, bodies, query strings or cookies.
   Every AI call (Wee Chef's providers and Typesafe) is a `gen_ai.chat` span via `telemetry::AiSpan` (provider, model,
   feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
+- **Env vars:** a new or changed variable goes in `.env.schema` (`auth/.env.schema` for the auth service) with its
+  type, default and `@sensitive`/`@required`, and in the README's Configuration table.
+- **Recipe videos:** `video` is a link (the scraper keeps only ones it can play: JSON-LD `VideoObject`, then the
+  recipe card's player, `og:video`, the post's first embed); `crumb_core::embed` works out the player, sent as the
+  read-only `videoEmbed`. The page's `RecipeVideo.svelte` loads nothing from the video's site until Play.
+- **Previews** (`/preview?url=`, `src/preview.rs`) scrape on GET, so they only scrape for `Sec-Fetch-Site` `none` or
+  `same-origin`; from another site they ask first. The Add button posts to `/api/recipes/import`, which takes the
+  preview's kept scrape. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
+  `extension/`, released by `.github/workflows/extension.yml`.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 

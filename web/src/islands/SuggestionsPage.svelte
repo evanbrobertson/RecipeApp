@@ -3,6 +3,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
   import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
+  import ShoppingBasket from "@lucide/svelte/icons/shopping-basket"
   import Sparkles from "@lucide/svelte/icons/sparkles"
   import { untrack } from "svelte"
   import EmptyState from "../components/EmptyState.svelte"
@@ -22,23 +23,44 @@
     fields: Record<string, number>
   }
 
+  /** Wee Chef's "keep these on hand" tip: the ingredients most recipes in the box use. */
+  interface Staples {
+    /** Recipes in the box. */
+    recipes: number
+    /** Most-used first, lowercase ("olive oil"); empty for a box too small to tell. */
+    staples: { name: string; recipes: number }[]
+  }
+
   // `checks` only when Wee Chef checks are set up on the server
-  const page = pageState<{ recipes: Pending[]; checks?: ChecksStatus }>(async () => {
-    const [list, checks] = await Promise.all([
-      api<{ recipes: Pending[] }>("/api/checks/review"),
-      api<ChecksStatus>("/api/checks"),
-    ])
-    return { recipes: list.recipes, checks: checks.enabled ? checks : undefined }
-  })
+  const page = pageState<{ recipes: Pending[]; staples: Staples; checks?: ChecksStatus }>(
+    async () => {
+      const [list, staples, checks] = await Promise.all([
+        api<{ recipes: Pending[] }>("/api/checks/review"),
+        api<Staples>("/api/staples"),
+        api<ChecksStatus>("/api/checks"),
+      ])
+      return { recipes: list.recipes, staples, checks: checks.enabled ? checks : undefined }
+    },
+  )
 
   let recipes = $state<Pending[] | undefined>(page.data?.recipes)
   let checks = $state<ChecksStatus | undefined>(page.data?.checks)
+  const staples = $derived(page.data?.staples)
   $effect(() => {
     if (!recipes && page.data) {
       recipes = page.data.recipes
       checks = page.data.checks
     }
   })
+
+  const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
+
+  /**
+   * How full and how strong a staple's bar is, 0–1: its recipes against the most-used
+   * staple's, so the top one fills the bar and the rest read at a glance beside it.
+   */
+  const topStaple = $derived(Math.max(1, ...(staples?.staples.map((s) => s.recipes) ?? [])))
+  const share = (used: number) => used / topStaple
 
   let starting = $state(false)
   const running = $derived(!!checks && checks.pending > 0)
@@ -121,6 +143,7 @@
     instructions: ["step", "steps"],
     notes: ["note", "notes"],
     totalTime: ["time", "times"],
+    image: ["broken photo link", "broken photo links"],
   }
 
   /** "2 steps · 1 ingredient" */
@@ -195,7 +218,7 @@
         title="Nothing to review"
         description={checks
           ? "Wee Chef will flag anything it isn't sure about."
-          : "Wee Chef checks aren't on for this box."}
+          : "Wee Chef will flag any photo link that stops working."}
       />
     {:else}
       <div class="list-card">
@@ -217,10 +240,59 @@
         {/each}
       </div>
     {/if}
+
+    {#if staples?.staples.length}
+      <section class="card flex flex-col gap-4 p-5" aria-labelledby="staples-title">
+        <div class="flex items-start gap-3">
+          <span class="bg-tint text-primary rounded-ctl grid size-12 flex-none place-items-center">
+            <ShoppingBasket class="size-6" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="kicker">Wee Chef tip</p>
+            <h2 id="staples-title" class="font-bold">
+              Your most used ingredients. Essentials like Salt &amp; Pepper are skipped.
+            </h2>
+          </div>
+        </div>
+        <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+          {#each staples.staples as s (s.name)}
+            <li
+              class="border-line rounded-ctl flex min-w-0 flex-col justify-between gap-2.5 border px-4 py-3.5"
+              title={`In ${s.recipes} of ${staples.recipes} recipes`}
+            >
+              <span class="leading-snug font-bold [overflow-wrap:anywhere]">{capitalise(s.name)}</span>
+              <span class="sr-only">in {s.recipes} of {staples.recipes} recipes</span>
+              <span class="staple-bar" aria-hidden="true">
+                <span style:--share={share(s.recipes)}></span>
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   {/if}
 </div>
 
 <style>
+  /* A staple's bar: fuller and more butter the more recipes use it, faint for the fewest */
+  .staple-bar {
+    display: block;
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--border-muted);
+    overflow: hidden;
+  }
+  .staple-bar > span {
+    display: block;
+    height: 100%;
+    width: max(0.5rem, calc(var(--share) * 100%));
+    border-radius: inherit;
+    /* Butter, from faint and greyed for the least used to rich and full for the most */
+    background: oklch(
+      from var(--butter-hover) calc(l - var(--share) * 0.06) calc(c * (0.3 + var(--share) * 1.5)) h /
+        calc(0.4 + var(--share) * 0.6)
+    );
+  }
   .review-count {
     display: inline-flex;
     min-width: 1.75rem;

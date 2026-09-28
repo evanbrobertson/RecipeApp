@@ -1,0 +1,11 @@
+{
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "unicorn/no-array-sort": "off"
+  },
+  "ignorePatterns": ["node_modules", "dist", ".astro"]
+}

@@ -6,8 +6,12 @@
 //! same one `web/src/lib/img.ts` computes), so a URL with the current key can be cached
 //! forever and a changed image gets a new URL.
 //!
-//! Any failure is a quick 404 (the page falls back to the original URL) and is
-//! remembered for a while, so a broken photo isn't refetched on every card render.
+//! A failure is remembered for a while, so a broken photo isn't refetched on every card
+//! render. A link the site refuses for good (see [`LoadError::dead`]) is a quick 404 and is
+//! flagged for the cook to fix on the Suggestions page ([`crate::checks::flag_dead_photo`]).
+//! Any other linked photo that can't be had here (a bot shield, a slow site, a format the
+//! resizer can't read) is most likely fine in a browser, so the request is redirected to
+//! the original: the photo shows without a failed request in the console.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -83,7 +87,7 @@ pub struct Images {
     /// Bytes on disk, counted on the first write and kept up to date after.
     disk_bytes: Mutex<Option<u64>>,
     inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    failures: Mutex<HashMap<String, Instant>>,
+    failures: Mutex<HashMap<String, (Instant, Failure)>>,
     /// Fetch + decode + resize jobs at once. A decoded photo can take a few hundred MB, so a
     /// cold cache behind a page of cards must not decode them all together.
     work: tokio::sync::Semaphore,
@@ -107,16 +111,17 @@ impl Images {
         }
     }
 
-    fn failed_recently(&self, source: &str) -> bool {
+    fn failed_recently(&self, source: &str) -> Option<Failure> {
         locked(&self.failures)
             .get(source)
-            .is_some_and(|at| at.elapsed() < FAILURE_TTL)
+            .filter(|(at, _)| at.elapsed() < FAILURE_TTL)
+            .map(|(_, failure)| *failure)
     }
 
-    fn record_failure(&self, source: String) {
+    fn record_failure(&self, source: String, failure: Failure) {
         let mut f = locked(&self.failures);
-        f.retain(|_, at| at.elapsed() < FAILURE_TTL);
-        f.insert(source, Instant::now());
+        f.retain(|_, (at, _)| at.elapsed() < FAILURE_TTL);
+        f.insert(source, (Instant::now(), failure));
     }
 
     /// Deletes a household's sized photos (see `source` in the handler for their names:
@@ -237,6 +242,38 @@ fn prune(dir: &Path, target: u64) -> u64 {
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/img/{id}/{width}", routing::get(serve))
+}
+
+/// Why a photo couldn't be made, as remembered for [`FAILURE_TTL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    /// Nothing to show: a dead link or an embedded photo that can't be read.
+    Gone,
+    /// A linked photo this server couldn't fetch or resize, most likely fine in a browser.
+    Elsewhere,
+}
+
+/// The answer for a photo that couldn't be made: the original link, for a browser to load
+/// itself, or a 404.
+fn unavailable(failure: Failure, image: &str) -> Response {
+    let original = url::Url::parse(image)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .and_then(|u| HeaderValue::from_str(u.as_str()).ok());
+    match (failure, original) {
+        (Failure::Elsewhere, Some(location)) => {
+            let mut res = StatusCode::TEMPORARY_REDIRECT.into_response();
+            let h = res.headers_mut();
+            h.insert(header::LOCATION, location);
+            // As long as the failure is remembered; a later try may resize it after all
+            h.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, max-age=600"),
+            );
+            res
+        }
+        _ => not_found(),
+    }
 }
 
 fn not_found() -> Response {
@@ -370,8 +407,8 @@ pub async fn serve_photo(
     };
     let name = format!("{source}-{}", variant.file_suffix());
 
-    if images.failed_recently(&source) {
-        return not_found();
+    if let Some(failure) = images.failed_recently(&source) {
+        return unavailable(failure, &image);
     }
     let read_cached = || async {
         match images.cached_path(&name) {
@@ -388,21 +425,38 @@ pub async fn serve_photo(
     if let Some(bytes) = read_cached().await {
         return image_response(bytes, &key, variant, current, caching);
     }
-    if images.failed_recently(&source) {
-        return not_found();
+    if let Some(failure) = images.failed_recently(&source) {
+        return unavailable(failure, &image);
     }
 
     let Ok(_permit) = images.work.acquire().await else {
         return not_found();
     };
+    let linked = !image.starts_with("data:");
+    let elsewhere = if linked {
+        Failure::Elsewhere
+    } else {
+        Failure::Gone
+    };
     let original = match load_source(&state.http, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
-            images.record_failure(source);
-            return not_found();
+            let failure = if err.dead { Failure::Gone } else { elsewhere };
+            images.record_failure(source, failure);
+            // A link the site refuses for good goes on the Suggestions page (see checks.rs)
+            if linked
+                && err.dead
+                && let Err(e) = crate::checks::flag_dead_photo(&state.db.lock(), id, &image)
+            {
+                tracing::warn!("[img] recipe {id}: couldn't flag its photo: {e:?}");
+            }
+            return unavailable(failure, &image);
         }
     };
+    if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
+        tracing::warn!("[img] recipe {id}: couldn't clear its photo flag: {e:?}");
+    }
     let worker = state.images.clone();
     let cache_name = name.clone();
     let made = tokio::task::spawn_blocking(move || {
@@ -419,8 +473,8 @@ pub async fn serve_photo(
         Ok(bytes) => image_response(bytes, &key, variant, current, caching),
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
-            images.record_failure(source);
-            not_found()
+            images.record_failure(source, elsewhere);
+            unavailable(elsewhere, &image)
         }
     }
 }
@@ -430,13 +484,17 @@ async fn load_source(
     http: &reqwest::Client,
     image: &str,
     referer: Option<&str>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LoadError> {
     if image.starts_with("data:") {
-        return decode_data_uri(image);
+        return decode_data_uri(image).map_err(LoadError::dead);
     }
-    let parsed = url::Url::parse(image).map_err(|e| format!("bad image URL: {e}"))?;
+    let parsed =
+        url::Url::parse(image).map_err(|e| LoadError::dead(format!("bad image URL: {e}")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(format!("unsupported image URL scheme {}", parsed.scheme()));
+        return Err(LoadError::dead(format!(
+            "unsupported image URL scheme {}",
+            parsed.scheme()
+        )));
     }
     // What a browser on the recipe's page would send; some CDNs refuse hotlinks without it
     let referer = referer.filter(|r| r.starts_with("http"));
@@ -458,21 +516,75 @@ async fn load_source(
 /// Image types first, as a browser's `<img>` request asks (no AVIF: it can't be decoded here).
 const IMAGE_ACCEPT: &str = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8";
 
-/// Refuses a response that isn't a usable image before reading its body.
+/// Why a photo couldn't be had.
+#[derive(Debug)]
+pub struct LoadError {
+    message: String,
+    /// The link itself is bad: the site answered 4xx or with a page instead of a photo, or
+    /// the URL can't be fetched at all. Asking again won't help. A timeout, a 5xx or a photo
+    /// too large to resize may be fine later, or in a browser.
+    pub dead: bool,
+}
+
+impl LoadError {
+    fn dead(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            dead: true,
+        }
+    }
+
+    fn passing(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            dead: false,
+        }
+    }
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// Headers a bot shield sets on its challenge page (SiteGround, Cloudflare, AWS WAF). A
+/// browser passes the challenge and gets the photo, so the link isn't dead.
+const CHALLENGE_HEADERS: [&str; 3] = ["sg-captcha", "cf-mitigated", "x-amzn-waf-action"];
+
+/// Refuses a response that isn't a usable image before reading its body. `challenged`: the
+/// answer carries one of [`CHALLENGE_HEADERS`].
 fn check_response(
     status: u16,
     content_type: Option<&str>,
     length: Option<u64>,
-) -> Result<(), String> {
+    challenged: bool,
+) -> Result<(), LoadError> {
+    if challenged {
+        return Err(LoadError::passing(format!("bot challenge ({status})")));
+    }
     if !(200..300).contains(&status) {
-        return Err(format!("fetch returned {status}"));
+        let message = format!("fetch returned {status}");
+        // 429 is "slow down", not "gone"
+        return Err(if (400..500).contains(&status) && status != 429 {
+            LoadError::dead(message)
+        } else {
+            LoadError::passing(message)
+        });
     }
     let kind = content_type.unwrap_or("").to_ascii_lowercase();
     if kind.starts_with("text/") || kind.contains("json") {
-        return Err(format!("not an image ({kind})"));
+        let message = format!("not an image ({status} {kind})");
+        // Only a plain 200 page means the link leads somewhere else; a 202 or the like is
+        // a holding page (often an unlabelled bot challenge)
+        return Err(if status == 200 {
+            LoadError::dead(message)
+        } else {
+            LoadError::passing(message)
+        });
     }
     if length.is_some_and(|n| n > MAX_SOURCE_BYTES as u64) {
-        return Err(TOO_LARGE.into());
+        return Err(LoadError::passing(TOO_LARGE));
     }
     Ok(())
 }
@@ -480,7 +592,7 @@ fn check_response(
 /// How a wreq image fetch failed.
 enum Wreq {
     /// The server answered, but not with a usable image.
-    Answered(String),
+    Answered(LoadError),
     /// No response, or the body didn't arrive; worth trying another client.
     NoAnswer(String),
 }
@@ -506,12 +618,20 @@ async fn load_with_wreq(
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    check_response(res.status().as_u16(), content_type, res.content_length())
-        .map_err(Wreq::Answered)?;
+    let challenged = CHALLENGE_HEADERS
+        .iter()
+        .any(|h| res.headers().contains_key(*h));
+    check_response(
+        res.status().as_u16(),
+        content_type,
+        res.content_length(),
+        challenged,
+    )
+    .map_err(Wreq::Answered)?;
     crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
         .await
         .map_err(|e| match e {
-            crate::scraper::ReadError::TooLarge => Wreq::Answered(TOO_LARGE.into()),
+            crate::scraper::ReadError::TooLarge => Wreq::Answered(LoadError::passing(TOO_LARGE)),
             crate::scraper::ReadError::Failed(e) => Wreq::NoAnswer(format!("read failed: {e}")),
         })
 }
@@ -520,7 +640,7 @@ async fn load_with_reqwest(
     http: &reqwest::Client,
     url: url::Url,
     referer: Option<&str>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LoadError> {
     let mut req = http
         .get(url)
         .timeout(FETCH_TIMEOUT)
@@ -529,20 +649,55 @@ async fn load_with_reqwest(
     if let Some(r) = referer {
         req = req.header(header::REFERER, r);
     }
-    let mut res = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let mut res = req
+        .send()
+        .await
+        .map_err(|e| LoadError::passing(format!("fetch failed: {e}")))?;
     let content_type = res
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    check_response(res.status().as_u16(), content_type, res.content_length())?;
+    let challenged = CHALLENGE_HEADERS
+        .iter()
+        .any(|h| res.headers().contains_key(*h));
+    check_response(
+        res.status().as_u16(),
+        content_type,
+        res.content_length(),
+        challenged,
+    )?;
     let mut body = Vec::new();
-    while let Some(chunk) = res.chunk().await.map_err(|e| format!("read failed: {e}"))? {
+    while let Some(chunk) = res
+        .chunk()
+        .await
+        .map_err(|e| LoadError::passing(format!("read failed: {e}")))?
+    {
         if body.len() + chunk.len() > MAX_SOURCE_BYTES {
-            return Err(TOO_LARGE.into());
+            return Err(LoadError::passing(TOO_LARGE));
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Whether a new recipe's photo link is dead, fetched as the resizer would. Only a link the
+/// site itself refuses counts (see [`LoadError::dead`]); a slow or failing site gets the
+/// benefit of the doubt. An embedded photo is never dead here: it was read when kept.
+pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<&str>) -> bool {
+    if image.starts_with("data:") {
+        return false;
+    }
+    match load_source(http, image, referer).await {
+        Ok(_) => false,
+        Err(err) => {
+            tracing::info!(
+                "[img] {}: new recipe's photo {}: {err}",
+                crate::telemetry::host_of(image),
+                if err.dead { "is dead" } else { "didn't load" }
+            );
+            err.dead
+        }
+    }
 }
 
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
@@ -728,6 +883,42 @@ mod tests {
         assert_eq!(embed(b"<svg/>"), None);
         let webp = resize_to_webp(&png, 160).unwrap();
         assert!(embed(&webp).unwrap().starts_with("data:image/webp;base64,"));
+    }
+
+    #[test]
+    fn only_a_refusal_makes_a_photo_link_dead() {
+        let dead = |status, kind, challenged| {
+            check_response(status, Some(kind), None, challenged)
+                .err()
+                .map(|e| e.dead)
+        };
+        assert_eq!(dead(200, "image/jpeg", false), None);
+        assert_eq!(dead(404, "text/html", false), Some(true));
+        assert_eq!(dead(200, "text/html", false), Some(true));
+        // SiteGround's shield: 202, an HTML page and `sg-captcha: challenge`
+        assert_eq!(dead(202, "text/html", true), Some(false));
+        assert_eq!(dead(202, "text/html", false), Some(false));
+        // Cloudflare's: 403 with `cf-mitigated: challenge`
+        assert_eq!(dead(403, "text/html", true), Some(false));
+        assert_eq!(dead(429, "text/html", false), Some(false));
+        assert_eq!(dead(503, "text/html", false), Some(false));
+    }
+
+    #[test]
+    fn a_photo_a_browser_may_get_is_sent_to_the_original() {
+        let photo = "https://example.com/wp-content/uploads/crepes.jpg";
+        let res = unavailable(Failure::Elsewhere, photo);
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(res.headers()[header::LOCATION], photo);
+        assert_eq!(
+            unavailable(Failure::Gone, photo).status(),
+            StatusCode::NOT_FOUND
+        );
+        let embedded = "data:image/png;base64,AAAA";
+        assert_eq!(
+            unavailable(Failure::Elsewhere, embedded).status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]

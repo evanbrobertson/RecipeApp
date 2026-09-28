@@ -861,7 +861,7 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-fn host_of(url: &str) -> Option<String> {
+pub(crate) fn host_of(url: &str) -> Option<String> {
     let host = url::Url::parse(url).ok()?.host_str()?.to_string();
     Some(host.strip_prefix("www.").unwrap_or(&host).to_string())
 }
@@ -989,11 +989,14 @@ fn icon(name: &str) -> String {
 }
 
 /// Where a recipe's page sits: its path under /s/, whether it shows the notes, and the
-/// shared cookbook it's in (its name and page, for the link back).
+/// shared cookbook it's in (its name and page, for the link back). A preview (`/preview`,
+/// see [`crate::preview`]) is a recipe read from a site and not saved yet, shown only to
+/// the cook reading it: its photo is still the site's, and it has no link-preview tags.
 pub struct Place {
     pub path: String,
     pub include_notes: bool,
     pub book: Option<(String, String)>,
+    pub preview: bool,
 }
 
 impl Place {
@@ -1003,6 +1006,7 @@ impl Place {
             path: format!("/s/{}", share.token),
             include_notes: share.include_notes,
             book: None,
+            preview: false,
         }
     }
 
@@ -1013,6 +1017,17 @@ impl Place {
             path: format!("{book_path}/{recipe_id}"),
             include_notes: share.include_notes,
             book: Some((book.name.clone(), book_path)),
+            preview: false,
+        }
+    }
+
+    /// A recipe read from a site for the cook to look at before saving it.
+    pub fn preview() -> Self {
+        Self {
+            path: "/preview".into(),
+            include_notes: true,
+            book: None,
+            preview: true,
         }
     }
 }
@@ -1028,14 +1043,19 @@ struct View<'a> {
     image_key: Option<String>,
     preview_url: Option<String>,
     description: String,
+    /// Not saved yet: see [`Place`].
+    unsaved: bool,
 }
 
 impl<'a> View<'a> {
     fn new(recipe: &'a Recipe, place: &Place, origin: &str) -> Self {
         let page_url = format!("{origin}{}", place.path);
-        let image_key = present(&recipe.image).map(images::image_key);
+        let image_key = present(&recipe.image)
+            .filter(|i| !place.preview || recipes::is_http(i))
+            .map(images::image_key);
         let preview_url = image_key
             .as_ref()
+            .filter(|_| !place.preview)
             .map(|k| format!("{page_url}/og.jpg?v={k}"));
         let description = present(&recipe.description)
             .map(|d| clip(d, 200))
@@ -1056,10 +1076,15 @@ impl<'a> View<'a> {
             image_key,
             preview_url,
             description,
+            unsaved: place.preview,
         }
     }
 
     fn head(&self) -> String {
+        // Only the cook reading it sees a preview: nothing for link previews or other apps
+        if self.unsaved {
+            return String::new();
+        }
         let r = self.recipe;
         let mut out = String::new();
         let mut meta = |attr: &str, name: &str, content: &str| {
@@ -1193,6 +1218,14 @@ impl<'a> View<'a> {
         let Some(key) = &self.image_key else {
             return String::new();
         };
+        // Not saved, so not in the resizer yet: the site's own photo, sent no Referer
+        if self.unsaved {
+            return format!(
+                "<img class=\"share-photo\" src=\"{}\" alt=\"{}\" referrerpolicy=\"no-referrer\" fetchpriority=\"high\" decoding=\"async\">",
+                escape(present(&self.recipe.image).unwrap_or_default()),
+                escape(&self.recipe.title)
+            );
+        }
         let b = escape(&self.img_base);
         format!(
             "<img class=\"share-photo\" src=\"{b}/768?v={key}\" srcset=\"{b}/768?v={key} 768w, {b}/1200?v={key} 1200w\" sizes=\"(min-width: 1024px) 560px, 100vw\" alt=\"{}\" fetchpriority=\"high\" decoding=\"async\">",
@@ -1310,7 +1343,7 @@ impl<'a> View<'a> {
         }
         if let Some(notes) = self.notes {
             out.push_str(&format!(
-                "<div class=\"card share-notes\"><h2>{}Notes</h2><p class=\"hand\">{}</p></div>",
+                "<div class=\"card share-notes\"><h2>{}Notes</h2><p class=\"note-hand\">{}</p></div>",
                 icon("note"),
                 escape(notes)
             ));
@@ -1352,6 +1385,17 @@ impl<'a> View<'a> {
 
     /// For the islands: the Save and Download buttons.
     fn page_data(&self) -> Value {
+        if self.unsaved {
+            let url = self.recipe.url.as_deref().unwrap_or_default();
+            return json!({
+                "preview": {
+                    "state": "ready",
+                    "title": self.recipe.title,
+                    "url": url,
+                    "host": host_of(url),
+                }
+            });
+        }
         json!({
             "share": {
                 "title": self.recipe.title,
@@ -1363,14 +1407,14 @@ impl<'a> View<'a> {
 }
 
 /// Swaps `marker` for `html` once; without the marker, nothing changes.
-fn fill(page: &mut String, marker: &str, html: &str) {
+pub(crate) fn fill(page: &mut String, marker: &str, html: &str) {
     if let Some(at) = page.find(marker) {
         page.replace_range(at..at + marker.len(), html);
     }
 }
 
 /// The template with its title, head tags and page data set.
-fn start_page(template: &str, title: &str, head: &str, data: &Value) -> String {
+pub(crate) fn start_page(template: &str, title: &str, head: &str, data: &Value) -> String {
     let mut page = template.to_string();
     let title = format!("<title>{} · Crumb</title>", escape(title));
     match (page.find("<title>"), page.find("</title>")) {
@@ -1591,6 +1635,15 @@ static SCRIPT_TYPE: LazyLock<Regex> =
 /// runs (the theme boot, Astro's island loader) by its hash. Data blocks (page data,
 /// JSON-LD) don't run, so they need none.
 pub fn content_security_policy(page: &str) -> String {
+    policy(page, "'self' data:")
+}
+
+/// [`content_security_policy`] for a preview, whose photo is still on the recipe's site.
+pub fn preview_policy(page: &str) -> String {
+    policy(page, "'self' data: https: http:")
+}
+
+fn policy(page: &str, images: &str) -> String {
     let mut hashes = Vec::new();
     for c in SCRIPT.captures_iter(page) {
         let attrs = &c[1];
@@ -1620,7 +1673,7 @@ pub fn content_security_policy(page: &str) -> String {
         .join(" ");
     format!(
         "default-src 'none'; script-src {scripts}; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; \
+         img-src {images}; font-src 'self'; connect-src 'self'; base-uri 'none'; \
          form-action 'self'; frame-ancestors 'none'"
     )
 }

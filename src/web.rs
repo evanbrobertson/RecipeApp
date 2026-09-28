@@ -324,12 +324,15 @@ async fn connector_page(
     render(&state, &format!("{name}/index.html"), data)
 }
 
-/// The recipes with suggestions waiting and, when Wee Chef checks are set up, their
-/// progress for the page's Check all card. Empty is fine: the page says so.
+/// The recipes with suggestions waiting, Wee Chef's staples tip and, when Wee Chef checks
+/// are set up, their progress for the page's Check all card. Empty is fine: the page says so.
 async fn suggestions_page(crate::Scoped(state): crate::Scoped) -> Response {
     let data = (|| -> AppResult<Value> {
         let conn = state.db.lock();
-        let mut data = json!({"recipes": crate::checks::to_review(&conn)?});
+        let mut data = json!({
+            "recipes": crate::checks::to_review(&conn)?,
+            "staples": recipes::to_value(&recipes::staples(&conn)?),
+        });
         if crate::checks::enabled(&state) {
             data["checks"] = crate::checks::status(&state, &conn)?;
         }
@@ -364,12 +367,17 @@ pub async fn review_hint(
     let html = res.status() == StatusCode::NOT_MODIFIED
         || header_str(res.headers(), header::CONTENT_TYPE)
             .is_some_and(|v| v.starts_with("text/html"));
-    if !page || skip || !html || !crate::checks::enabled(&state) {
+    if !page || skip || !html {
         return res;
     }
     let Ok(count) = crate::checks::review_count(&state.db.lock()) else {
         return res;
     };
+    // Without Wee Chef's checks the nav item only shows while something is flagged (a
+    // broken photo link needs no setup)
+    if count == 0 && !crate::checks::enabled(&state) {
+        return res;
+    }
     if let Ok(v) = HeaderValue::from_str(&format!("crumb-review;desc=\"{count}\"")) {
         res.headers_mut().append("server-timing", v);
     }

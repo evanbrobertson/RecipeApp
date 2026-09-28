@@ -1,8 +1,11 @@
 <script lang="ts">
-  /** The quiet note on a recipe page when Wee Chef tidied or flagged lines on import. */
+  /**
+   * The quiet note on a recipe page when Wee Chef tidied or flagged lines on import, or
+   * found the photo link broken.
+   */
   import ChefHat from "@lucide/svelte/icons/chef-hat"
   import { api, errorMessage } from "../lib/api"
-  import { fixText, plural } from "../lib/checks"
+  import { fixText, plural, reviewText } from "../lib/checks"
   import type { Recipe, RecipeChecks } from "../lib/recipe"
   import { toast } from "../lib/toast"
 
@@ -16,7 +19,8 @@
   let { recipeId, checks, onundo, class: klass = "" }: Props = $props()
 
   const fixed = $derived(checks.flags.filter((f) => f.state === "fixed"))
-  const review = $derived(checks.flags.filter((f) => f.state === "review"))
+  const review = $derived(checks.flags.filter((f) => f.state === "review" && f.field !== "image"))
+  const photo = $derived(checks.flags.find((f) => f.state === "review" && f.field === "image"))
   let open = $state(false)
   let undoing = $state(false)
 
@@ -38,7 +42,7 @@
   }
 </script>
 
-{#if fixed.length || review.length}
+{#if fixed.length || review.length || photo}
   <aside class={["card no-print px-4 py-1", klass]} aria-label="Wee Chef">
     {#if fixed.length}
       <div class="flex items-center gap-x-2">
@@ -86,6 +90,24 @@
         <span class="min-w-0 flex-1 py-2.5 text-[15px] leading-snug">
           {plural(review.length, "line")} might need a look
         </span>
+        <a
+          href={`/recipes/${recipeId}/edit`}
+          class="link inline-flex min-h-11 flex-none items-center"
+        >
+          Edit
+        </a>
+      </div>
+    {/if}
+    {#if photo}
+      <div
+        class={["flex items-center gap-x-2", (fixed.length || review.length) && "border-line border-t"]}
+      >
+        {#if fixed.length || review.length}
+          <span class="w-[18px] flex-none" aria-hidden="true"></span>
+        {:else}
+          <ChefHat class="text-primary size-[18px] flex-none" aria-hidden="true" />
+        {/if}
+        <span class="min-w-0 flex-1 py-2.5 text-[15px] leading-snug">{reviewText(photo)}</span>
         <a
           href={`/recipes/${recipeId}/edit`}
           class="link inline-flex min-h-11 flex-none items-center"

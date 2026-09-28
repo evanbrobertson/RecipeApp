@@ -180,6 +180,8 @@ pub struct RecipeFields {
     pub instructions: Vec<Section>,
     pub nutrition: Option<Nutrition>,
     pub notes: Option<String>,
+    /// The recipe's video (a link to it on its own site), played on the recipe's page.
+    pub video: Option<String>,
 }
 
 /// A partial update: `None` = leave alone, `Some(None)` = clear.
@@ -201,6 +203,7 @@ pub struct RecipePatch {
     pub instructions: Option<Vec<Section>>,
     pub nutrition: Option<Option<Nutrition>>,
     pub notes: Option<Option<String>>,
+    pub video: Option<Option<String>>,
 }
 
 /// Text columns other than title/url/image, as (json key, column).
@@ -351,6 +354,10 @@ impl RecipePatch {
             .get("image")
             .map(|v| nullable_url("image", v))
             .transpose()?;
+        p.video = o
+            .get("video")
+            .map(|v| nullable_url("video", v))
+            .transpose()?;
         p.ingredients = o
             .get("ingredients")
             .map(|v| parse_sections("ingredients", v))
@@ -411,6 +418,7 @@ impl RecipeFields {
             instructions: p.instructions.unwrap_or_default(),
             nutrition: p.nutrition.flatten(),
             notes: p.notes.flatten(),
+            video: p.video.flatten(),
         })
     }
 
@@ -430,6 +438,10 @@ impl RecipeFields {
         self.notes = trim(self.notes);
         if self.url.as_deref().is_some_and(|u| !is_valid_url(u)) {
             return Err(ValidationError("url: Invalid URL".into()));
+        }
+        self.video = trim(self.video).filter(|v| !v.is_empty());
+        if self.video.as_deref().is_some_and(|u| !is_valid_url(u)) {
+            return Err(ValidationError("video: Invalid URL".into()));
         }
         // A photo kept in the recipe itself comes only from a backup or another Crumb's
         // share (the API's `image` is a link), and is saved as it came
@@ -475,6 +487,7 @@ impl RecipeFields {
                 .unwrap_or(Value::Null),
         );
         m.insert("notes".into(), s(&self.notes));
+        m.insert("video".into(), s(&self.video));
         m
     }
 }
@@ -501,6 +514,13 @@ pub struct Recipe {
     pub instructions: Vec<Section>,
     pub nutrition: Option<Value>,
     pub notes: Option<String>,
+    /// A link to the recipe's video on its own site.
+    #[serde(default)]
+    pub video: Option<String>,
+    /// How to play `video` on the page ([`crate::embed::video_embed`]); null when it's on a
+    /// site Crumb can't play in place, and the page links to it instead.
+    #[serde(default)]
+    pub video_embed: Option<crate::embed::VideoEmbed>,
     /// Saved from another Crumb's share: `url` is that share link (what a later save of the
     /// same link dedupes on) and this is the recipe's original source, when the export
     /// named one on another site. Never a dedupe key, so an export can't claim a URL.
@@ -530,6 +550,7 @@ impl Recipe {
             instructions: self.instructions.clone(),
             nutrition: self.nutrition.as_ref().and_then(|v| v.as_object().cloned()),
             notes: self.notes.clone(),
+            video: self.video.clone(),
         }
     }
 }

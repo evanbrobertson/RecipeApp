@@ -16,6 +16,7 @@
     "Nunito Sans", "Nunito Sans Fallback", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-serif: "DM Serif Display", "DM Serif Display Fallback", ui-serif, Georgia, serif;
   --font-hand: "Caveat", "Caveat Fallback", cursive;
+  --font-note: "Kalam", "Kalam Fallback", cursive;
 }
 
 /* Semantic colours, switched wholesale by .dark */
@@ -137,6 +138,14 @@
   descent-override: 36.5%;
   line-gap-override: 0%;
 }
+@font-face {
+  font-family: "Kalam Fallback";
+  src: local("Arial"), local("Liberation Sans"), local("Helvetica");
+  size-adjust: 98.2%;
+  ascent-override: 108.2%;
+  descent-override: 54.1%;
+  line-gap-override: 0%;
+}
 
 /* Cross-document view transitions: every navigation is a full page load, crossfaded */
 @view-transition {
@@ -234,11 +243,18 @@
     font-weight: 400;
     line-height: 1.15;
   }
-  /* Handwriting: greetings and the cook's own notes, nothing else */
+  /* Handwriting: greetings and tips, nothing else */
   .hand {
     font-family: var(--font-hand);
     font-weight: 700;
     line-height: 1;
+  }
+  /* The cook's own notes: a calmer hand that stays easy to read at length */
+  .note-hand {
+    font-family: var(--font-note);
+    font-weight: 400;
+    font-size: 1.3125rem;
+    line-height: 1.5;
   }
   .meta {
     font-size: 0.8125rem;
@@ -767,6 +783,9 @@
 }
 .review-badge:empty::after {
   content: var(--review-count, none);
+  /* Trim the line box to the digits' cap height so they sit dead centre, not on the
+     font's tall ascender */
+  text-box: trim-both cap alphabetic;
 }
 .review-badge {
   display: none;
@@ -783,5 +802,6 @@
   color: var(--on-butter, #1f2a22);
   font-size: 13px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }

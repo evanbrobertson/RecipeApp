@@ -1,12 +1,11 @@
 <script lang="ts">
+  import Archive from "@lucide/svelte/icons/archive"
   import BookOpen from "@lucide/svelte/icons/book-open"
   import Check from "@lucide/svelte/icons/check"
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
-  import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
-  import ChefHat from "@lucide/svelte/icons/chef-hat"
   import Copy from "@lucide/svelte/icons/copy"
   import CookingPot from "@lucide/svelte/icons/cooking-pot"
-  import Globe from "@lucide/svelte/icons/globe"
+  import Download from "@lucide/svelte/icons/download"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import LocateFixed from "@lucide/svelte/icons/locate-fixed"
   import LinkOff from "@lucide/svelte/icons/unlink"
@@ -213,20 +212,36 @@
   <h2 class="settings-heading">Account</h2>
   <div class="list-card">
     <a href="/more/account" class="list-row settings-row">
-      {#if signedIn}<UserRound class="settings-icon" />{:else}<Plug class="settings-icon" />{/if}
+      <UserRound class="settings-icon" />
       <span class="min-w-0 flex-1">
         <span class="block truncate font-bold">
-          {signedIn ? status?.user?.name : "Connected apps"}
+          {signedIn ? status?.user?.name : "Account"}
         </span>
         <span class="text-ink-muted block truncate text-sm">
           {signedIn
             ? `${status?.household?.name ?? "Household"}, sign-in and connected apps`
             : info?.authEnabled
-              ? "Claude connections and signing out"
-              : "Claude connections"}
+              ? "Connected apps and signing out"
+              : "Connected apps"}
         </span>
       </span>
       <ChevronRight class="text-ink-muted size-5 flex-none" />
+    </a>
+    <a href="/more/connections" class="list-row settings-row">
+      <Plug class="settings-icon" />
+      <span class="min-w-0 flex-1">
+        <span class="block font-bold">Connections</span>
+        <span class="text-ink-muted block text-sm">Claude</span>
+      </span>
+      <ChevronRight class="text-ink-muted size-5 flex-none" />
+    </a>
+    <a href="/api/export" class="list-row settings-row" download>
+      <Archive class="settings-icon" />
+      <span class="min-w-0 flex-1">
+        <span class="block font-bold">Download a backup</span>
+        <span class="text-ink-muted block text-sm">Everything as one JSON file</span>
+      </span>
+      <Download class="text-ink-muted size-5 flex-none" />
     </a>
   </div>
 </section>
@@ -341,42 +356,4 @@
   </section>
 {/if}
 
-{#if info}
-  <section>
-    <h2 class="settings-heading">Settings</h2>
-    <div class="list-card">
-      <div class="list-row settings-row">
-        <Globe class="settings-icon" />
-        <span class="min-w-0 flex-1">
-          <span class="block font-bold">Tricky sites</span>
-          <span class="text-ink-muted block text-sm">
-            {info.browserScraping
-              ? "A real browser steps in when a site blocks us"
-              : "Browser fallback not installed"}
-          </span>
-        </span>
-      </div>
-      <div class="list-row settings-row">
-        <ChefHat class="settings-icon" />
-        <span class="min-w-0 flex-1">
-          <span class="block font-bold">Pasted text</span>
-          <span class="text-ink-muted block text-sm">
-            {info.weeChef ? "Tidied up by Wee Chef" : "Read by the built-in parser"}
-          </span>
-        </span>
-        <!-- Always "Wee Chef", never the AI provider behind it -->
-        {#if info.weeChef}<span class="meta flex-none">Wee Chef is on</span>{/if}
-      </div>
-      {#if info.weeChefChecks}
-        <!-- Check all lives on the Suggestions page, beside what it finds -->
-        <a href="/suggestions" class="list-row settings-row">
-          <ClipboardCheck class="settings-icon" />
-          <span class="min-w-0 flex-1 font-bold">Wee Chef checks</span>
-          <span class="meta flex-none">Suggestions</span>
-          <ChevronRight class="text-ink-muted size-5 flex-none" />
-        </a>
-      {/if}
-    </div>
-  </section>
-{/if}
 </div>

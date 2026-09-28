@@ -36,18 +36,23 @@ export function start({ dsn, environment, release }: SentryBoot, early: unknown[
     release,
     integrations: [browserTracingIntegration()],
     beforeBreadcrumb: scrub,
-    beforeSendTransaction(event) {
-      if (event.transaction) event.transaction = redact(event.transaction)
-      if (event.request?.url) event.request.url = redact(event.request.url)
-      for (const span of event.spans ?? [])
-        if (span.description) span.description = redact(span.description)
-      return event
+    // Spans stream one by one (the SDK's default trace lifecycle): the name and any URL-like
+    // attribute (url.full, http.url, the segment's name) lose share tokens
+    beforeSendSpan(span) {
+      span.name = redact(span.name)
+      const attrs = span.attributes as Record<string, unknown>
+      for (const [key, value] of Object.entries(attrs))
+        if (typeof value === "string") attrs[key] = redact(value)
+      return span
     },
     beforeSend(event) {
       if (event.request?.url) event.request.url = redact(event.request.url)
       if (event.transaction) event.transaction = redact(event.transaction)
       return event
     },
+    // A browser skipping a page-to-page view transition is routine, not a bug; the
+    // transitions boot script handles its promises, this catches any engine it can't reach
+    ignoreErrors: [/Transition was skipped/],
     tracesSampleRate: production ? 0.2 : 1.0,
     replaysSessionSampleRate: 0.05,
     replaysOnErrorSampleRate: 1.0,

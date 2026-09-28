@@ -12,6 +12,8 @@ import "../styles/app.css"
 import nunito from "../assets/fonts/nunito-sans.woff2?url"
 import dmSerif from "../assets/fonts/dm-serif-display.woff2?url"
 import caveat from "../assets/fonts/caveat.woff2?url"
+// Notes: Kalam draws ¼ ½ ¾; the other fractions come from Nunito Sans (already loaded)
+import kalam from "../assets/fonts/kalam.woff2?url"
 import themeBoot from "../lib/theme-boot.js?raw"
 import transitionsBoot from "../lib/transitions-boot.js?raw"
 import TimerDock from "../islands/TimerDock.svelte"
@@ -58,6 +60,8 @@ const links = [
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{fullTitle}</title>
     <meta name="description" content="Recipes, minus the life story." />
+    <!-- How the browser extension recognises a Crumb, to offer to connect to it -->
+    <meta name="application-name" content="Crumb" />
     <meta name="robots" content="noindex, nofollow" />
     <meta
       name="theme-color"
@@ -77,6 +81,8 @@ const links = [
       @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
       @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
       @font-face{font-family:"Caveat";src:url(${caveat}) format("woff2");font-weight:700;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${kalam}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${nunito}) format("woff2");font-weight:400;font-display:swap;unicode-range:U+2150-215F}
     `}
     />
     <!-- Theme before first paint: light, dark, system, or sunrise/sunset -->

@@ -39,6 +39,7 @@ fn json_column(r: &Row, name: &str) -> rusqlite::Result<Value> {
 
 fn recipe_from_row(r: &Row) -> rusqlite::Result<Recipe> {
     let nutrition = json_column(r, "nutrition")?;
+    let video: Option<String> = r.get("video")?;
     Ok(Recipe {
         id: r.get("id")?,
         url: r.get("url")?,
@@ -62,6 +63,8 @@ fn recipe_from_row(r: &Row) -> rusqlite::Result<Recipe> {
             Some(nutrition)
         },
         notes: r.get("notes")?,
+        video_embed: video.as_deref().and_then(crumb_core::embed::video_embed),
+        video,
         original_url: r.get("original_url")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
@@ -198,8 +201,8 @@ pub fn create_recipe(
     conn.execute(
         "INSERT INTO recipes (url, source, title, description, image, author, prep_time, cook_time,
            total_time, freeze_time, recipe_yield, recipe_category, recipe_cuisine, ingredients,
-           instructions, nutrition, notes, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
+           instructions, nutrition, notes, video, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)",
         params![
             fields.url,
             source,
@@ -218,6 +221,7 @@ pub fn create_recipe(
             to_json_text(&normalize_sections(fields.instructions)),
             fields.nutrition.as_ref().map(to_json_text),
             fields.notes,
+            fields.video,
             now,
         ],
     )?;
@@ -257,6 +261,7 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
         ("recipe_category", patch.recipe_category),
         ("recipe_cuisine", patch.recipe_cuisine),
         ("notes", patch.notes),
+        ("video", patch.video),
     ] {
         if let Some(v) = v {
             push(col, text(v));
@@ -314,7 +319,7 @@ pub fn delete_recipes(conn: &Connection, ids: &[i64]) -> AppResult<usize> {
     )?)
 }
 
-fn is_http(s: &str) -> bool {
+pub(crate) fn is_http(s: &str) -> bool {
     let lower = s.get(..8).unwrap_or(s).to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")
 }
@@ -343,8 +348,24 @@ pub fn unwrap_share_link(input: &str) -> String {
 
 /// What saving a link gave: one recipe, or (for another Crumb's shared cookbook) a book of them.
 pub enum Imported {
-    Recipe(Box<Recipe>, bool),
+    Recipe {
+        recipe: Box<Recipe>,
+        is_new: bool,
+        /// The page's photo link was dead, so it was saved without one (see [`drop_dead_photo`]).
+        dropped_photo: bool,
+    },
     Book(BookImport),
+}
+
+impl Imported {
+    /// A recipe saved (or found) with its photo as it came.
+    fn saved(recipe: Recipe, is_new: bool) -> Self {
+        Self::Recipe {
+            recipe: Box::new(recipe),
+            is_new,
+            dropped_photo: false,
+        }
+    }
 }
 
 /// A shared cookbook saved from another Crumb.
@@ -363,7 +384,7 @@ pub struct BookImport {
 /// use [`import_link`], which saves the whole book).
 pub async fn import_from_url(state: &AppState, raw_url: &str) -> AppResult<(Recipe, bool)> {
     match import_link(state, raw_url).await? {
-        Imported::Recipe(recipe, is_new) => Ok((*recipe, is_new)),
+        Imported::Recipe { recipe, is_new, .. } => Ok((*recipe, is_new)),
         Imported::Book(_) => Err(AppError::new(
             422,
             "That link is a whole cookbook. Paste it into Add to save every recipe in it.",
@@ -379,7 +400,7 @@ pub async fn import_link(state: &AppState, raw_url: &str) -> AppResult<Imported>
         Started::Done(imported) => Ok(imported),
         Started::Queued(ticket) => {
             let (recipe, is_new) = ticket.wait().await?;
-            Ok(Imported::Recipe(Box::new(recipe), is_new))
+            Ok(Imported::saved(recipe, is_new))
         }
     }
 }
@@ -398,8 +419,8 @@ pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
     {
         let conn = state.db.lock();
         if let Some(id) = find_by_url(&conn, &url)? {
-            return Ok(Started::Done(Imported::Recipe(
-                Box::new(require_recipe(&conn, id)?),
+            return Ok(Started::Done(Imported::saved(
+                require_recipe(&conn, id)?,
                 false,
             )));
         }
@@ -413,7 +434,11 @@ pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
 
 /// A recipe page, or another Crumb's share.
 async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
-    let scraped = crate::scraper::scrape_page(state, url).await?;
+    // What a preview of the link just showed, else the page as it is now
+    let scraped = match crate::preview::take(state, url) {
+        Some(scraped) => scraped,
+        None => crate::scraper::scrape_page(state, url).await?,
+    };
     // Another Crumb's share page: take its export (sections, notes and the original link
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {
@@ -421,7 +446,7 @@ async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
             Some(crate::share::Export::Recipe(mut fields)) => {
                 keep_shared_photo(state, &mut fields.image, url).await;
                 let (recipe, is_new) = save_shared(state, *fields, url)?;
-                return Ok(Imported::Recipe(Box::new(recipe), is_new));
+                return Ok(Imported::saved(recipe, is_new));
             }
             Some(crate::share::Export::Book(mut book)) => {
                 book.recipes = futures_util::stream::iter(book.recipes)
@@ -444,8 +469,27 @@ async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
             "Couldn't read that shared cookbook. Try again in a moment.",
         ));
     }
-    let (recipe, is_new) = create_checked(state, scraped.recipe, "url")?;
-    Ok(Imported::Recipe(Box::new(recipe), is_new))
+    let mut fields = scraped.recipe;
+    let dropped_photo = drop_dead_photo(state, &mut fields, url).await;
+    let (recipe, is_new) = create_checked(state, fields, "url")?;
+    Ok(Imported::Recipe {
+        recipe: Box::new(recipe),
+        is_new,
+        dropped_photo,
+    })
+}
+
+/// Clears a scraped photo whose link is dead (a CDN link that went stale, a 404), so the
+/// recipe isn't saved with a photo that can never load. True when one was dropped.
+async fn drop_dead_photo(state: &AppState, fields: &mut RecipeFields, page_url: &str) -> bool {
+    let Some(image) = fields.image.as_deref().filter(|i| !i.is_empty()) else {
+        return false;
+    };
+    if !crate::images::photo_is_dead(&state.http, image, Some(page_url)).await {
+        return false;
+    }
+    fields.image = None;
+    true
 }
 
 /// A shared recipe's photo that the share serves itself (`{share link}/.../img/{width}`: one
@@ -669,7 +713,7 @@ pub(crate) fn create_checked(
 }
 
 /// Fields [`refresh_from_source`] can fill or overwrite, as json keys.
-pub const REFRESHABLE: [&str; 15] = [
+pub const REFRESHABLE: [&str; 16] = [
     "title",
     "description",
     "image",
@@ -685,6 +729,7 @@ pub const REFRESHABLE: [&str; 15] = [
     "instructions",
     "nutrition",
     "notes",
+    "video",
 ];
 
 /// Re-scrapes a recipe's source URL and fills in fields that are empty, keeping everything
@@ -775,6 +820,7 @@ pub async fn refresh_from_source(
             &mut patch.recipe_cuisine,
         ),
         ("notes", &current.notes, scraped.notes, &mut patch.notes),
+        ("video", &current.video, scraped.video, &mut patch.video),
     ] {
         if !blank(&got) && (blank(have) || wants(key)) && got != *have {
             *slot = Some(got);
@@ -1315,6 +1361,26 @@ pub fn cook_stats(conn: &Connection, id: i64) -> AppResult<CookStats> {
     Ok(CookStats {
         count,
         last_cooked_at: last.map(iso),
+    })
+}
+
+/// Wee Chef's "keep these on hand" tip: the ingredients most of the box's recipes use.
+pub fn staples(conn: &Connection) -> AppResult<crumb_core::staples::Staples> {
+    let mut stmt = conn.prepare("SELECT ingredients FROM recipes")?;
+    let lists: Vec<Vec<String>> = stmt
+        .query_map([], |r| json_column(r, "ingredients"))?
+        .map(|v| {
+            v.map(|v| {
+                normalize_sections_value(&v)
+                    .into_iter()
+                    .flat_map(|s| s.items)
+                    .collect()
+            })
+        })
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(crumb_core::staples::Staples {
+        recipes: lists.len(),
+        staples: crumb_core::staples::staples(&lists, crumb_core::staples::LIMIT),
     })
 }
 

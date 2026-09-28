@@ -28,6 +28,7 @@ Promote ──► retag sha-abc1234 as :stable and :3.1.0, tag v3.1.0 + GitHub R
 | `.github/workflows/checks.yml` | called by the others | `cargo fmt --check`, clippy `-D warnings`, `cargo test`; web `bun install --frozen-lockfile`, `astro check`, oxlint, build; `site/` build when `site/package.json` exists. The Linux desktop app's clippy and smoke test run in an `archlinux:latest` container, because cxx-qt needs Qt 6.5+ |
 | `.github/workflows/pr.yml` | pull request to `master` | The checks, plus a Docker build (no push) only when `Dockerfile`, `.dockerignore`, `Cargo.toml`/`Cargo.lock`, `web/package.json`/`web/bun.lock` or `web/astro.config.mjs` change. A release build of the server (fat LTO, one codegen unit) takes several minutes, and code-only changes are already covered by the checks and by the master build, so most PRs skip it |
 | `.github/workflows/main.yml` | push to `master` (not docs-only) | Checks and image build in parallel; after both pass, `:main` moves to the new image, Sentry gets the release and a `dev` deploy, and Railway dev redeploys. Separately, a release build of the desktop executable is uploaded as a `crumb-desktop-linux-<version>` workflow artifact (30 days); it does not block the deploy |
+| `.github/workflows/extension.yml` | push to `master` changing `extension/` | Releases the browser extension: see [Browser extension](#browser-extension) |
 | `.github/workflows/promote.yml` | manual (Actions → Promote → Run workflow) | Input `channel` (`stable` or `beta`) and optional `sha` (default: latest `master`). A commit without an image (a docs-only push) falls back to its newest ancestor with one, and the commit's checks must have passed. Retags, tags, releases, deploys; then attaches the desktop tarball, its `.sha256` and an AUR `PKGBUILD` to the release |
 
 Master builds queue rather than cancel (concurrency group `main`); promotions run one at a time. Third-party actions are pinned to commit SHAs, and each job gets only the permissions it needs.
@@ -172,3 +173,24 @@ CI calls `railway redeploy --from-source --service RecipeApp --environment <env>
 - **Browser:** `web/src/lib/sentry-boot.ts`. The server puts the DSN, environment and release in a `Server-Timing` header on HTML responses, so one image serves every environment and a copy without `SENTRY_DSN` loads no Sentry code. The SDK loads after the page is idle (tracing 0.2 on stable, 1.0 elsewhere), and Session Replay loads after that (5% of sessions, every session with an error, all text masked and all media blocked).
 - **Source maps:** made only when `SENTRY_AUTH_TOKEN` is present at build time (CI passes it to `docker build` as a BuildKit secret), uploaded with debug IDs during `bun run build`, then deleted, so they are never served.
 - **Releases:** Main creates the release (`X.Y.Z-main.N`) with its commits and a `dev` deploy. Promote adds a `stable` (or `beta`) deploy and, for stable, finalizes the release.
+
+## Browser extension
+
+The extension (`extension/`) is released on its own, with its own versions: git tags `extension-vX.Y.Z`, worked out by the same `scripts/release/version.sh` with `VERSION_TAG_PREFIX=extension-v VERSION_PATHS=extension`, so only commits that touch `extension/` count (`feat:` a minor, and so on). The first release is the version in `extension/package.json` (0.1.0); like `Cargo.toml`, it isn't bumped by CI. The app's `v*` tags and the extension's never see each other.
+
+Pull requests run its checks with the others (`checks.yml`: `tsc`, format, `bun test`, the build, oxlint and Mozilla's `web-ext lint`). A push to `master` that changes `extension/` runs `extension.yml`:
+
+1. Works out the version; a push that changes nothing in `extension/` since the last tag (only the workflow, say) releases nothing.
+2. Runs the checks again and builds `crumb-chrome-X.Y.Z.zip` and `crumb-firefox-X.Y.Z.zip` at that version.
+3. Tags `extension-vX.Y.Z` and makes a GitHub Release with both zips and notes from the commits.
+4. Uploads to the Chrome Web Store and submits to addons.mozilla.org, each only when its secrets are set. Both stores review a version before it reaches anyone, so that review is the gate (there is no separate promote step). Without the secrets, the GitHub Release is the whole release.
+
+Main ignores pushes that change only `extension/`: nothing in the image changed.
+
+| Setting | Kind | Needed for |
+| --- | --- | --- |
+| `CHROME_EXTENSION_ID` | repository variable | The item's id in the Chrome Web Store (create the listing once by hand, uploading the first zip) |
+| `CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN` | repository secrets | The Chrome Web Store API: a Google Cloud OAuth client with the Chrome Web Store API enabled, and a refresh token for the account that owns the listing. The [chrome-webstore-upload guide](https://github.com/fregante/chrome-webstore-upload-keys) walks through it |
+| `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` | repository secrets | addons.mozilla.org API keys (Developer Hub → Manage API keys). Versions go to the listed channel with `extension/amo-metadata.json`; the add-on id is `crumb@evanbrobertson.github.io` |
+
+To release again by hand (a store upload that failed, say), run **Actions → Extension → Run workflow** on `master`. An existing GitHub Release is left as it is.

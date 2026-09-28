@@ -130,7 +130,7 @@ const PUBLIC_PREFIXES: [&str; 7] = [
     "/mcp",
     "/s/",
 ];
-const PUBLIC_PATHS: [&str; 19] = [
+const PUBLIC_PATHS: [&str; 21] = [
     "/login",
     "/api/auth/login",
     // Accounts: first-run setup and sign-up (both refuse when they don't apply)
@@ -145,6 +145,9 @@ const PUBLIC_PATHS: [&str; 19] = [
     "/api/auth/invite/accept",
     // Hosted: where a password reset email's link lands
     "/reset-password",
+    // Hosted: where a change-email link lands (opened in whichever browser has the email)
+    "/email-change",
+    "/api/account/email/confirm",
     "/api/health",
     "/robots.txt",
     "/manifest.webmanifest",

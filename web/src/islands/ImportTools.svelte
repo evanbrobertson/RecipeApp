@@ -62,6 +62,7 @@
               id: res.id,
               title: res.title,
               href: `/recipes/${res.id}`,
+              message: res.droppedPhoto ? "Saved without its photo: the link doesn't work" : undefined,
             })
           }
         } catch (e) {
