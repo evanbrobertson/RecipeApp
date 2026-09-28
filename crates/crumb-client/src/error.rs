@@ -10,11 +10,28 @@ pub enum Error {
     /// The server says we're not signed in (401): send the user back to login.
     Unauthorized,
     /// The server answered with an error; `message` is its human-readable text.
-    Api { status: u16, message: String },
+    Api {
+        status: u16,
+        message: String,
+        /// The server's machine-readable reason, when it gives one (`"site_blocked"`).
+        code: Option<String>,
+    },
     /// The request never reached the server, or the connection failed.
     Network(String),
     /// The server answered, but not with the JSON we expected.
     Decode(String),
+}
+
+impl Error {
+    /// The server's machine-readable reason for an [`Error::Api`], e.g. `"site_blocked"`
+    /// when a recipe site's bot check turned the server away (the browser extension can
+    /// still read it).
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Self::Api { code, .. } => code.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Error {

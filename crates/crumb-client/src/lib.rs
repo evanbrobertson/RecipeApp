@@ -100,6 +100,7 @@ pub const JOB_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 #[derive(Deserialize)]
 struct ErrorBody {
     message: Option<String>,
+    code: Option<String>,
 }
 
 /// The `{id, title, isNew}` body the import route echoes back. A shared-cookbook link
@@ -294,6 +295,7 @@ impl Client {
                                 .message
                                 .filter(|m| !m.is_empty())
                                 .unwrap_or_else(|| "Couldn't read that video".into()),
+                            code: None,
                         });
                     }
                     status => progress(&crumb_core::add::job_progress(status, job.position)),
@@ -317,6 +319,7 @@ impl Client {
             return Err(Error::Api {
                 status: 200,
                 message: "That shared cookbook had no new recipes to save.".into(),
+                code: None,
             });
         }
         Ok(Imported {
@@ -388,12 +391,17 @@ impl Client {
             return Error::Unauthorized;
         }
         let body = res.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<ErrorBody>(&body)
-            .ok()
+        let parsed = serde_json::from_str::<ErrorBody>(&body).ok();
+        let code = parsed.as_ref().and_then(|body| body.code.clone());
+        let message = parsed
             .and_then(|body| body.message)
             .filter(|message| !message.is_empty())
             .unwrap_or(body);
-        Error::Api { status, message }
+        Error::Api {
+            status,
+            message,
+            code,
+        }
     }
 
     async fn expect_ok(&self, res: Response, login: bool) -> Result<(), Error> {

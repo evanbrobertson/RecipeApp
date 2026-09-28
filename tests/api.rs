@@ -1635,6 +1635,60 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
 }
 
 #[tokio::test]
+async fn a_bot_check_is_reported_as_site_blocked() {
+    let app = axum::Router::new()
+        .route(
+            "/denied",
+            axum::routing::get(|| async { StatusCode::FORBIDDEN }),
+        )
+        .route(
+            "/check",
+            axum::routing::get(|| async {
+                axum::response::Html("<html><head><title>Just a moment...</title></head></html>")
+            }),
+        )
+        .route(
+            "/gone",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let t = TestApp::new(None);
+    for path in ["/denied", "/check"] {
+        let url = format!("{site}{path}");
+        let (status, err) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}: {err}");
+        assert_eq!(err["code"], "site_blocked", "{path}: {err}");
+        assert!(err["message"].as_str().unwrap().contains("extension"));
+
+        // Claude is pointed at the extension, not shown the site's status
+        let (msg, is_error) = mcp_call(&t, "import_recipe_from_url", json!({"url": url})).await;
+        assert!(is_error, "{msg}");
+        assert!(msg.contains("browser extension"), "{msg}");
+    }
+
+    // Any other failure keeps its own message and carries no code
+    let (status, err) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/gone")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(err.get("code").is_none(), "{err}");
+    assert!(err["message"].as_str().unwrap().contains("404"), "{err}");
+    let (_, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": "nope"})))
+        .await;
+    assert!(err.get("code").is_none(), "{err}");
+}
+
+#[tokio::test]
 async fn imports_drop_a_dead_photo_link() {
     let png = png_bytes(40, 30);
     let page = |name: &str, image: &str| {
