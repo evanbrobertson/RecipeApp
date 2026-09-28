@@ -1,13 +1,14 @@
 # Fonts
 
-Crumb self-hosts three woff2 files in `web/src/assets/fonts/`, each with a metric-matched fallback
+Crumb self-hosts four woff2 files in `web/src/assets/fonts/`, each with a metric-matched fallback
 in `web/src/styles/app.css`.
 
 | File | Font | Source |
 | --- | --- | --- |
 | `nunito-sans.woff2` | Nunito Sans, variable weight 200–1000 | Built by `scripts/fonts/build-nunito-sans.sh` |
 | `dm-serif-display.woff2` | DM Serif Display | Google Fonts, Latin subset |
-| `caveat.woff2` | Caveat | Google Fonts, Latin subset |
+| `caveat.woff2` | Caveat (greetings and tips) | Google Fonts, Latin subset |
+| `kalam.woff2` | Kalam Regular (the cook's notes) | Built by `scripts/fonts/build-kalam.sh` |
 
 ## Nunito Sans
 
@@ -33,3 +34,23 @@ weight, so the fallback's `size-adjust` and overrides still line up. If a rebuil
 metrics or widths, re-check the fallback in `app.css`.
 
 ![Every fraction before and after, in Nunito Sans](images/nunito-fractions.png)
+
+## Kalam
+
+The cook's notes are set in Kalam (`.note-hand`, `--font-note`), a handwriting face that stays easy
+to read over a long paragraph. Caveat remains for the short greetings and tips (`.hand`).
+
+Notes are free text in any language, so the file keeps Google's whole Latin subset: accents (ñ, é,
+ç), °, ¼ ½ ¾, dashes and curly quotes. Kalam draws no other vulgar fractions, so each page declares
+a second `Kalam` face pointing at Nunito Sans with `unicode-range: U+2150-215F`: ⅓ and friends come
+from the body font, which is already loaded, instead of whatever the system has.
+
+To rebuild (needs `uv`):
+
+```bash
+scripts/fonts/build-kalam.sh
+```
+
+It downloads `Kalam-Regular.ttf` from a pinned `google/fonts` commit (checksum verified) and subsets
+it. The output is byte-for-byte reproducible. The fallback in `app.css` ("Kalam Fallback", on Arial)
+is matched to this file's widths and vertical metrics.

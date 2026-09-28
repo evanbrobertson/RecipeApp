@@ -1,0 +1,116 @@
+---
+/**
+ * A recipe read from a site before it's saved, served by the Rust server at /preview?url=…
+ * (src/preview.rs), never directly. What the browser extension and the "Read in Crumb"
+ * bookmark open.
+ *
+ * The share page's layout and markers (src/share.rs fills them the same way), with
+ * PreviewActions in place of the share's actions. Before the recipe is read the server
+ * fills the markers with a skeleton and sets `preview.state` to "loading", and the script
+ * at the end reloads the page with `go=1`, which reads it: the tab shows this page, not a
+ * blank one, while the site is fetched. Its own shell, like a share's: no nav, timers or
+ * speculation rules, and a strict CSP that allows the inline scripts here by hash.
+ */
+import "../../../styles/app.css"
+import "../../../styles/share.css"
+import nunito from "../../../assets/fonts/nunito-sans.woff2?url"
+import dmSerif from "../../../assets/fonts/dm-serif-display.woff2?url"
+import caveat from "../../../assets/fonts/caveat.woff2?url"
+// Notes: Kalam draws ¼ ½ ¾; the other fractions come from Nunito Sans (already loaded)
+import kalam from "../../../assets/fonts/kalam.woff2?url"
+import themeBoot from "../../../lib/theme-boot.js?raw"
+import PreviewActions from "../../../islands/PreviewActions.svelte"
+import ShareScale from "../../../islands/ShareScale.svelte"
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Recipe · Crumb</title>
+    <meta name="robots" content="noindex, noimageindex" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f5f1e6" data-light="#f5f1e6" data-dark="#141c17" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href={nunito} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={dmSerif} as="font" type="font/woff2" crossorigin />
+    <style
+      set:html={`
+      @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
+      @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Caveat";src:url(${caveat}) format("woff2");font-weight:700;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${kalam}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${nunito}) format("woff2");font-weight:400;font-display:swap;unicode-range:U+2150-215F}
+    `}
+    />
+    <script is:inline set:html={themeBoot} />
+  </head>
+  <body>
+    <script type="application/json" id="page-data">null</script>
+    <div class="share-wrap">
+      <a class="share-mark page-title" href="/">Crumb</a>
+      <!--share:back-->
+      <article class="share-article">
+        <section class="share-hero">
+          <!--share:photo-->
+          <div class="share-intro">
+            <!--share:intro-->
+            <div class="no-print">
+              <PreviewActions client:only="svelte">
+                <div slot="fallback" class="share-actions-skeleton" aria-hidden="true"></div>
+              </PreviewActions>
+            </div>
+          </div>
+        </section>
+
+        <div class="share-split">
+          <section class="share-panel" aria-labelledby="share-ingredients-title">
+            <div class="share-panel-head">
+              <h2 id="share-ingredients-title" class="section-title">Ingredients</h2>
+              <div class="no-print"><ShareScale client:only="svelte" /></div>
+            </div>
+            <!--share:ingredients-->
+          </section>
+          <section class="share-panel" aria-labelledby="share-method-title">
+            <div class="share-panel-head">
+              <h2 id="share-method-title" class="section-title">Method</h2>
+            </div>
+            <!--share:method-->
+          </section>
+        </div>
+
+        <footer class="share-foot">
+          <!--share:source-->
+        </footer>
+      </article>
+    </div>
+    <script is:inline>
+      try {
+        const data = JSON.parse(document.getElementById("page-data").textContent)
+        if (data && data.preview && data.preview.state === "loading") {
+          const next = new URL(location.href)
+          next.searchParams.set("go", "1")
+          // After the first paint, so "Reading…" shows while the site is fetched
+          requestAnimationFrame(() => setTimeout(() => location.replace(next), 0))
+        }
+      } catch {}
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  .share-mark {
+    display: inline-block;
+    text-decoration: none;
+  }
+  .preview-skeleton > .skeleton {
+    height: 2.75rem;
+  }
+  .share-split:has(.preview-empty) {
+    display: none;
+  }
+  .preview-skeleton > * + * {
+    margin-top: 0.5rem;
+  }
+</style>

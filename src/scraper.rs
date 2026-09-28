@@ -541,8 +541,198 @@ fn normalize_json_ld(ld: &Map<String, Value>, url: &str, doc: Option<&Html>) -> 
         ingredients,
         instructions: normalize_instructions(ld.get("recipeInstructions")),
         nutrition: normalize_nutrition(ld.get("nutrition")),
-        notes: None,
+        notes: doc.and_then(notes_from_html),
+        video: json_ld_video(ld, url, doc).or_else(|| doc.and_then(|d| video_from_html(d, url))),
     }
+}
+
+/// The recipe's video from its JSON-LD: a `VideoObject` (or a list of them, or an `@id`
+/// pointing at one elsewhere on the page), as a link Crumb can play.
+fn json_ld_video(ld: &Map<String, Value>, url: &str, doc: Option<&Html>) -> Option<String> {
+    let videos = match ld.get("video")? {
+        Value::Array(a) => a.iter().collect(),
+        v => vec![v],
+    };
+    videos.into_iter().find_map(|v| match v {
+        Value::String(s) => playable(s, url),
+        Value::Object(o) => video_object_link(o, url).or_else(|| {
+            let id = o.get("@id").and_then(Value::as_str)?;
+            let node = json_ld_node(doc?, id)?;
+            video_object_link(&node, url)
+        }),
+        _ => None,
+    })
+}
+
+fn video_object_link(o: &Map<String, Value>, url: &str) -> Option<String> {
+    ["embedUrl", "contentUrl", "url"]
+        .iter()
+        .filter_map(|k| o.get(*k).and_then(Value::as_str))
+        .find_map(|u| playable(u, url))
+}
+
+/// The JSON-LD node on the page with this `@id`.
+fn json_ld_node(doc: &Html, id: &str) -> Option<Map<String, Value>> {
+    fn find(v: &Value, id: &str) -> Option<Map<String, Value>> {
+        match v {
+            Value::Array(a) => a.iter().find_map(|v| find(v, id)),
+            Value::Object(o) if o.get("@id").and_then(Value::as_str) == Some(id) && o.len() > 1 => {
+                Some(o.clone())
+            }
+            Value::Object(o) => o.get("@graph").and_then(|g| find(g, id)),
+            _ => None,
+        }
+    }
+    doc.select(&sel(r#"script[type="application/ld+json"]"#))
+        .filter_map(|s| serde_json::from_str::<Value>(&s.text().collect::<String>()).ok())
+        .find_map(|data| find(&data, id))
+}
+
+/// A video address found on a page, made absolute, as the link Crumb keeps: only videos
+/// it can play (an ad network's player script is no use to the cook).
+fn playable(value: &str, base: &str) -> Option<String> {
+    crumb_core::embed::video_link(&absolute_url(Some(value.trim()), base)?)
+}
+
+/// Where a player element keeps its video: lazy loaders park an iframe's address in a
+/// data attribute until it scrolls into view, and YouTube facades keep just the id.
+fn element_video(el: ElementRef, base: &str) -> Option<String> {
+    let e = el.value();
+    if let Some(id) = e.attr("videoid").or_else(|| {
+        e.has_class(
+            "rll-youtube-player",
+            scraper::CaseSensitivity::AsciiCaseInsensitive,
+        )
+        .then(|| e.attr("data-id"))
+        .flatten()
+    }) {
+        return playable(&format!("https://www.youtube.com/watch?v={id}"), base);
+    }
+    [
+        "src",
+        "data-src",
+        "data-lazy-src",
+        "data-litespeed-src",
+        "data-rocket-src",
+    ]
+    .iter()
+    .filter_map(|a| e.attr(a))
+    .find_map(|u| playable(u, base))
+}
+
+/// The recipe's video from the page itself: the recipe card's player first, then the
+/// page's declared video, then the first one in the post. Never the sidebar or footer,
+/// where a site shows its other videos.
+fn video_from_html(doc: &Html, url: &str) -> Option<String> {
+    let players = sel("iframe, lite-youtube, .rll-youtube-player, video, video source");
+    let within = |containers: &str| {
+        doc.select(&sel(containers))
+            .flat_map(|c| std::iter::once(c).chain(c.select(&players)))
+            .find_map(|el| element_video(el, url))
+    };
+    within(
+        ".wprm-recipe-video, .wprm-recipe-video-container, .tasty-recipes-video-embed, \
+         .tasty-recipe-video-embed, .mv-create-video, .recipe-video, [class*='recipe-video']",
+    )
+    .or_else(|| {
+        doc.select(&sel(
+            r#"meta[property="og:video:secure_url"], meta[property="og:video:url"],
+               meta[property="og:video"], meta[name="twitter:player"]"#,
+        ))
+        .filter_map(|m| m.value().attr("content"))
+        .find_map(|u| playable(u, url))
+    })
+    .or_else(|| within("article, .entry-content, .post-content, main"))
+}
+
+/// A notes block's text, a line per paragraph or list item.
+fn block_lines(el: ElementRef) -> Vec<String> {
+    const BLOCKS: [&str; 16] = [
+        "p",
+        "div",
+        "li",
+        "ul",
+        "ol",
+        "br",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "blockquote",
+        "tr",
+        "section",
+        "dd",
+    ];
+    fn flush(lines: &mut Vec<String>, line: &mut String) {
+        let text = collapse(line);
+        if !text.is_empty() && text != "•" {
+            lines.push(text);
+        }
+        line.clear();
+    }
+    fn walk(el: ElementRef, lines: &mut Vec<String>, line: &mut String) {
+        for child in el.children() {
+            if let Some(text) = child.value().as_text() {
+                line.push_str(text);
+                continue;
+            }
+            let Some(child) = ElementRef::wrap(child) else {
+                continue;
+            };
+            let e = child.value();
+            let name = e.name();
+            if matches!(
+                name,
+                "script" | "style" | "noscript" | "svg" | "button" | "template" | "img"
+            ) {
+                continue;
+            }
+            // WPRM writes each line of its notes as a <span style="display: block">
+            let block = BLOCKS.contains(&name)
+                || e.attr("style")
+                    .is_some_and(|s| s.replace(' ', "").contains("display:block"));
+            if block {
+                flush(lines, line);
+            }
+            if name == "li" {
+                line.push_str("• ");
+            }
+            walk(child, lines, line);
+            if block {
+                flush(lines, line);
+            }
+        }
+    }
+    let (mut lines, mut line) = (Vec::new(), String::new());
+    walk(el, &mut lines, &mut line);
+    flush(&mut lines, &mut line);
+    lines
+}
+
+/// The recipe card's notes (tips, substitutions, storage), which JSON-LD has no place for.
+fn notes_from_html(doc: &Html) -> Option<String> {
+    static HEADER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)^(recipe |cook'?s? )?notes?:?$").unwrap());
+    [
+        ".wprm-recipe-notes",
+        ".tasty-recipes-notes-body",
+        ".tasty-recipes-notes",
+        ".mv-create-notes-content",
+        ".mv-create-notes",
+        ".recipe-notes, .recipe-card-notes, .wpzoom-rcb-note, .ERSNotes",
+    ]
+    .iter()
+    .find_map(|s| {
+        doc.select(&sel(s)).find_map(|el| {
+            let mut lines = block_lines(el);
+            if lines.first().is_some_and(|l| HEADER.is_match(l)) {
+                lines.remove(0);
+            }
+            Some(lines.join("\n")).filter(|n| !n.is_empty())
+        })
+    })
 }
 
 fn strings(v: Option<&Value>) -> Vec<String> {
@@ -960,7 +1150,8 @@ fn extract_from_html(doc: &Html, url: &str) -> RecipeFields {
         ingredients: normalize_ingredient_sections(&ingredients),
         instructions: vec![Section::unnamed(instructions)],
         nutrition: None,
-        notes: None,
+        notes: notes_from_html(doc),
+        video: video_from_html(doc, url),
     }
 }
 
@@ -1205,6 +1396,107 @@ mod tests {
         assert_eq!(r.image.as_deref(), Some("https://cdn.test/p.jpg"));
         assert_eq!(r.ingredients[0].items, vec!["1 cup flour", "1 egg"]);
         assert_eq!(r.instructions[0].items, vec!["Whisk.", "Fry."]);
+    }
+
+    // As Natasha's Kitchen writes them: WPRM's notes, with WordPress block comments in
+    // "display: block" spans, and a YouTube video in the JSON-LD
+    const WPRM: &str = r#"<html><head><script type="application/ld+json">{"@type":"Recipe",
+      "name":"Beef and Broccoli","recipeIngredient":["1 lb flank steak"],"recipeInstructions":"Sear.",
+      "video":{"@type":"VideoObject","name":"How To Make Beef and Broccoli",
+        "embedUrl":"https:\/\/www.youtube.com\/embed\/8eITNSfct3Q?feature=oembed",
+        "contentUrl":"https:\/\/www.youtube.com\/watch?v=8eITNSfct3Q"}}</script></head><body>
+      <div id="recipe-60463-notes" class="wprm-recipe-notes-container wprm-block-text-normal">
+        <h3 class="wprm-recipe-header wprm-recipe-notes-header">Notes</h3>
+        <div class="wprm-recipe-notes"><span style="display: block;"><strong>Variations:&nbsp;</strong></span><div class="wprm-spacer"></div>
+        <span style="display: block;"><!-- wp:list --></span><div class="wprm-spacer"></div>
+        <ul class="wp-block-list"><!-- wp:list-item --><div class="wprm-spacer"></div>
+        <li><strong>More steak options include:</strong> Top Sirloin Steak, or Ribeye</li>
+        <span style="display: block;"><!-- /wp:list-item --> <!-- wp:list-item --></span><div class="wprm-spacer"></div>
+        <li><strong>Vegetables:</strong>&nbsp;use fresh vegetables, not frozen.</li>
+        <span style="display: block;"><!-- /wp:list-item --></span></ul>
+        <span style="display: block;"><!-- /wp:list --></span></div></div>
+      </body></html>"#;
+
+    #[test]
+    fn reads_wprm_notes_and_json_ld_video() {
+        let r = parse_recipe_html(WPRM, "https://natashaskitchen.com/beef-and-broccoli/").unwrap();
+        assert_eq!(
+            r.notes.as_deref(),
+            Some(
+                "Variations:\n\
+                 • More steak options include: Top Sirloin Steak, or Ribeye\n\
+                 • Vegetables: use fresh vegetables, not frozen."
+            )
+        );
+        assert_eq!(
+            r.video.as_deref(),
+            Some("https://www.youtube.com/watch?v=8eITNSfct3Q")
+        );
+    }
+
+    #[test]
+    fn keeps_a_jw_player_file_from_json_ld() {
+        // Allrecipes: a Recipe/NewsArticle whose video is JW Player's mp4
+        let html = r#"<script type="application/ld+json">[{"@type":["Recipe","NewsArticle"],
+          "name":"Slow Cooker Asian Zing Chicken Noodles","recipeIngredient":["1 jar sauce"],
+          "recipeInstructions":[{"@type":"HowToStep","text":"Cook."}],
+          "video":{"@type":"VideoObject","contentUrl":"https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4",
+            "name":"How to Make Slow Cooker Asian Zing Chicken Noodles",
+            "thumbnailUrl":"https://cdn.jwplayer.com/v2/media/9QcFPcvu/thumbnails/g43V12F6.jpg?width=1280"}}]
+          </script>"#;
+        let r =
+            parse_recipe_html(html, "https://www.allrecipes.com/zing-noodles-11725006").unwrap();
+        assert_eq!(
+            r.video.as_deref(),
+            Some("https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4")
+        );
+    }
+
+    #[test]
+    fn video_from_the_recipe_card_or_post_but_not_the_sidebar() {
+        let page = |body: &str| {
+            format!(
+                r#"<script type="application/ld+json">{{"@type":"Recipe","name":"Soup",
+                  "recipeIngredient":["1 leek"],"recipeInstructions":"Simmer."}}</script>{body}"#
+            )
+        };
+        let url = "https://x.test/soup";
+        // WP Rocket's lazy YouTube player, in the WPRM card
+        let r = parse_recipe_html(
+            &page(r#"<aside><iframe src="https://www.youtube.com/embed/sidebar0001"></iframe></aside>
+              <div class="wprm-recipe-video"><div class="rll-youtube-player" data-src="https://www.youtube.com/embed/cardVideo01" data-id="cardVideo01"></div></div>"#),
+            url,
+        )
+        .unwrap();
+        assert_eq!(
+            r.video.as_deref(),
+            Some("https://www.youtube.com/watch?v=cardVideo01")
+        );
+        // A lazy-loaded Vimeo iframe in the post
+        let r = parse_recipe_html(
+            &page(r#"<article><iframe data-lazy-src="//player.vimeo.com/video/76979871"></iframe></article>"#),
+            url,
+        )
+        .unwrap();
+        assert_eq!(r.video.as_deref(), Some("https://vimeo.com/76979871"));
+        // Only a sidebar video, or an ad network's player: none
+        let r = parse_recipe_html(
+            &page(r#"<aside><lite-youtube videoid="sidebar0001"></lite-youtube></aside>
+              <article><div class="mv-video"><script src="https://video.mediavine.com/videos/abc.js"></script></div></article>"#),
+            url,
+        )
+        .unwrap();
+        assert_eq!(r.video, None);
+    }
+
+    #[test]
+    fn reads_tasty_notes_without_their_heading() {
+        let html = r#"<div itemscope><h1 itemprop="name">Scones</h1>
+          <ul><li itemprop="recipeIngredient">2 cups flour</li></ul>
+          <ol itemprop="recipeInstructions"><li>Bake.</li></ol>
+          <div class="tasty-recipes-notes"><h3>Notes</h3><p>Freeze unbaked.</p><p>Best warm.</p></div></div>"#;
+        let r = parse_recipe_html(html, "https://x.test/scones").unwrap();
+        assert_eq!(r.notes.as_deref(), Some("Freeze unbaked.\nBest warm."));
     }
 
     #[test]

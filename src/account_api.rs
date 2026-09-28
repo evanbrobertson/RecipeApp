@@ -42,7 +42,13 @@ pub fn routes() -> Router<AppState> {
         .route("/api/auth/invite/accept", routing::post(accept_invite))
         .route("/api/account/export", routing::get(export_account))
         .route("/api/account/delete", routing::post(delete_account))
+        .route("/api/account/email", routing::post(change_email))
+        .route("/api/account/email/confirm", routing::post(confirm_email))
 }
+
+/// How recent a sign-in must be to stand in for a password (an account made with Google or
+/// Apple has none), as Better Auth's `freshAge` does for the hosted edition.
+const FRESH_SECS: i64 = 60 * 60 * 24;
 
 /// Accounts, when this server keeps them itself (`AUTH_MODE=accounts`). Hosted, Better
 /// Auth answers for them through the proxy instead (see `crate::hosted`).
@@ -453,6 +459,72 @@ async fn export_account(
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(res)
+}
+
+/// Changes the signed-in account's email: `{email, password}`, the password when it has one
+/// (else a sign-in from the last day). Answers `{email, pending}`.
+///
+/// Self-hosted Crumb sends no email, so the change is made at once and other devices are
+/// signed out; here the address is only what people sign in with, never how they get back in.
+/// Hosted, with email, `pending` is true: the new address gets a link to confirm it first, and
+/// once confirmed the old one gets a link to undo it (see `auth/src/email.ts`).
+async fn change_email(
+    State(state): State<AppState>,
+    SignedIn(signed): SignedIn,
+    headers: HeaderMap,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
+    let Some(accounts) = &state.accounts else {
+        return Err(AppError::not_found("Accounts aren't turned on here"));
+    };
+    let body = json_body(&body)?;
+    let email = text(&body, "email", "Email")?;
+    let password = body.get("password").and_then(Value::as_str).unwrap_or("");
+    if let Some(hosted) = &state.hosted {
+        let reply = hosted
+            .account(
+                "change-email",
+                &headers,
+                json!({"email": email, "password": password}),
+            )
+            .await?;
+        hosted.forget();
+        return Ok(Json(reply));
+    }
+    let (has_password, _) = accounts.sign_in_methods(signed.user_id)?;
+    if has_password {
+        if password.is_empty() || !accounts.check_password(signed.user_id, password).await? {
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+            return Err(AppError::new(401, "password: Incorrect password"));
+        }
+    } else {
+        let started = accounts.session_started(signed.id)?.unwrap_or(0);
+        if crate::model::now_secs() - started > FRESH_SECS {
+            return Err(AppError::new(
+                403,
+                "For your safety, sign out and in again, then change your email.",
+            ));
+        }
+    }
+    let email = accounts.change_email(signed.user_id, email)?;
+    accounts.revoke_others(&signed)?;
+    tracing::info!("[auth] an account changed its email");
+    Ok(Json(json!({"ok": true, "pending": false, "email": email})))
+}
+
+/// Public: a hosted change-email link's `{token}`, from whichever browser opened the email.
+/// Answers `{done: "changed" | "reverted", email}`.
+async fn confirm_email(State(state): State<AppState>, body: Bytes) -> AppResult<Json<Value>> {
+    let Some(hosted) = &state.hosted else {
+        return Err(AppError::not_found("Not found"));
+    };
+    let body = json_body(&body)?;
+    let token = text(&body, "token", "Link")?;
+    let reply = hosted
+        .account("confirm-email", &HeaderMap::new(), json!({"token": token}))
+        .await?;
+    hosted.forget();
+    Ok(Json(reply))
 }
 
 /// Deletes the signed-in account: `{password}` when it has one, else `{confirm: email}`.

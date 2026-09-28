@@ -11,6 +11,8 @@ export interface Imported {
   cookbook?: BookImported
   /** A cooking video Wee Chef watched in the server's queue. */
   fromVideo?: boolean
+  /** The page's photo link was dead, so it was saved without one. */
+  droppedPhoto?: boolean
 }
 
 /** A cooking video's place in the server's queue (`GET /api/import/jobs/{id}`). */
@@ -47,7 +49,7 @@ export function jobProgress(job: Pick<Job, "status" | "position">): string {
  * recipe is saved; `progress` gets short lines like "Queued (2nd)…".
  */
 export async function importRecipe(
-  body: { url: string } | { text: string },
+  body: { url: string; video?: Record<string, unknown> } | { text: string },
   progress: (s: string) => void = () => {},
 ): Promise<Imported> {
   const res = await api<Imported | Job>("/api/recipes/import", { method: "POST", body })

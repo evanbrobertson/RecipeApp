@@ -69,6 +69,8 @@ With the AI key, Wee Chef reads PDF files, text files and web pages without reci
 
 **Claude.** Save recipes from a Claude chat. Refer to [Claude connector](#claude-connector-mcp).
 
+**From the browser.** The Crumb browser extension (Chrome, Edge and Firefox) notices when you open a recipe and asks "Read this recipe in Crumb?". Say yes and Crumb opens the recipe in a new tab, read and tidied as an import would be, with **Add to my Crumb**. Nothing is saved until you press it, and a recipe you already have opens as it is. The toolbar button reads any page, and you can turn the question off for a site or everywhere. On first run, open your Crumb and choose **Use this Crumb**. Without the extension (Safari, phones), drag the **Read in Crumb** bookmark from the Import page to your bookmarks bar. Refer to [extension/README.md](extension/README.md).
+
 **Share from your phone.** Install Crumb as an app from your browser. Then share a link or text from another app to Crumb. The Add page opens with the link or the text.
 
 ### Clean-up and checks
@@ -111,6 +113,8 @@ Undo is available only until you change the recipe. After you use Undo on a reci
 A flag also goes away when you change or remove the line.
 
 **Suggestions page.** When recipes have flagged lines, the navigation shows **Suggestions** with a count. On a phone, the tab bar shows **Review**. The Suggestions page lists each recipe and the number of flagged lines in it. Wee Chef changes nothing on this page.
+
+**Wee Chef tip: staples.** Below the list, the Suggestions page shows up to 18 of your most used ingredients. Each one has a bar: the ingredient that the most recipes use fills it, and the others fill in proportion. Bars for the most used ingredients are a strong butter yellow, and bars for the least used are faint. Crumb removes amounts, units, sizes and preparation ("3 limes, juiced" is limes, "1 red bell pepper, diced" is red bell pepper) and counts each recipe once. Some names count as one ingredient, for example scallions and green onions. Crumb skips essentials that almost every recipe box uses: salt, pepper, butter, oil, flour, sugar, eggs, milk, garlic, onions, baking powder, baking soda and vanilla. Water is not included. The tip needs at least three recipes, and an ingredient must be in at least two. It does not need an AI key.
 
 **Check with Wee Chef.** This menu item on the recipe page needs the check key. It checks the recipe again now. Wee Chef only flags lines on a recipe that is already in your recipe box. The one exception is a new import that you did not edit and that Wee Chef did not check yet. Wee Chef treats that recipe as a new import. The check can also do the small clean-up again: checkbox characters, web codes, fractions, raw times and categories. You can undo these changes.
 
@@ -236,7 +240,7 @@ You approve the connection with the app password. Refer to [Connect to Claude](#
 
 ### Backups
 
-On the More page, select **Download a backup**. Crumb downloads one JSON file with all your recipes, your cookbooks and your cook history. To restore a backup, drop the file in the Add box or on the Import page.
+On the More page, under Account, select **Download a backup**. Crumb downloads one JSON file with all your recipes, your cookbooks and your cook history. To restore a backup, drop the file in the Add box or on the Import page.
 
 - Crumb saves the restored recipes as they are in the backup. No clean-up or check runs on them.
 - When a restored recipe has a link that is already in your recipe box, Crumb does not add it again.
@@ -255,6 +259,7 @@ With `AUTH_MODE=accounts`, people sign in with their own email and password inst
 - Account settings live on **More → Account**: your sign-in methods, the devices you're signed in on (sign any of them out), your household, the apps connected to Crumb, your data, and signing out.
 - With Google or Apple keys set (see [Sign in with Google and Apple](#sign-in-with-google-and-apple)), people can also sign in with them, and link or unlink them from More → Account. A new Google or Apple sign-in whose email already has an account is refused: sign in with the password, then link it, so nobody takes over an account by its address.
 - **Download my data** gives one JSON file with the account, its devices and connected apps, and every household it's in with its recipes (in the backup format). **Delete account** needs the password (or, without one, the email typed out). A household you share passes to whoever joined it first; one that's only yours is deleted with its recipes. For the household that holds the original database, its recipes are emptied instead.
+- **Email** (More → Account) changes the address you sign in with. It needs the password (or, without one, a sign-in from the last day), asks for the new address twice, and signs out your other devices. Crumb sends no email with accounts, so the change is made at once.
 - The owner invites people from More → Account: **Invite someone** makes a link to copy and send (no email needed). A link works once, for a week, and can be cancelled. Whoever opens it makes an account, or signs in to theirs, and joins the household, even when sign-up is closed.
 - More → Account also lists the household's members. The owner can rename the household and remove members; members can leave. Someone who is removed or leaves keeps their account and gets an empty box of their own. Someone in more than one household can switch between them.
 - Claude's connector is approved by a signed-in person and works on their household's box. It stops working when that person leaves the household. Connector tokens from before accounts keep working.
@@ -271,6 +276,7 @@ The default is `AUTH_MODE=password`, which works as described in [Password](#pas
 - With an email provider (Amazon SES), new accounts confirm their email first, and people can reset their password by email. Without one, emails are written to the auth service's log instead.
 - Once signed in, people can add passkeys under More → Account, then sign in with one from the sign-in page (or the email field's autofill) without a password. Adding one needs a sign-in from the last day.
 - The owner invites people by email from More → Account. An invite works for a week, only for the address it was sent to.
+- Changing your email (More → Account) needs the password or a sign-in from the last day. With an email provider, the new address gets a link, and nothing changes until it's opened. Once it has, the old address (when it was confirmed) is told, with a link that works for a week to put it back and sign out every device. Without a provider, the change is made at once.
 - Members, leaving, removing, switching households, devices, Google and Apple, your data, deleting an account and Claude's connector work as with [Accounts](#accounts). Deleting an account with no password needs a sign-in from the last day.
 - The browser only talks to the Rust server, which passes `/api/auth/*` to the auth service. Only the Rust server can reach the service.
 
@@ -298,9 +304,12 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
 - **No loading round trip:** for pages that show your recipes, the server inlines the page's data as JSON
   (`#page-data`) into the HTML, so the page renders from a single response.
 - **Tricky sites:** pages are fetched with a real browser's TLS and HTTP/2 fingerprint (Firefox, then Safari if that's refused). If both are blocked or the recipe is rendered by JavaScript, the server retries in headless Chromium (installed in the Docker image).
-- **Cooking videos:** a TikTok, Instagram Reel or YouTube Short is read from its caption when that's the whole
-  recipe. Otherwise `yt-dlp` downloads it, whisper.cpp transcribes what the cook says on the server itself, and
+- **Cooking videos:** a TikTok, Instagram Reel or YouTube video or Short is read from its caption when that's the whole
+  recipe. Otherwise `yt-dlp` downloads it (up to 20 minutes long), what the cook says comes from its English subtitles
+  (YouTube's automatic captions) or else whisper.cpp transcribes it on the server itself, and
   `ffmpeg` takes stills for on-screen text; Wee Chef reads all three together. Without an AI key only captions work.
+  YouTube often refuses servers ("Sign in to confirm you're not a bot"); the browser extension then reads the video's
+  description and captions in the cook's own browser and sends them with the link, so no download is needed.
   Videos wait in one queue shared by every household: `VIDEO_WORKERS` of them are watched at once (each gets its
   share of the cores), up to `VIDEO_QUEUE_MAX` more wait, and past that an import is refused with "try again in a
   minute". One still waiting after 10 minutes gives up. The Add box shows its place ("Queued (2nd)…") and opens
@@ -323,6 +332,7 @@ src/        Rust server (API, MCP, OAuth, scraper, importers, page serving)
 tests/      Rust integration tests
 web/        Astro frontend (pages, Svelte islands, styles, icons)
 auth/       Better Auth service for the hosted edition (Bun)
+extension/  Browser extension: "Read this recipe in Crumb?" (Chrome, Edge, Firefox)
 ```
 
 ## Quick start
@@ -345,6 +355,12 @@ APP_PASSWORD=change-me ./target/release/crumb
 See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASING.md) for how builds are released (CI, image tags, dev and stable).
 
 ## Configuration
+
+Every variable is declared in [`.env.schema`](./.env.schema) (and the hosted edition's auth service in
+[`auth/.env.schema`](./auth/.env.schema)) with its type, default, and whether it's required or secret, in
+[varlock](https://varlock.dev)'s `@env-spec` format. They're plain `.env` files, so they read fine on their
+own. To check a local setup, put your values in a git-ignored `.env.local` and run `bunx varlock load`
+(secrets are masked), or start the server with them: `bunx varlock run -- cargo run`.
 
 | Variable            | Required   | Description                                                                   |
 | ------------------- | ---------- | ----------------------------------------------------------------------------- |
@@ -398,7 +414,7 @@ Replay masks all text and blocks all media.
 2. In Claude go to **Settings → Connectors → Add custom connector** and paste `https://<your-app>/mcp`.
 3. Click **Connect** and approve with your app password.
 
-The in-app **Connect** page shows your exact URL. Claude Code:
+The in-app page (**More → Connections → Claude**) shows your exact URL. Claude Code:
 `claude mcp add --transport http recipes https://<your-app>/mcp`.
 
 Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
@@ -408,4 +424,5 @@ Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_fro
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 cd web && bun run check && bun run lint && bun run format:check
+cd extension && bun run check && bun test && bun run build && bun run lint
 ```

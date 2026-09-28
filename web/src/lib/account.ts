@@ -548,6 +548,25 @@ export async function deleteAccount(confirm: { password?: string; confirm?: stri
 }
 
 /**
+ * Changes the signed-in account's email: its password, or with none, a recent sign-in.
+ * `pending`: the new address was sent a link, and nothing changes until it's opened.
+ */
+export function changeEmail(email: string, password: string) {
+  return api<{ email: string; pending: boolean }>("/api/account/email", {
+    method: "POST",
+    body: { email, password },
+  })
+}
+
+/** A change-email link (hosted): confirms the new address, or puts the old one back. */
+export function followEmailLink(token: string) {
+  return api<{ done: "changed" | "reverted"; email: string }>("/api/account/email/confirm", {
+    method: "POST",
+    body: { token },
+  })
+}
+
+/**
  * Words for the `?error=` a Google or Apple sign-in came back with: Crumb's own codes
  * (src/social.rs) and Better Auth's. Only known codes: never text from the URL.
  */

@@ -1,21 +1,29 @@
-//! Recipes from cooking videos (TikTok, Instagram Reels, YouTube Shorts). The caption comes
-//! first: when it already holds the recipe, nothing is downloaded. Otherwise the video is
-//! fetched with `yt-dlp`, what the cook says is transcribed on this machine (`whisper.cpp`),
-//! a handful of frames are taken for on-screen text (`ffmpeg`), and Wee Chef reads all three
-//! together, with the frames going to its vision model.
+//! Recipes from cooking videos (TikTok, Instagram Reels, YouTube videos and Shorts). The
+//! caption comes first: when it already holds the recipe, nothing is downloaded. Otherwise the
+//! video is fetched with `yt-dlp`, what the cook says is taken from its English subtitles when
+//! it has them (YouTube's automatic captions) or else transcribed on this machine
+//! (`whisper.cpp`), a handful of frames are taken for on-screen text (`ffmpeg`), and Wee Chef
+//! reads all three together, with the frames going to its vision model.
 //!
 //! Every tool is optional: without `yt-dlp` the caption is read from the page itself, and
 //! without Wee Chef only a caption that is a whole recipe can be saved.
 //!
+//! YouTube often won't serve a server at all ("Sign in to confirm you're not a bot"). The
+//! Crumb browser extension then reads the video's page in the cook's own browser and sends
+//! its details and the words of its captions with the link ([`FromBrowser`]); nothing of the
+//! cook's YouTube sign-in leaves the browser.
+//!
 //! Imports wait their turn in [`crate::video_jobs`], which runs [`import`] on its workers.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use regex::Regex;
 use scraper::{Html, Selector};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -41,10 +49,20 @@ const FRAME_WIDTH: u32 = 720;
 
 const METADATA_TIMEOUT: Duration = Duration::from_secs(45);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
+const SUBTITLES_TIMEOUT: Duration = Duration::from_secs(45);
+/// Longest transcript Wee Chef is sent (a 15-minute video says about 15 000 characters).
+const MAX_TRANSCRIPT_CHARS: usize = 30_000;
 const FFMPEG_TIMEOUT: Duration = Duration::from_secs(120);
 const WHISPER_TIMEOUT: Duration = Duration::from_secs(420);
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
+/// For a YouTube video the server had to read on its own: YouTube often turns servers away.
+const YOUTUBE_HINT: &str = "YouTube often won't let Crumb in on its own: open the video with the Crumb browser extension and choose Read in Crumb, or paste the recipe text instead.";
+
+fn is_youtube(url: &str) -> bool {
+    let host = crate::telemetry::host_of(url);
+    host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
+}
 
 /// The programs a video import can use. Found at start (see [`VideoTools::from_env`]).
 #[derive(Debug, Clone, Default)]
@@ -98,8 +116,8 @@ fn on_path(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Whether a link is a short cooking video we know how to read: TikTok, an Instagram reel
-/// or a YouTube Short.
+/// Whether a link is a cooking video we know how to read: TikTok, an Instagram reel, or a
+/// YouTube video or Short.
 pub fn is_video_url(url: &str) -> bool {
     let Ok(u) = url::Url::parse(url) else {
         return false;
@@ -115,9 +133,120 @@ pub fn is_video_url(url: &str) -> bool {
         "instagram.com" => ["/reel/", "/reels/", "/tv/"]
             .iter()
             .any(|p| path.starts_with(p)),
-        "youtube.com" => path.starts_with("/shorts/"),
+        "youtube.com" => {
+            ["/shorts/", "/live/"]
+                .iter()
+                .any(|p| path.len() > p.len() && path.starts_with(p))
+                || (path == "/watch" && u.query_pairs().any(|(k, v)| k == "v" && !v.is_empty()))
+        }
+        "youtu.be" => path.len() > 1,
         _ => false,
     }
+}
+
+/// What the cook's browser read from a video's page (the Crumb extension), sent with the
+/// link to `POST /api/recipes/import` as `video`. It's whatever the cook sends, so it's
+/// treated like pasted text: trimmed to size, and only a YouTube image address is fetched.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FromBrowser {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub thumbnail: Option<String>,
+    /// Seconds.
+    pub duration: Option<f64>,
+    /// The words of the video's captions.
+    pub transcript: Option<String>,
+}
+
+/// Longest description kept from the browser (YouTube's own limit is 5 000).
+const MAX_DESCRIPTION_CHARS: usize = 10_000;
+/// How long what the browser read waits for its import to start.
+const KEEP_FROM_BROWSER: Duration = Duration::from_secs(15 * 60);
+const MAX_KEPT_FROM_BROWSER: usize = 64;
+
+fn clip(value: Option<String>, max: usize) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(match value.char_indices().nth(max) {
+        Some((cut, _)) => value[..cut].to_string(),
+        None => value.to_string(),
+    })
+}
+
+/// A YouTube image address (`i.ytimg.com`, `yt3.ggpht.com`), else nothing: the server
+/// fetches it for the recipe's photo, so it can't be just any address.
+fn youtube_image(url: Option<String>) -> Option<String> {
+    let parsed = url::Url::parse(url.as_deref()?).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let ours = ["ytimg.com", "ggpht.com"]
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")));
+    (parsed.scheme() == "https" && ours).then(|| parsed.to_string())
+}
+
+impl FromBrowser {
+    /// Trimmed to size, with a thumbnail only when it's YouTube's.
+    pub fn cleaned(self) -> Self {
+        let transcript =
+            clip(self.transcript, MAX_TRANSCRIPT_CHARS).and_then(|t| clean_transcript(&t));
+        Self {
+            title: clip(self.title, 300),
+            description: clip(self.description, MAX_DESCRIPTION_CHARS),
+            author: clip(self.author, 200),
+            thumbnail: youtube_image(self.thumbnail),
+            duration: self.duration.filter(|d| d.is_finite() && *d > 0.0),
+            transcript,
+        }
+    }
+
+    fn meta(&self, url: &str) -> VideoMeta {
+        VideoMeta {
+            url: url.to_string(),
+            title: self.title.clone(),
+            caption: self.description.clone().unwrap_or_default(),
+            author: self.author.clone(),
+            thumbnail: self.thumbnail.clone(),
+            duration: self.duration,
+            subtitles: false,
+        }
+    }
+}
+
+type BrowserKey = (crate::households::HouseholdId, String);
+
+static FROM_BROWSER: LazyLock<Mutex<HashMap<BrowserKey, (Instant, FromBrowser)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Keeps what the browser read for `url` until its import job runs ([`import`] takes it).
+pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
+    let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    while map.len() >= MAX_KEPT_FROM_BROWSER {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+    map.insert(
+        (state.household, url.to_string()),
+        (Instant::now(), read.cleaned()),
+    );
+}
+
+fn take_from_browser(state: &AppState, url: &str) -> Option<FromBrowser> {
+    let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    map.remove(&(state.household, url.to_string()))
+        .map(|(_, read)| read)
 }
 
 /// What a video's page says about it.
@@ -130,6 +259,9 @@ pub struct VideoMeta {
     pub author: Option<String>,
     pub thumbnail: Option<String>,
     pub duration: Option<f64>,
+    /// Whether the video has English subtitles or automatic captions to read instead of
+    /// transcribing it.
+    pub subtitles: bool,
 }
 
 fn text(v: &Value, key: &str) -> Option<String> {
@@ -157,7 +289,20 @@ pub fn meta_from_ytdlp(json: &Value, asked: &str) -> VideoMeta {
         author,
         thumbnail: text(json, "thumbnail"),
         duration: json.get("duration").and_then(Value::as_f64),
+        subtitles: ["subtitles", "automatic_captions"].iter().any(|key| {
+            json.get(key)
+                .and_then(Value::as_object)
+                .is_some_and(|langs| langs.keys().any(|l| is_english(l)))
+        }),
     }
+}
+
+/// `en`, `en-US`, `en-orig` and the like (not `en-fr`-style translations *from* English).
+fn is_english(lang: &str) -> bool {
+    lang == "en"
+        || lang
+            .strip_prefix("en-")
+            .is_some_and(|rest| rest == "orig" || rest.chars().all(|c| c.is_ascii_uppercase()))
 }
 
 static REHYDRATION: LazyLock<Selector> = LazyLock::new(|| {
@@ -238,9 +383,31 @@ pub fn caption_has_recipe(caption: &str) -> bool {
 pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     let started = Instant::now();
     let tools = &state.config.video;
-    let meta = metadata(state, url)
-        .await
-        .ok_or_else(|| AppError::new(422, format!("Couldn't open that video. {PASTE_HINT}")))?;
+    // The cook's browser already read the page: the site isn't asked again (it may refuse)
+    let from_browser = take_from_browser(state, url);
+    let hint = if from_browser.is_none() && is_youtube(url) {
+        YOUTUBE_HINT
+    } else {
+        PASTE_HINT
+    };
+    let meta = match &from_browser {
+        Some(read) => read.meta(url),
+        None => metadata(state, url)
+            .await
+            .ok_or_else(|| AppError::new(422, format!("Couldn't open that video. {hint}")))?,
+    };
+    if let Some(read) = &from_browser {
+        tracing::info!(
+            "[video] {}: read in the browser: {} characters of description, {} words of captions",
+            crate::telemetry::host_of(url),
+            read.description.as_deref().map_or(0, |d| d.chars().count()),
+            read.transcript
+                .as_deref()
+                .map_or(0, |t| t.split_whitespace().count())
+        );
+    }
+    let browser_read = from_browser.is_some();
+    let said_in_browser = from_browser.and_then(|read| read.transcript);
     // A different share link to a video that's already saved
     if meta.url != url {
         let conn = state.db.lock();
@@ -263,13 +430,24 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     }
     let mut how = "caption";
     let mut fields = from_caption.clone().filter(has_both);
-    // 2 and 3. What's said and what's shown
+    // 2. The captions the browser read, when there are any: no download needed
+    if fields.is_none()
+        && ai
+        && let Some(said) = &said_in_browser
+    {
+        let text = video_prompt(&meta, Some(said), false);
+        fields = crate::llm::extract_recipe_from_video(state, &[], &text).await;
+        how = "captions";
+    }
+    // 3 and 4. What's said and what's shown
     let mut frames = Vec::new();
-    if fields.is_none() && ai && tools.yt_dlp.is_some() && tools.ffmpeg.is_some() {
+    // The extension only reads a video for sites that turn the server away, so a download
+    // would be refused too
+    if fields.is_none() && ai && !browser_read && tools.yt_dlp.is_some() && tools.ffmpeg.is_some() {
         if meta.duration.is_some_and(|d| d > MAX_SECONDS) {
             tracing::info!("[video] too long to watch ({:?}s)", meta.duration);
         } else if let Some(watched) = watch(state, &meta).await {
-            let text = video_prompt(&meta, watched.transcript.as_deref());
+            let text = video_prompt(&meta, watched.transcript.as_deref(), true);
             fields = crate::llm::extract_recipe_from_video(state, &watched.frames, &text).await;
             frames = watched.frames;
             how = "video";
@@ -297,9 +475,13 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
         } else {
             "That video's caption doesn't have the recipe, and Wee Chef isn't set up to watch it."
         };
-        return Err(AppError::new(422, format!("{why} {PASTE_HINT}")));
+        return Err(AppError::new(422, format!("{why} {hint}")));
     };
     fields.url = Some(meta.url.clone());
+    // The recipe's own video plays on its page
+    if fields.video.is_none() {
+        fields.video = crumb_core::embed::video_link(&meta.url);
+    }
     if fields.author.as_deref().is_none_or(|a| a.trim().is_empty()) {
         fields.author = meta.author.clone();
     }
@@ -327,8 +509,8 @@ fn caption_text(meta: &VideoMeta) -> String {
 }
 
 /// What Wee Chef is told alongside the frames.
-pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>) -> String {
-    let mut out = String::from("A short cooking video");
+pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>, frames: bool) -> String {
+    let mut out = String::from("A cooking video");
     if let Some(author) = &meta.author {
         out.push_str(&format!(" by {author}"));
     }
@@ -345,9 +527,11 @@ pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>) -> String {
     });
     out.push_str("\n\nWhat the cook says (automatic transcript, which may mishear words):\n");
     out.push_str(transcript.unwrap_or("(no speech)"));
-    out.push_str(
-        "\n\nThe frames above are stills from the video, in order. Read any on-screen text in them (ingredient lists, amounts, temperatures, times).",
-    );
+    if frames {
+        out.push_str(
+            "\n\nThe frames above are stills from the video, in order. Read any on-screen text in them (ingredient lists, amounts, temperatures, times).",
+        );
+    }
     out
 }
 
@@ -405,6 +589,12 @@ async fn watch(state: &AppState, meta: &VideoMeta) -> Option<Watched> {
     let host = crate::telemetry::host_of(&meta.url);
 
     let started = Instant::now();
+    // Subtitles, when there are any, say it better than a transcript and cost nothing to run
+    let subtitles = if meta.subtitles {
+        read_subtitles(yt_dlp, &meta.url, dir.path()).await
+    } else {
+        None
+    };
     let template = dir.path().join("video.%(ext)s");
     if let Err(err) = run(
         Command::new(yt_dlp)
@@ -431,21 +621,115 @@ async fn watch(state: &AppState, meta: &VideoMeta) -> Option<Watched> {
     let video = downloaded(dir.path())?;
     let downloaded_ms = started.elapsed().as_millis();
 
-    let transcript = match &tools.whisper {
-        Some((cli, model)) => transcribe(ffmpeg, cli, model, &video, dir.path(), threads).await,
-        None => None,
+    let subtitles_read = subtitles.is_some();
+    let transcript = match (subtitles, &tools.whisper) {
+        (Some(said), _) => Some(said),
+        (None, Some((cli, model))) => {
+            transcribe(ffmpeg, cli, model, &video, dir.path(), threads).await
+        }
+        (None, None) => None,
     };
     let transcribed_ms = started.elapsed().as_millis();
     let frames = frames(ffmpeg, &video, dir.path(), meta.duration, threads).await;
     tracing::info!(
-        "[video] {host}: downloaded in {downloaded_ms} ms, {} words heard by {transcribed_ms} ms, {} frames by {} ms",
+        "[video] {host}: downloaded in {downloaded_ms} ms, {} words {} by {transcribed_ms} ms, {} frames by {} ms",
         transcript
             .as_deref()
             .map_or(0, |t| t.split_whitespace().count()),
+        if subtitles_read {
+            "from subtitles"
+        } else {
+            "heard"
+        },
         frames.len(),
         started.elapsed().as_millis()
     );
     Some(Watched { transcript, frames })
+}
+
+/// The video's English subtitles (its own, else YouTube's automatic captions) as one
+/// paragraph, without downloading the video. None when there are none or yt-dlp fails.
+async fn read_subtitles(yt_dlp: &Path, url: &str, dir: &Path) -> Option<String> {
+    let template = dir.join("subs.%(ext)s");
+    run(
+        Command::new(yt_dlp)
+            .args([
+                "--quiet",
+                "--no-playlist",
+                "--no-warnings",
+                "--skip-download",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs",
+                "en,en-orig,en-[A-Z]*",
+                "--sub-format",
+                "vtt",
+                "-o",
+            ])
+            .arg(&template)
+            .args(["--", url]),
+        SUBTITLES_TIMEOUT,
+    )
+    .await
+    .inspect_err(|err| tracing::info!("[video] no subtitles: {err}"))
+    .ok()?;
+    // subs.en.vtt, subs.en-orig.vtt, ...: the video's own language first
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "vtt")
+                && p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("subs."))
+        })
+        .collect();
+    files.sort_by_key(|p| {
+        let name = p.to_string_lossy();
+        (!name.contains("-orig."), name.len())
+    });
+    let text = std::fs::read_to_string(files.first()?).ok()?;
+    let mut said = clean_transcript(&vtt_text(&text))?;
+    if said.len() > MAX_TRANSCRIPT_CHARS {
+        let cut = said.floor_char_boundary(MAX_TRANSCRIPT_CHARS);
+        said.truncate(cut);
+    }
+    Some(said)
+}
+
+static VTT_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
+
+/// The words of a WebVTT file. YouTube's automatic captions roll: each cue repeats the line
+/// before it, so a line the same as the last one kept is dropped.
+pub fn vtt_text(vtt: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_note = false;
+    for raw in vtt.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            in_note = false;
+            continue;
+        }
+        if in_note
+            || line.starts_with("WEBVTT")
+            || line.starts_with("Kind:")
+            || line.starts_with("Language:")
+            || line.contains("-->")
+            || line.chars().all(|c| c.is_ascii_digit())
+        {
+            continue;
+        }
+        if line.starts_with("NOTE") || line.starts_with("STYLE") || line.starts_with("REGION") {
+            in_note = true;
+            continue;
+        }
+        let words = crate::scraper::decode_text(&VTT_TAG.replace_all(line, ""));
+        let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !words.is_empty() && lines.last() != Some(&words) {
+            lines.push(words);
+        }
+    }
+    lines.join(" ")
 }
 
 /// The CPU a job may use: the cores split between the workers, so jobs running together
@@ -687,13 +971,20 @@ mod tests {
             "https://www.instagram.com/reel/C9abcDEF/",
             "https://instagram.com/reels/C9abcDEF/",
             "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=Xy_djhH3WE4&t=122s",
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ?si=abc",
+            "https://www.youtube.com/live/dQw4w9WgXcQ",
         ] {
             assert!(is_video_url(yes), "{yes}");
         }
         for no in [
             "https://www.tiktok.com/",
             "https://www.instagram.com/p/C9abcDEF/",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/watch",
+            "https://www.youtube.com/@chef",
+            "https://www.youtube.com/shorts/",
+            "https://youtu.be/",
             "https://www.allrecipes.com/recipe/1/tiktok-pasta/",
             "https://nottiktok.com/@a/video/1",
             "not a url",
@@ -732,6 +1023,31 @@ mod tests {
         assert_eq!(m.url, "https://www.youtube.com/shorts/abc");
         assert_eq!(m.title.as_deref(), Some("5 minute noodles"));
         assert_eq!(m.author.as_deref(), Some("Noodle Co"));
+        assert!(!m.subtitles);
+
+        let captioned =
+            json!({"title": "Pad thai", "automatic_captions": {"de": [], "en-orig": []}});
+        assert!(meta_from_ytdlp(&captioned, "https://youtu.be/x").subtitles);
+        let foreign = json!({"subtitles": {"fr": []}, "automatic_captions": {"en-fr": []}});
+        assert!(!meta_from_ytdlp(&foreign, "https://youtu.be/x").subtitles);
+    }
+
+    #[test]
+    fn reads_rolling_captions() {
+        let vtt = "WEBVTT\nKind: captions\nLanguage: en\n\n\
+            00:00:00.160 --> 00:00:02.869 align:start position:0%\n\
+            \n\
+            so<00:00:00.480><c> today</c><00:00:00.960><c> we're</c><c> making</c>\n\n\
+            00:00:02.869 --> 00:00:02.879 align:start position:0%\n\
+            so today we're making\n \n\n\
+            00:00:02.879 --> 00:00:05.000 align:start position:0%\n\
+            so today we're making\n\
+            pad<00:00:03.100><c> thai</c> &amp; rice\n\n\
+            2\n00:00:05.000 --> 00:00:06.000\n[Music]\n";
+        assert_eq!(
+            vtt_text(vtt),
+            "so today we're making pad thai & rice [Music]"
+        );
     }
 
     #[test]
@@ -852,15 +1168,64 @@ mod tests {
     }
 
     #[test]
+    fn keeps_what_the_browser_read_in_bounds() {
+        let read = FromBrowser {
+            title: Some("  Pad thai  ".into()),
+            description: Some("x".repeat(MAX_DESCRIPTION_CHARS + 50)),
+            author: Some(String::new()),
+            thumbnail: Some("https://i.ytimg.com/vi/abc/maxresdefault.jpg".into()),
+            duration: Some(f64::NAN),
+            transcript: Some("so today we're making [Music] pad thai with rice noodles".into()),
+        }
+        .cleaned();
+        assert_eq!(read.title.as_deref(), Some("Pad thai"));
+        assert_eq!(
+            read.description.unwrap().chars().count(),
+            MAX_DESCRIPTION_CHARS
+        );
+        assert_eq!(read.author, None);
+        assert_eq!(read.duration, None);
+        assert_eq!(
+            read.transcript.as_deref(),
+            Some("so today we're making pad thai with rice noodles")
+        );
+        assert!(read.thumbnail.is_some());
+        for not_youtube in [
+            "http://i.ytimg.com/vi/abc/0.jpg",
+            "https://ytimg.com.evil.test/0.jpg",
+            "http://127.0.0.1:3000/api/recipes",
+        ] {
+            assert_eq!(
+                youtube_image(Some(not_youtube.into())),
+                None,
+                "{not_youtube}"
+            );
+        }
+        assert!(youtube_image(Some("https://yt3.ggpht.com/a/b=s88".into())).is_some());
+    }
+
+    #[test]
+    fn knows_youtube() {
+        assert!(is_youtube(
+            "https://www.youtube.com/watch?v=Xy_djhH3WE4&t=122s"
+        ));
+        assert!(is_youtube("https://youtu.be/Xy_djhH3WE4"));
+        assert!(!is_youtube("https://www.tiktok.com/@a/video/1"));
+    }
+
+    #[test]
     fn tells_wee_chef_what_it_has() {
         let meta = VideoMeta {
             author: Some("Chef Jo".into()),
             caption: "Noodles!".into(),
             ..Default::default()
         };
-        let p = video_prompt(&meta, None);
-        assert!(p.starts_with("A short cooking video by Chef Jo."));
+        let p = video_prompt(&meta, None, true);
+        assert!(p.starts_with("A cooking video by Chef Jo."));
         assert!(p.contains("Caption:\nNoodles!"));
         assert!(p.contains("(no speech)"));
+        assert!(p.contains("The frames above"));
+        let p = video_prompt(&meta, Some("hello there"), false);
+        assert!(!p.contains("frames"), "no stills were sent");
     }
 }

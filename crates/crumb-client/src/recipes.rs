@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    Client, CookStats, Download, Error, FileImport, Recipe, RecipeFormat, RecipeSummary,
+    Client, CookStats, Download, Error, FileImport, Recipe, RecipeFormat, RecipeSummary, Staples,
     Suggestions,
 };
 
@@ -108,6 +108,13 @@ impl Client {
                 .query(&query),
         )
         .await
+    }
+
+    /// `GET /api/staples`: Wee Chef's "keep these on hand" tip, the ingredients most of
+    /// the box's recipes use.
+    pub async fn staples(&self) -> Result<Staples, Error> {
+        self.fetch(self.http.get(self.endpoint("api/staples")))
+            .await
     }
 
     /// `DELETE /api/recipes/{id}/cooked?event=`: takes back a "Cooked it" (the event from

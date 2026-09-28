@@ -1,5 +1,5 @@
 /**
- * The emails Crumb sends (verification, password reset, household invites), through Amazon
+ * The emails Crumb sends (verification, password reset, household invites, email changes), through Amazon
  * SES when it's configured. Without it nothing is sent: the link is logged instead, so a
  * test deploy still works, and sign-up doesn't wait on a verified email.
  */

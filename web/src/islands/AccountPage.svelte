@@ -4,6 +4,8 @@
   import Link2 from "@lucide/svelte/icons/link-2"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import LogOut from "@lucide/svelte/icons/log-out"
+  import Mail from "@lucide/svelte/icons/mail"
+  import Pencil from "@lucide/svelte/icons/pencil"
   import Plug from "@lucide/svelte/icons/plug"
   import Trash2 from "@lucide/svelte/icons/trash-2"
   import LinkOff from "@lucide/svelte/icons/unlink"
@@ -17,6 +19,7 @@
     type Status,
     accounts,
     authStatus,
+    changeEmail,
     connectedApps,
     deleteAccount,
     disconnectApp,
@@ -35,11 +38,15 @@
   let methods = $state<SignInMethods | null>(null)
   let apps = $state<ConnectedApp[] | null>(null)
   let busy = $state(false)
-  /** The row asking to confirm: `app:<id>`, `unlink:<provider>` or `delete`. */
+  /** The row asking to confirm: `app:<id>`, `unlink:<provider>`, `email` or `delete`. */
   let confirming = $state<string | null>(null)
   let password = $state("")
   let typedEmail = $state("")
   let deleteError = $state("")
+  let newEmail = $state("")
+  let newEmailAgain = $state("")
+  let emailPassword = $state("")
+  let emailError = $state("")
 
   const signedIn = $derived(!!status && status.mode !== "password" && !!status.user)
   const linkable = $derived(
@@ -114,6 +121,40 @@
     }
   }
 
+  function closeEmail() {
+    confirming = null
+    newEmail = newEmailAgain = emailPassword = emailError = ""
+  }
+
+  async function saveEmail(e: SubmitEvent) {
+    e.preventDefault()
+    const email = newEmail.trim()
+    // Typed twice, because a typo here is the very thing this is for
+    if (email.toLowerCase() !== newEmailAgain.trim().toLowerCase()) {
+      emailError = "The two addresses don't match"
+      return
+    }
+    busy = true
+    emailError = ""
+    try {
+      const made = await changeEmail(email, emailPassword)
+      if (made.pending) {
+        closeEmail()
+        toast({
+          title: `Check ${made.email}`,
+          description: `Open the link sent there to switch. Until then, sign in with ${status!.user!.email}.`,
+        })
+      } else {
+        flash({ title: "Email changed", description: `Sign in with ${made.email} from now on.` })
+        location.reload()
+        return
+      }
+    } catch (err) {
+      emailError = errorMessage(err, "Couldn't change your email")
+    }
+    busy = false
+  }
+
   async function signOut() {
     await accounts(status!.mode)
       .signOut()
@@ -135,12 +176,87 @@
           <section>
             <h2 class="settings-heading" id="methods-title">Sign-in methods</h2>
             <div class="list-card" role="group" aria-labelledby="methods-title">
+              {#if confirming === "email"}
+                <form class="list-row settings-row flex-wrap items-start" onsubmit={saveEmail}>
+                  <Mail class="settings-icon mt-0.5" />
+                  <div class="min-w-0 flex-1 space-y-3">
+                    <p class="font-bold">Change your email</p>
+                    <p class="text-ink-muted text-sm">
+                      {status.mode === "hosted"
+                        ? "We'll send the new address a link, and switch once it's opened."
+                        : "You'll sign in with the new address, and be signed out on other devices."}
+                    </p>
+                    <div>
+                      <label class="label" for="new-email">New email</label>
+                      <!-- svelte-ignore a11y_autofocus -->
+                      <input
+                        id="new-email"
+                        type="email"
+                        class="input"
+                        autocomplete="email"
+                        bind:value={newEmail}
+                        autofocus
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label class="label" for="new-email-again">New email again</label>
+                      <input
+                        id="new-email-again"
+                        type="email"
+                        class="input"
+                        autocomplete="off"
+                        bind:value={newEmailAgain}
+                        required
+                      />
+                    </div>
+                    {#if methods.password}
+                      <div>
+                        <label class="label" for="email-password">Your password</label>
+                        <input
+                          id="email-password"
+                          type="password"
+                          class="input"
+                          autocomplete="current-password"
+                          bind:value={emailPassword}
+                          required
+                        />
+                      </div>
+                    {/if}
+                    {#if emailError}<p class="text-error text-sm" role="alert">{emailError}</p>{/if}
+                    <div class="flex flex-wrap justify-end gap-2">
+                      <button type="button" class="btn btn-ghost" onclick={closeEmail}>Cancel</button>
+                      <button type="submit" class="btn btn-primary" disabled={busy}>
+                        {#if busy}<LoaderCircle class="animate-spin" />{/if}
+                        Change email
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              {:else}
+                <div class="list-row settings-row">
+                  <Mail class="settings-icon" />
+                  <span class="min-w-0 flex-1">
+                    <span class="block font-bold">Email</span>
+                    <span class="text-ink-muted block truncate text-sm">{status.user?.email}</span>
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon flex-none"
+                    aria-label="Change your email"
+                    title="Change"
+                    onclick={() => (confirming = "email")}
+                  >
+                    <Pencil />
+                  </button>
+                </div>
+              {/if}
               {#if methods.password}
                 <div class="list-row settings-row">
                   <KeyRound class="settings-icon" />
                   <span class="min-w-0 flex-1">
                     <span class="block font-bold">Password</span>
-                    <span class="text-ink-muted block truncate text-sm">{status.user?.email}</span>
+                    <span class="text-ink-muted block truncate text-sm">With your email</span>
                   </span>
                 </div>
               {/if}

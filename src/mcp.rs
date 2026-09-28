@@ -357,7 +357,19 @@ impl Ctx<'_> {
                     return Some(invalid("url must be a valid URL"));
                 };
                 match recipes::import_link(self.state, url).await {
-                    Ok(recipes::Imported::Recipe(r, is_new)) => self.saved(&r, is_new),
+                    Ok(recipes::Imported::Recipe {
+                        recipe,
+                        is_new,
+                        dropped_photo,
+                    }) => {
+                        let mut saved = self.saved(&recipe, is_new);
+                        if dropped_photo
+                            && let Some(Value::String(t)) = saved.pointer_mut("/content/0/text")
+                        {
+                            t.push_str("\nThe page's photo link doesn't work, so it was saved without a photo.");
+                        }
+                        saved
+                    }
                     Ok(recipes::Imported::Book(book)) => text(book_saved(&book)),
                     Err(err) => tool_error(err.message),
                 }
@@ -825,6 +837,7 @@ fn recipe_properties() -> Map<String, Value> {
         "notes": nullable(Some("Tips, substitutions, storage notes"), None),
         "url": nullable(Some("Original source URL, if known"), Some("uri")),
         "image": nullable(Some("Image URL, if known"), Some("uri")),
+        "video": nullable(Some("Link to a video of the recipe being made (YouTube, Vimeo, TikTok, Instagram...), if known"), Some("uri")),
     });
     v.as_object().unwrap().clone()
 }
@@ -882,7 +895,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "import_recipe_from_url",
             "title": "Import recipe from URL",
-            "description": "Fetch a recipe web page and save just the recipe. Also takes cooking videos (TikTok, Instagram Reels, YouTube Shorts): the recipe is read from the caption, or from what is said and shown in the video, which can take a minute or two. Returns the existing recipe if that URL was already saved.",
+            "description": "Fetch a recipe web page and save just the recipe. Also takes cooking videos (TikTok, Instagram Reels, YouTube videos and Shorts): the recipe is read from the caption, or from what is said and shown in the video, which can take a minute or two. Returns the existing recipe if that URL was already saved.",
             "inputSchema": object(json!({"url": {"type": "string", "format": "uri", "description": "Recipe page or cooking video URL"}}).as_object().unwrap().clone(), &["url"]),
             "annotations": {"openWorldHint": true}
         }),

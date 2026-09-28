@@ -69,6 +69,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/checks", routing::get(checks_status).post(check_all))
         .route("/api/checks/review", routing::get(checks_review))
+        .route("/api/staples", routing::get(staples))
         .route(
             "/api/recipes/{id}/cooked",
             routing::get(cook_stats)
@@ -385,16 +386,31 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
 }
 
 /// A link or pasted text. A cooking video answers 202 at once with its job (see
-/// [`import_job`]): `{jobId, status, position?}`.
+/// [`import_job`]): `{jobId, status, position?}`. With a video link, `video` may carry what
+/// the cook's browser read from its page (`video::FromBrowser`).
 async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
-    let (recipe, is_new) = if let Some(url) = body.get("url") {
+    let (recipe, is_new, dropped_photo) = if let Some(url) = body.get("url") {
         let url = url
             .as_str()
             .filter(|u| crate::model::is_valid_url(u))
             .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
+        // A video's page as the cook's browser read it (the extension), for a site that
+        // turns the server away
+        if let Some(read) = body.get("video").filter(|v| v.is_object()) {
+            let read = serde_json::from_value::<crate::video::FromBrowser>(read.clone())
+                .map_err(|_| AppError::bad_request("That video's details didn't make sense"))?;
+            let url = recipes::unwrap_share_link(url);
+            if crate::video::is_video_url(&url) {
+                crate::video::offer(&state, &url, read);
+            }
+        }
         match recipes::start_link(&state, url).await? {
-            recipes::Started::Done(recipes::Imported::Recipe(recipe, is_new)) => (*recipe, is_new),
+            recipes::Started::Done(recipes::Imported::Recipe {
+                recipe,
+                is_new,
+                dropped_photo,
+            }) => (*recipe, is_new, dropped_photo),
             recipes::Started::Done(recipes::Imported::Book(book)) => {
                 return Ok(Json(book_imported(&book)).into_response());
             }
@@ -417,11 +433,16 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
                 "That's too much text (100,000 characters max)",
             ));
         }
-        recipes::import_from_text(&state, text, true).await?
+        let (recipe, is_new) = recipes::import_from_text(&state, text, true).await?;
+        (recipe, is_new, false)
     } else {
         return Err(AppError::bad_request("Paste a link or the recipe text"));
     };
-    Ok(Json(json!({"id": recipe.id, "title": recipe.title, "isNew": is_new})).into_response())
+    let mut out = json!({"id": recipe.id, "title": recipe.title, "isNew": is_new});
+    if dropped_photo {
+        out["droppedPhoto"] = json!(true);
+    }
+    Ok(Json(out).into_response())
 }
 
 /// Where a video import is: `queued` (with its `position`, 1 = next), `running`, `done`
@@ -807,6 +828,12 @@ async fn checks_review(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Va
     Ok(Json(
         json!({"recipes": checks::to_review(&state.db.lock())?}),
     ))
+}
+
+async fn staples(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    Ok(Json(recipes::to_value(&recipes::staples(
+        &state.db.lock(),
+    )?)))
 }
 
 async fn check_all(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {

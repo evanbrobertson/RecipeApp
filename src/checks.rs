@@ -1446,8 +1446,9 @@ fn apply(
         plan.notes = snapshot.notes.clone();
     }
 
+    // A broken photo link isn't Jev's to re-check: its flag stays
     tx.execute(
-        "DELETE FROM recipe_flags WHERE recipe_id = ?1 AND state = 'review'",
+        "DELETE FROM recipe_flags WHERE recipe_id = ?1 AND state = 'review' AND field != 'image'",
         [id],
     )?;
     // The deterministic clean-up once more, as one more fix under the same Undo: the
@@ -1628,7 +1629,8 @@ fn apply(
         ],
     )?;
     let review: usize = tx.query_row(
-        "SELECT count(*) FROM recipe_flags WHERE recipe_id = ?1 AND state = 'review'",
+        "SELECT count(*) FROM recipe_flags
+         WHERE recipe_id = ?1 AND state = 'review' AND field != 'image'",
         [id],
         |r| r.get::<_, i64>(0),
     )? as usize;
@@ -1649,19 +1651,57 @@ pub fn resolve_missing(conn: &Connection, recipe: &Recipe) -> AppResult<()> {
         .collect::<rusqlite::Result<_>>()?;
     let now = now_secs();
     for (flag, field, text) in open {
-        let list = match field.as_str() {
-            "ingredients" => &recipe.ingredients,
-            "instructions" => &recipe.instructions,
+        let text = text.unwrap_or_default();
+        let still_there = match field.as_str() {
+            "ingredients" => recipe.ingredients.iter().any(|s| s.items.contains(&text)),
+            "instructions" => recipe.instructions.iter().any(|s| s.items.contains(&text)),
+            // A broken photo link: fixed once the recipe has another photo, or none
+            "image" => recipe.image.as_deref() == Some(text.as_str()),
             _ => continue,
         };
-        let text = text.unwrap_or_default();
-        if !list.iter().any(|s| s.items.contains(&text)) {
+        if !still_there {
             conn.execute(
                 "UPDATE recipe_flags SET state = 'resolved', resolved_at = ?2 WHERE id = ?1",
                 params![flag, now],
             )?;
         }
     }
+    Ok(())
+}
+
+// ─── Broken photo links ──────────────────────────────────────────────────────
+//
+// Not Jev's: the photo resizer (`src/images.rs`) finds these when it fetches a recipe's
+// photo and the site refuses it for good (a 404, or a page instead of a photo). No AI
+// and no setup, so they show whether or not Wee Chef's checks are on.
+
+/// The flag kind for a photo link that stopped working.
+pub const DEAD_PHOTO: &str = "dead_photo";
+
+/// Flags the recipe's photo link as broken, once: not again while it's open, nor after
+/// the cook kept that same link ("Keep as is"). `image` is the link the resizer tried;
+/// nothing is flagged if the recipe has moved on to another since.
+pub fn flag_dead_photo(conn: &Connection, recipe_id: i64, image: &str) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO recipe_flags (recipe_id, field, item_text, kind, state, created_at)
+         SELECT id, 'image', image, ?3, 'review', ?4 FROM recipes
+         WHERE id = ?1 AND image = ?2
+           AND NOT EXISTS (
+             SELECT 1 FROM recipe_flags WHERE recipe_id = ?1 AND field = 'image'
+               AND item_text = ?2 AND state IN ('review', 'dismissed'))",
+        params![recipe_id, image, DEAD_PHOTO, now_secs()],
+    )?;
+    Ok(())
+}
+
+/// The photo link loaded after all (the site was only down for a while): its open flag,
+/// if any, is resolved.
+pub fn photo_works(conn: &Connection, recipe_id: i64, image: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE recipe_flags SET state = 'resolved', resolved_at = ?3
+         WHERE recipe_id = ?1 AND field = 'image' AND item_text = ?2 AND state = 'review'",
+        params![recipe_id, image, now_secs()],
+    )?;
     Ok(())
 }
 
@@ -1717,7 +1757,8 @@ fn fix_holds(conn: &Connection, recipe: &Recipe) -> AppResult<bool> {
     })
 }
 
-/// The check for the recipe page and editor: null when it was never checked.
+/// The check for the recipe page and editor: null when it was never checked and its photo
+/// isn't flagged.
 /// `{status, canUndo, flags: [{id, field, itemText, kind, state, detail}]}`. Fixes the
 /// cook has since changed (the recipe no longer holds what the fix wrote) are
 /// superseded: not listed, and not undoable.
@@ -1729,9 +1770,20 @@ pub fn for_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
             |r| r.get(0),
         )
         .optional()?;
-    let (Some(status), Some(recipe)) = (status, crate::recipes::get_recipe(conn, id)?) else {
+    let Some(recipe) = crate::recipes::get_recipe(conn, id)? else {
         return Ok(Value::Null);
     };
+    // Never checked by Jev, but a broken photo link can still be flagged
+    let photo_flag: bool = status.is_none()
+        && conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM recipe_flags
+             WHERE recipe_id = ?1 AND field = 'image' AND state = 'review')",
+            [id],
+            |r| r.get(0),
+        )?;
+    if status.is_none() && !photo_flag {
+        return Ok(Value::Null);
+    }
     let holds = fix_holds(conn, &recipe)?;
     let mut stmt = conn.prepare(
         "SELECT id, field, item_text, kind, state, detail FROM recipe_flags
@@ -1754,6 +1806,7 @@ pub fn for_recipe(conn: &Connection, id: i64) -> AppResult<Value> {
         .filter(|f| holds || f["state"] != "fixed")
         .collect();
     let any_fixed = flags.iter().any(|f| f["state"] == "fixed");
+    // `status` is null for a recipe only flagged for its photo
     Ok(json!({"status": status, "canUndo": holds && any_fixed, "flags": flags}))
 }
 
@@ -2517,6 +2570,8 @@ mod tests {
             instructions,
             nutrition: None,
             notes: notes.map(String::from),
+            video: None,
+            video_embed: None,
             original_url: None,
             created_at: 0,
             updated_at: 0,

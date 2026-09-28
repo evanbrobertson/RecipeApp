@@ -28,13 +28,16 @@
     { long: "Paste a link from any recipe site", short: "links from\nany site" },
     { long: "Drop in a Crumb or Just the Recipe backup", short: "backups\nwork too" },
     { long: "Paste a few links at once", short: "a few links\nat once" },
-    { long: "Paste a TikTok, Reel or YouTube Short", short: "cooking\nvideos too" },
+    { long: "Paste a TikTok, Reel or YouTube video", short: "cooking\nvideos too" },
   ]
+
+  /** How long the Add box waits for the extension to read a video (it gives up at 20 s). */
+  const EXTENSION_WAIT_MS = 25_000
 
   const URL_RE = /^https?:\/\/\S+$/i
   // Cooking videos Wee Chef watches (src/video.rs): slower than a recipe page
   const VIDEO_RE =
-    /^https?:\/\/((www|m|vm|vt)\.)?(tiktok\.com\/.|instagram\.com\/(reels?|tv)\/|youtube\.com\/shorts\/)/i
+    /^https?:\/\/((www|m|vm|vt)\.)?(tiktok\.com\/.|instagram\.com\/(reels?|tv)\/|youtube\.com\/(shorts\/|live\/|watch\?)|youtu\.be\/.)/i
   // A line that reads like an ingredient: starts with an amount or a bullet, or names a unit
   const INGREDIENT_RE =
     /^\s*([-•*▢□]|\d|[½¼¾⅓⅔⅛]|a (pinch|handful|few))|\b(cups?|tbsp|tsp|tablespoons?|teaspoons?|grams?|g|kg|ml|l|oz|ounces?|lbs?|pounds?|cloves?|pinch)\b/i
@@ -113,6 +116,11 @@
   let { tabs = true, onTile = true, autofocus = false }: Props = $props()
 
   let tab = $state<"search" | "add">(tabs ? "search" : "add")
+  /**
+   * What the Crumb browser extension read of a video in the cook's browser (YouTube won't
+   * serve Crumb's server), sent with that link: see extension/src/youtube.ts.
+   */
+  let fromBrowser = $state<{ url: string; video: Record<string, unknown> } | null>(null)
   let query = $state("")
   let input = $state("")
   let file = $state<File | null>(null)
@@ -221,12 +229,51 @@
       tab = "add"
       pickTip()
     }
+    // Opened by the extension for a video: it reads the video in the cook's browser and posts
+    // what it read (or that it couldn't), and the import starts from that
+    let handedOver = false
+    let giveUp: ReturnType<typeof setTimeout> | undefined
+    const couldntRead = () => {
+      saving = false
+      progress = ""
+      toast({
+        title: "Couldn't read that video in your browser",
+        description: "Press Add to have Crumb try, or paste the recipe text.",
+        tone: "error",
+      })
+    }
+    const fromExtension = (e: MessageEvent) => {
+      const data = e.data as { type?: string; url?: unknown; video?: unknown } | null
+      if (e.source !== window || e.origin !== location.origin || data?.type !== "crumb:video") return
+      if (handedOver || typeof data.url !== "string") return
+      handedOver = true
+      clearTimeout(giveUp)
+      if (!data.video || typeof data.video !== "object") return couldntRead()
+      fromBrowser = { url: data.url, video: data.video as Record<string, unknown> }
+      void importBody({ url: data.url, video: fromBrowser.video }, "get that recipe")
+    }
+    if (params.get("via") === "extension" && shared) {
+      saving = true
+      progress = "Reading the video in your browser…"
+      giveUp = setTimeout(() => {
+        if (!handedOver) {
+          handedOver = true
+          couldntRead()
+        }
+      }, EXTENSION_WAIT_MS)
+      addEventListener("message", fromExtension)
+      postMessage({ type: "crumb:want-video" }, location.origin)
+    }
     if (autofocus) (tab === "add" ? addField : searchField)?.focus()
     const close = (e: PointerEvent) => {
       if (menuOpen && root && !root.contains(e.target as Node)) menuOpen = false
     }
     addEventListener("pointerdown", close)
-    return () => removeEventListener("pointerdown", close)
+    return () => {
+      removeEventListener("pointerdown", close)
+      removeEventListener("message", fromExtension)
+      clearTimeout(giveUp)
+    }
   })
 
   async function switchTab(next: "search" | "add") {
@@ -381,7 +428,10 @@
     }
   }
 
-  async function importBody(body: { url: string } | { text: string }, what: string) {
+  async function importBody(
+    body: { url: string; video?: Record<string, unknown> } | { text: string },
+    what: string,
+  ) {
     saving = true
     try {
       progress = ""
@@ -397,6 +447,11 @@
         return
       }
       if (!res.isNew) flash({ title: "Already in your recipes" })
+      else if (res.droppedPhoto)
+        flash({
+          title: "Saved without its photo",
+          description: "The site's photo link doesn't work. You can add one in Edit.",
+        })
       else if (res.fromVideo) flash({ title: "Saved from the video", tone: "success" })
       location.href = `/recipes/${res.id}`
     } catch (err) {
@@ -445,7 +500,9 @@
           location.href = `/import?links=${encodeURIComponent(urls.join("\n"))}`
           return
         }
-        return importBody({ url: urls[0]! }, "get that recipe")
+        const url = urls[0]!
+        const video = fromBrowser?.url === url ? fromBrowser.video : undefined
+        return importBody(video ? { url, video } : { url }, "get that recipe")
       }
       default:
         return importBody({ text: input }, "read that recipe")
