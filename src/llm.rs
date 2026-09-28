@@ -333,10 +333,16 @@ async fn send(state: &AppState, ask: &Ask<'_>, content: UserContent<'_>) -> Opti
                     }
                 };
                 let (usage, model, finish) = usage_of(llm.provider, &msg);
-                span.answered(model, usage, finish);
+                let finish = finish.map(str::to_owned);
+                let (output, reasoning) = (usage.output, usage.reasoning);
+                span.answered(model, usage, finish.as_deref());
                 let out = reply_json(llm.provider, &msg);
                 if out.is_none() {
-                    tracing::warn!("[llm-{}] no usable reply (refused or cut off)", ask.tag);
+                    tracing::warn!(
+                        "[llm-{}] no usable reply (refused or cut off): stopped for {}, {output} of {max_tokens} output tokens ({reasoning} reasoning)",
+                        ask.tag,
+                        finish.as_deref().unwrap_or("no reason given"),
+                    );
                 }
                 return out;
             }
@@ -451,8 +457,10 @@ pub async fn extract_recipe_from_video(
         system: VIDEO_SYSTEM,
         user: text,
         schema: schema(),
-        max_tokens: 6000,
-        timeout: Duration::from_secs(120),
+        // A long video's recipe, its notes and (on reasoning models) the thinking all come
+        // out of this; 6 000 cut a 15-minute video's recipe off
+        max_tokens: 16000,
+        timeout: Duration::from_secs(180),
     };
     let content = if frames.is_empty() {
         UserContent::Text(text)

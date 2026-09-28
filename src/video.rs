@@ -406,6 +406,7 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
                 .map_or(0, |t| t.split_whitespace().count())
         );
     }
+    let browser_read = from_browser.is_some();
     let said_in_browser = from_browser.and_then(|read| read.transcript);
     // A different share link to a video that's already saved
     if meta.url != url {
@@ -440,7 +441,9 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     }
     // 3 and 4. What's said and what's shown
     let mut frames = Vec::new();
-    if fields.is_none() && ai && tools.yt_dlp.is_some() && tools.ffmpeg.is_some() {
+    // The extension only reads a video for sites that turn the server away, so a download
+    // would be refused too
+    if fields.is_none() && ai && !browser_read && tools.yt_dlp.is_some() && tools.ffmpeg.is_some() {
         if meta.duration.is_some_and(|d| d > MAX_SECONDS) {
             tracing::info!("[video] too long to watch ({:?}s)", meta.duration);
         } else if let Some(watched) = watch(state, &meta).await {
