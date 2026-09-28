@@ -6679,6 +6679,94 @@ async fn accounts_connected_apps_export_and_deletion() {
 }
 
 #[tokio::test]
+async fn accounts_change_their_email_with_the_password() {
+    let t = accounts_app(None, true);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@exmaple.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    let (_, phone, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ann@exmaple.com", "password": "correct horse"}),
+    )
+    .await;
+    let phone = phone.unwrap();
+    auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+
+    // Signed in isn't enough: it takes the password
+    let change = |email: &str, password: &str| json!({"email": email, "password": password});
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/account/email",
+            Some(change("ann@example.com", "correct horse")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    for (body, want) in [
+        (change("ann@example.com", "wrong horse"), 401),
+        (json!({"email": "ann@example.com"}), 401),
+        (change("bob@example.com", "correct horse"), 409),
+        (change("ann@exmaple.com", "correct horse"), 400),
+        (change("nope", "correct horse"), 400),
+    ] {
+        let (status, _) = call(&t, "POST", "/api/account/email", Some(body), Some(&ann)).await;
+        assert_eq!(status.as_u16(), want);
+    }
+    let done = signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/account/email",
+        Some(change("ann@example.com", "correct horse")),
+    )
+    .await;
+    assert_eq!(
+        done,
+        json!({"ok": true, "pending": false, "email": "ann@example.com"})
+    );
+
+    // Signed in with the new address only, and signed out everywhere else
+    let s = signed(&t, &ann, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["user"]["email"], "ann@example.com");
+    let (status, _) = call(&t, "GET", "/api/recipes", None, Some(&phone)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ann@exmaple.com", "password": "correct horse"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = auth_post(
+        &t,
+        "/api/auth/login",
+        json!({"email": "ann@example.com", "password": "correct horse"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Links to confirm an address are only the hosted edition's
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/account/email/confirm",
+            Some(json!({"token": "x"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn hosted_accounts_export_and_delete_through_better_auth() {
     let (url, _) = fake_auth().await;
     let t = TestApp::with_config(|c| {

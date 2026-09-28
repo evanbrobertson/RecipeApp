@@ -1,0 +1,22 @@
+---
+import Layout from "../layouts/Layout.astro"
+import EmailChangeForm from "../islands/EmailChangeForm.svelte"
+---
+
+<Layout title="Change email" bare hand themeColor={{ light: "#2f6b4f", dark: "#1f3d2e" }}>
+  <div class="flex min-h-dvh flex-col">
+    <header class="tile-surface">
+      <div
+        class="mx-auto flex w-full max-w-sm flex-col gap-2 px-5 pt-[calc(env(safe-area-inset-top)+3rem)] pb-10 sm:pt-20 sm:pb-14"
+      >
+        <h1 class="page-title">Crumb</h1>
+        <p class="hand text-[2.375rem]">new address, same kitchen</p>
+      </div>
+    </header>
+    <main class="mx-auto w-full max-w-sm flex-1 px-5 pt-7 pb-10">
+      <EmailChangeForm client:only="svelte">
+        <p slot="fallback" class="text-ink-muted">Loading…</p>
+      </EmailChangeForm>
+    </main>
+  </div>
+</Layout>
