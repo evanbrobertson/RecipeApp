@@ -176,6 +176,11 @@ fn ready(state: &AppState, url: &str, scraped: &Scraped) -> Response {
         instructions: fields.instructions,
         nutrition: fields.nutrition.map(Value::Object),
         notes: fields.notes,
+        video_embed: fields
+            .video
+            .as_deref()
+            .and_then(crumb_core::embed::video_embed),
+        video: fields.video,
         original_url: None,
         created_at: now,
         updated_at: now,

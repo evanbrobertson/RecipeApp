@@ -350,6 +350,52 @@ async fn recipes_crud_search_and_cookbooks() {
 }
 
 #[tokio::test]
+async fn recipe_video_is_saved_and_embedded() {
+    let t = TestApp::new(None);
+    let (status, created) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({
+                "title": "Beef and Broccoli",
+                "video": "https://youtu.be/8eITNSfct3Q?si=YEDH1yr00LEEj6dN",
+                "ingredients": [{"items": ["1 lb flank steak"]}],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(
+        created["video"],
+        "https://youtu.be/8eITNSfct3Q?si=YEDH1yr00LEEj6dN"
+    );
+    assert_eq!(created["videoEmbed"]["provider"], "youtube");
+    assert_eq!(
+        created["videoEmbed"]["embedUrl"],
+        "https://www.youtube-nocookie.com/embed/8eITNSfct3Q?rel=0"
+    );
+    let id = created["id"].as_i64().unwrap();
+
+    // A site Crumb can't play in place is kept, and linked to rather than embedded
+    let uri = format!("/api/recipes/{id}");
+    let (_, r) = t
+        .json(
+            "PATCH",
+            &uri,
+            Some(json!({"video": "https://videos.test/beef"})),
+        )
+        .await;
+    assert_eq!(r["video"], "https://videos.test/beef");
+    assert!(r["videoEmbed"].is_null());
+
+    let (status, _) = t
+        .json("PATCH", &uri, Some(json!({"video": "javascript:alert(1)"})))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, r) = t.json("PATCH", &uri, Some(json!({"video": null}))).await;
+    assert!(r["video"].is_null());
+}
+
+#[tokio::test]
 async fn text_import_and_validation_messages() {
     let t = TestApp::new(None);
     let (status, err) = t

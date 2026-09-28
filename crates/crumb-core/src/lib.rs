@@ -5,6 +5,7 @@ pub mod categories;
 pub mod checks;
 pub mod client;
 pub mod duration;
+pub mod embed;
 pub mod error;
 pub mod format;
 pub mod fractions;

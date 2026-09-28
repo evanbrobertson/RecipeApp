@@ -24,11 +24,28 @@ export interface RecipeFields {
   instructions: RecipeSection[]
   nutrition?: Record<string, string> | null
   notes?: string | null
+  /** A link to the recipe's video on its own site. */
+  video?: string | null
+}
+
+/** How the recipe page plays `video` in place (worked out by the server). */
+export interface VideoEmbed {
+  provider: "youtube" | "vimeo" | "tiktok" | "instagram" | "dailymotion" | "jwplayer" | "file"
+  /** "YouTube", "Vimeo", … ("Video" for a file). */
+  label: string
+  /** The iframe's address, or the file for "file". */
+  embedUrl: string
+  watchUrl: string
+  thumbnail: string | null
+  /** Shorts, TikTok, Reels: 9:16. */
+  vertical: boolean
 }
 
 export interface Recipe extends RecipeFields {
   id: number
   source: RecipeSource
+  /** Null when `video` is on a site that can't be played in place: link to it instead. */
+  videoEmbed?: VideoEmbed | null
   /** Saved from another Crumb's share (`url` is that link): where the recipe came from. */
   originalUrl?: string | null
   createdAt: string
