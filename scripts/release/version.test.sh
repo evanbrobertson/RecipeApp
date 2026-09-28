@@ -134,6 +134,28 @@ expect "notes list both features" "2" "$(sed -n '/^### Features$/,/^###/p' <<<"$
 expect "notes keep the scope" "1" "$(grep -c '^- \*\*ui:\*\* a feature' <<<"$notes")"
 expect "notes skip release commits" "0" "$(grep -c '1.1.0' <<<"$notes" || true)"
 
+# Another product's versions: its own tag prefix, starting version and paths
+repo 3.0.0
+git tag v3.0.0
+mkdir ext
+echo 1 >ext/a.txt
+git add ext
+git commit -q -m "feat(ext): the extension"
+ext() { VERSION_TAG_PREFIX=extension-v VERSION_PATHS=ext VERSION_INITIAL=0.1.0 "$script" "$@"; }
+expect "no prefixed tag: the initial version" "0.1.0" "$(ext next)"
+git tag extension-v0.1.0
+commit "feat: the app only"
+expect "the app's commits don't bump it" "0.1.1" "$(ext next)"
+expect "nor does it see the app's tags" "extension-v0.1.0" "$(ext last)"
+echo 2 >>ext/a.txt
+git add ext
+git commit -q -m "feat(ext): read in Crumb"
+expect "its own feat bumps its minor" "0.2.0" "$(ext next)"
+expect "the app's stream is unchanged" "3.1.0" "$("$script" next)"
+expect "the app still ignores its tags" "v3.0.0" "$("$script" last)"
+expect "its notes have only its commits" "1" "$(ext notes extension-v0.1.0 HEAD | grep -c '^- ')"
+expect "its tag on a commit" "extension-v0.1.0" "$(ext stable-at extension-v0.1.0)"
+
 if ((failures > 0)); then
   echo "$failures failed"
   exit 1

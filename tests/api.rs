@@ -50,6 +50,18 @@ impl TestApp {
             ),
         )
         .unwrap();
+        // The preview's, which is the share page's layout with its own island
+        std::fs::create_dir_all(dist.path().join("shell/preview")).unwrap();
+        std::fs::write(
+            dist.path().join("shell/preview/index.html"),
+            format!(
+                "<!doctype html><html><head><title>Recipe · Crumb</title>\
+                 <script>previewBoot()</script></head><body>{marker}<!--share:back--><!--share:photo-->\
+                 <!--share:intro--><h2>Ingredients</h2><!--share:ingredients--><h2>Method</h2>\
+                 <!--share:method--><!--share:source--></body></html>"
+            ),
+        )
+        .unwrap();
         // And the shared cookbook's
         std::fs::create_dir_all(dist.path().join("shell/share-book")).unwrap();
         std::fs::write(
@@ -1597,6 +1609,237 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
     let (status, _, _) = send_raw(&t, get(&format!("/img/{id}/768"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn imports_drop_a_dead_photo_link() {
+    let png = png_bytes(40, 30);
+    let page = |name: &str, image: &str| {
+        format!(
+            r#"<html><head><script type="application/ld+json">{{"@context":"https://schema.org","@type":"Recipe",
+            "name":"{name}","image":"{image}","recipeIngredient":["1 egg"],
+            "recipeInstructions":[{{"@type":"HowToStep","text":"Cook."}}]}}</script></head><body></body></html>"#
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let pages: Vec<(String, String)> = vec![
+        ("/fresh".into(), page("Fresh", &format!("{site}/photo.png"))),
+        // A CDN link that went stale
+        ("/stale".into(), page("Stale", &format!("{site}/gone.jpg"))),
+        // A page where the photo should be
+        (
+            "/blocked".into(),
+            page("Blocked", &format!("{site}/blocked.jpg")),
+        ),
+        // The photo server having a bad moment: kept
+        ("/flaky".into(), page("Flaky", &format!("{site}/busy.jpg"))),
+        (
+            "/mcp-stale".into(),
+            page("By Claude", &format!("{site}/gone.jpg")),
+        ),
+    ];
+    let mut app = axum::Router::new()
+        .route(
+            "/photo.png",
+            axum::routing::get(move || async move { ([(header::CONTENT_TYPE, "image/png")], png) }),
+        )
+        .route(
+            "/gone.jpg",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/blocked.jpg",
+            axum::routing::get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html>no hotlinking</html>",
+                )
+            }),
+        )
+        .route(
+            "/busy.jpg",
+            axum::routing::get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        );
+    for (path, html) in pages {
+        app = app.route(
+            &path,
+            axum::routing::get(move || async move { axum::response::Html(html) }),
+        );
+    }
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let t = TestApp::new(None);
+    for (path, kept) in [
+        ("/fresh", true),
+        ("/stale", false),
+        ("/blocked", false),
+        ("/flaky", true),
+    ] {
+        let url = format!("{site}{path}");
+        let (status, res) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {res}");
+        assert_eq!(res.get("droppedPhoto").is_some(), !kept, "{path}: {res}");
+        let (_, recipe) = t
+            .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+            .await;
+        assert_eq!(recipe["image"].is_string(), kept, "{path}: {recipe}");
+    }
+
+    // The same link again is the saved recipe, with nothing more to say
+    let (_, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/stale")})),
+        )
+        .await;
+    assert_eq!(res["isNew"], false);
+    assert!(res.get("droppedPhoto").is_none(), "{res}");
+
+    // Claude hears about it too
+    let (msg, err) = mcp_call(
+        &t,
+        "import_recipe_from_url",
+        json!({"url": format!("{site}/mcp-stale")}),
+    )
+    .await;
+    assert!(!err, "{msg}");
+    assert!(msg.contains("saved without a photo"), "{msg}");
+}
+
+#[tokio::test]
+async fn broken_photo_links_are_flagged_without_wee_chef() {
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // Down until `up` is set: then the same link works again
+    let up = Arc::new(AtomicBool::new(false));
+    let png = png_bytes(60, 40);
+    let flag = up.clone();
+    let origin = axum::Router::new()
+        .route(
+            "/gone.jpg",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/busy.jpg",
+            axum::routing::get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        )
+        .route(
+            "/back.png",
+            axum::routing::get(move || {
+                let (png, up) = (png.clone(), flag.load(Ordering::SeqCst));
+                async move {
+                    if up {
+                        ([(header::CONTENT_TYPE, "image/png")], png).into_response()
+                    } else {
+                        StatusCode::NOT_FOUND.into_response()
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let hint = |headers: &axum::http::HeaderMap| {
+        headers
+            .get_all("server-timing")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with("crumb-review"))
+            .map(String::from)
+    };
+    let home = || {
+        Request::get("/")
+            .header("sec-fetch-dest", "document")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    // No Wee Chef checks set up: the nav keeps Suggestions hidden while nothing's flagged
+    let t = TestApp::new(None);
+    let stale = add_recipe(&t, "Stale", "Dinner", "eggs", "10 min").await;
+    let busy = add_recipe(&t, "Busy", "Dinner", "eggs", "10 min").await;
+    set_image(&t, stale, &format!("{site}/gone.jpg"));
+    set_image(&t, busy, &format!("{site}/busy.jpg"));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers), None);
+
+    // The resizer finds the dead link (once, however often it's asked); a site having a
+    // bad moment isn't flagged
+    for _ in 0..2 {
+        let (status, _, _) = send_raw(&t, get(&format!("/img/{stale}/320"))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"].as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list["recipes"][0]["id"], stale);
+    assert_eq!(list["recipes"][0]["fields"], json!({"image": 1}));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"1\""));
+
+    // The recipe page and editor get it, though Jev never checked the recipe
+    let (_, checks) = t
+        .json("GET", &format!("/api/recipes/{stale}/checks"), None)
+        .await;
+    assert_eq!(checks["status"], Value::Null);
+    assert_eq!(checks["flags"].as_array().unwrap().len(), 1, "{checks}");
+    let flag = &checks["flags"][0];
+    assert_eq!(flag["field"], "image");
+    assert_eq!(flag["kind"], "dead_photo");
+    assert_eq!(flag["itemText"], format!("{site}/gone.jpg"));
+    let (_, checks) = t
+        .json("GET", &format!("/api/recipes/{busy}/checks"), None)
+        .await;
+    assert_eq!(checks, Value::Null);
+
+    // "Keep as is" sticks for that link, even when the resizer tries it again later
+    let (status, _) = t
+        .json(
+            "POST",
+            &format!("/api/recipes/{stale}/flags/{}/dismiss", flag["id"]),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    crumb::checks::flag_dead_photo(&t.state.db.lock(), stale, &format!("{site}/gone.jpg")).unwrap();
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+
+    // A new link that's dead too is flagged again; saving another photo resolves it
+    t.json(
+        "PATCH",
+        &format!("/api/recipes/{stale}"),
+        Some(json!({"image": format!("{site}/back.png")})),
+    )
+    .await;
+    send_raw(&t, get(&format!("/img/{stale}/320"))).await;
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"].as_array().unwrap().len(), 1, "{list}");
+    t.json(
+        "PATCH",
+        &format!("/api/recipes/{stale}"),
+        Some(json!({"image": null})),
+    )
+    .await;
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+
+    // A link that comes back to life clears its own flag
+    set_image(&t, busy, &format!("{site}/back.png"));
+    crumb::checks::flag_dead_photo(&t.state.db.lock(), busy, &format!("{site}/back.png")).unwrap();
+    up.store(true, Ordering::SeqCst);
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers), None);
 }
 
 #[tokio::test]
@@ -6946,4 +7189,142 @@ async fn a_video_link_is_queued_and_polled() {
 
     let (status, _) = t.json("GET", "/api/import/jobs/nope", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The JSON in a page's `#page-data`.
+fn page_data(html: &str) -> Value {
+    let start = html.find(r#"id="page-data">"#).unwrap() + r#"id="page-data">"#.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    serde_json::from_str(&html[start..end]).unwrap()
+}
+
+fn preview_req(uri: &str, site: Option<&str>) -> Request<Body> {
+    let mut req = Request::builder().uri(uri);
+    if let Some(site) = site {
+        req = req.header("sec-fetch-site", site);
+    }
+    req.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn previews_read_a_recipe_before_it_is_saved() {
+    // A recipe site that counts its visits
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let counter = hits.clone();
+    let origin = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Leek Soup",
+                        "image": "https://images.example/leek.jpg",
+                        "recipeIngredient": ["2 leeks", "1 potato"],
+                        "recipeInstructions": ["Sweat the leeks.", "Simmer & blend."]})
+                ))
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let t = TestApp::new(None);
+    let url = format!("{site}/soup");
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+
+    // From the extension's new tab: "reading…" at once, which carries on by itself
+    let (status, headers, html) = t
+        .send(preview_req(&format!("/preview?url={q}"), Some("none")))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page_data(&html)["preview"]["state"], "loading");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // From another site: only the question, never a scrape, even with go=1
+    for uri in [
+        format!("/preview?url={q}"),
+        format!("/preview?url={q}&go=1"),
+    ] {
+        let (_, _, html) = t.send(preview_req(&uri, Some("cross-site"))).await;
+        assert_eq!(page_data(&html)["preview"]["state"], "ask", "{uri}");
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Carrying on from Crumb's own page: the recipe, in the share layout, not saved
+    let (status, headers, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "ready");
+    assert_eq!(data["preview"]["title"], "Leek Soup");
+    assert_eq!(data["preview"]["url"], url);
+    assert!(html.contains("<title>Leek Soup · Crumb</title>"));
+    assert!(html.contains("2 leeks") && html.contains("Simmer &amp; blend."));
+    assert!(html.contains(r#"src="https://images.example/leek.jpg""#));
+    assert!(
+        !html.contains("og:title"),
+        "a preview has no link-preview tags"
+    );
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("img-src 'self' data: https: http:"), "{csp}");
+    assert!(
+        csp.contains("'sha256-"),
+        "the template's script runs by its hash"
+    );
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0, "{list}");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Adding it saves what the preview showed, without fetching the page again
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["isNew"], true);
+    assert_eq!(res["title"], "Leek Soup");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Once it's in the box, a preview opens the recipe itself
+    let id = res["id"].as_i64().unwrap();
+    let (status, headers, _) = t
+        .send(preview_req(
+            &format!("/preview?url={q}"),
+            Some("cross-site"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], format!("/recipes/{id}"));
+
+    // A page without a recipe says why, on the same page
+    let missing: String =
+        url::form_urlencoded::byte_serialize(format!("{site}/nothing").as_bytes()).collect();
+    let (status, _, html) = t
+        .send(preview_req(&format!("/preview?url={missing}&go=1"), None))
+        .await;
+    assert!(status.is_client_error(), "{status}");
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "failed");
+    assert!(data["preview"]["message"].as_str().unwrap().contains("404"));
+
+    // No link: the Add page
+    let (status, headers, _) = t.send(get("/preview?url=nope")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/add");
+}
+
+#[tokio::test]
+async fn previews_are_behind_the_login() {
+    let t = TestApp::new(Some("pw"));
+    let (status, headers, _) = t
+        .send(get("/preview?url=https%3A%2F%2Fexample.com%2Fsoup"))
+        .await;
+    assert!(status.is_redirection(), "{status}");
+    let to = headers[header::LOCATION].to_str().unwrap();
+    assert!(to.starts_with("/login?next=%2Fpreview%3Furl%3D"), "{to}");
 }

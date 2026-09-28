@@ -105,6 +105,11 @@
     return flags.filter((f) => f.field === kind && f.state === "review" && here.includes(f.itemText))
   }
 
+  // A photo link the site refuses: shown while the draft still has that link
+  const photoFlag = $derived(
+    flags.find((f) => f.field === "image" && f.state === "review" && f.itemText === draft.image),
+  )
+
   type Fix = { label: string; run: () => void }
   function fixFor(kind: "ingredients" | "instructions", si: number, f: CheckFlag): Fix | null {
     const list = draft[kind]
@@ -274,6 +279,29 @@
 {/snippet}
 
 <form class="space-y-7" onsubmit={submit}>
+  {#if photoFlag}
+    <!-- At the top: the Suggestions page brings the cook here for it -->
+    <div class="bg-tint rounded-ctl flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-3">
+      <p class="flex min-w-0 flex-[1_1_16rem] items-start gap-2 py-1.5 text-sm">
+        <ChefHat class="text-primary mt-px size-4 flex-none" aria-hidden="true" />
+        <span class="min-w-0 break-words">
+          <span class="sr-only">Wee Chef: </span>
+          <span class="font-bold">{reviewText(photoFlag)}.</span>
+          Remove it, or paste a new one under Image link.
+        </span>
+      </p>
+      <div class="ml-auto flex flex-wrap gap-1">
+        <button type="button" class="btn btn-outline px-3.5" onclick={() => (draft.image = "")}>
+          Remove photo
+        </button>
+        {#if ondismiss}
+          <button type="button" class="btn btn-ghost px-3.5" onclick={() => ondismiss(photoFlag)}>
+            Keep as is
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
   <div class="card space-y-4 p-4 sm:p-5">
     <div>
       <label class="label" for="r-title">Title <span class="text-error">*</span></label>

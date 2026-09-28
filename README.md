@@ -69,6 +69,8 @@ With the AI key, Wee Chef reads PDF files, text files and web pages without reci
 
 **Claude.** Save recipes from a Claude chat. Refer to [Claude connector](#claude-connector-mcp).
 
+**From the browser.** The Crumb browser extension (Chrome, Edge and Firefox) notices when you open a recipe and asks "Read this recipe in Crumb?". Say yes and Crumb opens the recipe in a new tab, read and tidied as an import would be, with **Add to my Crumb**. Nothing is saved until you press it, and a recipe you already have opens as it is. The toolbar button reads any page, and you can turn the question off for a site or everywhere. On first run, open your Crumb and choose **Use this Crumb**. Without the extension (Safari, phones), drag the **Read in Crumb** bookmark from the Import page to your bookmarks bar. Refer to [extension/README.md](extension/README.md).
+
 **Share from your phone.** Install Crumb as an app from your browser. Then share a link or text from another app to Crumb. The Add page opens with the link or the text.
 
 ### Clean-up and checks
@@ -325,6 +327,7 @@ src/        Rust server (API, MCP, OAuth, scraper, importers, page serving)
 tests/      Rust integration tests
 web/        Astro frontend (pages, Svelte islands, styles, icons)
 auth/       Better Auth service for the hosted edition (Bun)
+extension/  Browser extension: "Read this recipe in Crumb?" (Chrome, Edge, Firefox)
 ```
 
 ## Quick start
@@ -416,4 +419,5 @@ Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_fro
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 cd web && bun run check && bun run lint && bun run format:check
+cd extension && bun run check && bun test && bun run build && bun run lint
 ```

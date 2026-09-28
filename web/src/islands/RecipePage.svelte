@@ -103,7 +103,7 @@
       page.data.checks = checks.status === "pending" ? { ...checks } : checks
       if (asked && checks.status !== "pending") {
         asked = false
-        const review = checks.flags.filter((f) => f.state === "review").length
+        const review = checks.flags.filter((f) => f.state === "review" && f.field !== "image").length
         // This check's fixes only; the tidy counts each small thing it cleaned up
         const fixed = checks.flags
           .filter((f) => f.state === "fixed" && !fixedBefore.has(f.id))

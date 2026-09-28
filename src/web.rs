@@ -364,12 +364,17 @@ pub async fn review_hint(
     let html = res.status() == StatusCode::NOT_MODIFIED
         || header_str(res.headers(), header::CONTENT_TYPE)
             .is_some_and(|v| v.starts_with("text/html"));
-    if !page || skip || !html || !crate::checks::enabled(&state) {
+    if !page || skip || !html {
         return res;
     }
     let Ok(count) = crate::checks::review_count(&state.db.lock()) else {
         return res;
     };
+    // Without Wee Chef's checks the nav item only shows while something is flagged (a
+    // broken photo link needs no setup)
+    if count == 0 && !crate::checks::enabled(&state) {
+        return res;
+    }
     if let Ok(v) = HeaderValue::from_str(&format!("crumb-review;desc=\"{count}\"")) {
         res.headers_mut().append("server-timing", v);
     }

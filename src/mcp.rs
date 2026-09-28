@@ -357,7 +357,19 @@ impl Ctx<'_> {
                     return Some(invalid("url must be a valid URL"));
                 };
                 match recipes::import_link(self.state, url).await {
-                    Ok(recipes::Imported::Recipe(r, is_new)) => self.saved(&r, is_new),
+                    Ok(recipes::Imported::Recipe {
+                        recipe,
+                        is_new,
+                        dropped_photo,
+                    }) => {
+                        let mut saved = self.saved(&recipe, is_new);
+                        if dropped_photo
+                            && let Some(Value::String(t)) = saved.pointer_mut("/content/0/text")
+                        {
+                            t.push_str("\nThe page's photo link doesn't work, so it was saved without a photo.");
+                        }
+                        saved
+                    }
                     Ok(recipes::Imported::Book(book)) => text(book_saved(&book)),
                     Err(err) => tool_error(err.message),
                 }
