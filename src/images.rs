@@ -6,10 +6,12 @@
 //! same one `web/src/lib/img.ts` computes), so a URL with the current key can be cached
 //! forever and a changed image gets a new URL.
 //!
-//! Any failure is a quick 404 (the page falls back to the original URL) and is
-//! remembered for a while, so a broken photo isn't refetched on every card render. A link
-//! the site refuses for good (see [`LoadError::dead`]) is also flagged for the cook to
-//! fix on the Suggestions page ([`crate::checks::flag_dead_photo`]).
+//! A failure is remembered for a while, so a broken photo isn't refetched on every card
+//! render. A link the site refuses for good (see [`LoadError::dead`]) is a quick 404 and is
+//! flagged for the cook to fix on the Suggestions page ([`crate::checks::flag_dead_photo`]).
+//! Any other linked photo that can't be had here (a bot shield, a slow site, a format the
+//! resizer can't read) is most likely fine in a browser, so the request is redirected to
+//! the original: the photo shows without a failed request in the console.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -85,7 +87,7 @@ pub struct Images {
     /// Bytes on disk, counted on the first write and kept up to date after.
     disk_bytes: Mutex<Option<u64>>,
     inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    failures: Mutex<HashMap<String, Instant>>,
+    failures: Mutex<HashMap<String, (Instant, Failure)>>,
     /// Fetch + decode + resize jobs at once. A decoded photo can take a few hundred MB, so a
     /// cold cache behind a page of cards must not decode them all together.
     work: tokio::sync::Semaphore,
@@ -109,16 +111,17 @@ impl Images {
         }
     }
 
-    fn failed_recently(&self, source: &str) -> bool {
+    fn failed_recently(&self, source: &str) -> Option<Failure> {
         locked(&self.failures)
             .get(source)
-            .is_some_and(|at| at.elapsed() < FAILURE_TTL)
+            .filter(|(at, _)| at.elapsed() < FAILURE_TTL)
+            .map(|(_, failure)| *failure)
     }
 
-    fn record_failure(&self, source: String) {
+    fn record_failure(&self, source: String, failure: Failure) {
         let mut f = locked(&self.failures);
-        f.retain(|_, at| at.elapsed() < FAILURE_TTL);
-        f.insert(source, Instant::now());
+        f.retain(|_, (at, _)| at.elapsed() < FAILURE_TTL);
+        f.insert(source, (Instant::now(), failure));
     }
 
     /// Deletes a household's sized photos (see `source` in the handler for their names:
@@ -239,6 +242,38 @@ fn prune(dir: &Path, target: u64) -> u64 {
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/img/{id}/{width}", routing::get(serve))
+}
+
+/// Why a photo couldn't be made, as remembered for [`FAILURE_TTL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    /// Nothing to show: a dead link or an embedded photo that can't be read.
+    Gone,
+    /// A linked photo this server couldn't fetch or resize, most likely fine in a browser.
+    Elsewhere,
+}
+
+/// The answer for a photo that couldn't be made: the original link, for a browser to load
+/// itself, or a 404.
+fn unavailable(failure: Failure, image: &str) -> Response {
+    let original = url::Url::parse(image)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .and_then(|u| HeaderValue::from_str(u.as_str()).ok());
+    match (failure, original) {
+        (Failure::Elsewhere, Some(location)) => {
+            let mut res = StatusCode::TEMPORARY_REDIRECT.into_response();
+            let h = res.headers_mut();
+            h.insert(header::LOCATION, location);
+            // As long as the failure is remembered; a later try may resize it after all
+            h.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, max-age=600"),
+            );
+            res
+        }
+        _ => not_found(),
+    }
 }
 
 fn not_found() -> Response {
@@ -372,8 +407,8 @@ pub async fn serve_photo(
     };
     let name = format!("{source}-{}", variant.file_suffix());
 
-    if images.failed_recently(&source) {
-        return not_found();
+    if let Some(failure) = images.failed_recently(&source) {
+        return unavailable(failure, &image);
     }
     let read_cached = || async {
         match images.cached_path(&name) {
@@ -390,19 +425,25 @@ pub async fn serve_photo(
     if let Some(bytes) = read_cached().await {
         return image_response(bytes, &key, variant, current, caching);
     }
-    if images.failed_recently(&source) {
-        return not_found();
+    if let Some(failure) = images.failed_recently(&source) {
+        return unavailable(failure, &image);
     }
 
     let Ok(_permit) = images.work.acquire().await else {
         return not_found();
     };
     let linked = !image.starts_with("data:");
+    let elsewhere = if linked {
+        Failure::Elsewhere
+    } else {
+        Failure::Gone
+    };
     let original = match load_source(&state.http, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
-            images.record_failure(source);
+            let failure = if err.dead { Failure::Gone } else { elsewhere };
+            images.record_failure(source, failure);
             // A link the site refuses for good goes on the Suggestions page (see checks.rs)
             if linked
                 && err.dead
@@ -410,7 +451,7 @@ pub async fn serve_photo(
             {
                 tracing::warn!("[img] recipe {id}: couldn't flag its photo: {e:?}");
             }
-            return not_found();
+            return unavailable(failure, &image);
         }
     };
     if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
@@ -432,8 +473,8 @@ pub async fn serve_photo(
         Ok(bytes) => image_response(bytes, &key, variant, current, caching),
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
-            images.record_failure(source);
-            not_found()
+            images.record_failure(source, elsewhere);
+            unavailable(elsewhere, &image)
         }
     }
 }
@@ -861,6 +902,23 @@ mod tests {
         assert_eq!(dead(403, "text/html", true), Some(false));
         assert_eq!(dead(429, "text/html", false), Some(false));
         assert_eq!(dead(503, "text/html", false), Some(false));
+    }
+
+    #[test]
+    fn a_photo_a_browser_may_get_is_sent_to_the_original() {
+        let photo = "https://example.com/wp-content/uploads/crepes.jpg";
+        let res = unavailable(Failure::Elsewhere, photo);
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(res.headers()[header::LOCATION], photo);
+        assert_eq!(
+            unavailable(Failure::Gone, photo).status(),
+            StatusCode::NOT_FOUND
+        );
+        let embedded = "data:image/png;base64,AAAA";
+        assert_eq!(
+            unavailable(Failure::Elsewhere, embedded).status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]

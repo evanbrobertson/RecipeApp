@@ -1798,8 +1798,15 @@ async fn broken_photo_links_are_flagged_without_wee_chef() {
         let (status, _, _) = send_raw(&t, get(&format!("/img/{stale}/320"))).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
-    let (status, _, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // It's most likely fine in a browser, so the page is sent there instead of a 404
+    for _ in 0..2 {
+        let (status, headers, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
+        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            headers[header::LOCATION],
+            format!("{site}/busy.jpg").as_str()
+        );
+    }
     let (_, list) = t.json("GET", "/api/checks/review", None).await;
     assert_eq!(list["recipes"].as_array().unwrap().len(), 1, "{list}");
     assert_eq!(list["recipes"][0]["id"], stale);
