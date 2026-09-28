@@ -50,6 +50,9 @@ export function start({ dsn, environment, release }: SentryBoot, early: unknown[
       if (event.transaction) event.transaction = redact(event.transaction)
       return event
     },
+    // A browser skipping a page-to-page view transition is routine, not a bug; the
+    // transitions boot script handles its promises, this catches any engine it can't reach
+    ignoreErrors: [/Transition was skipped/],
     tracesSampleRate: production ? 0.2 : 1.0,
     replaysSessionSampleRate: 0.05,
     replaysOnErrorSampleRate: 1.0,
