@@ -28,10 +28,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/crumb-core/Cargo.toml crates/crumb-core/Cargo.toml
 COPY crates/crumb-client/Cargo.toml crates/crumb-client/Cargo.toml
 COPY crates/crumb-ffi/Cargo.toml crates/crumb-ffi/Cargo.toml
+COPY desktop/linux/Cargo.toml desktop/linux/Cargo.toml
 # Only the server is built here; the other members get stubs so Cargo can load the workspace
-RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-ffi/src/bin \
-    && echo 'fn main() {}' > src/main.rs \
-    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs crates/crumb-ffi/src/lib.rs \
+# (the desktop stubs stay: nothing below copies desktop/)
+RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-ffi/src/bin desktop/linux/src \
+    && echo 'fn main() {}' | tee src/main.rs desktop/linux/src/main.rs >/dev/null \
+    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs crates/crumb-ffi/src/lib.rs desktop/linux/src/lib.rs \
     && echo 'fn main() {}' > crates/crumb-ffi/src/bin/uniffi-bindgen.rs \
     && cargo build --release --locked && rm -rf src crates
 COPY src ./src

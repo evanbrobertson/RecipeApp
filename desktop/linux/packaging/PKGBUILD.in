@@ -1,0 +1,24 @@
+# Maintainer: Evan Robertson <evan@evanrobertson.dev>
+# AUR: crumb-desktop-bin. Rendered from PKGBUILD.in by scripts/release tooling; the real
+# file is attached to each GitHub Release by promote.yml and its @SHA256@ comes from the
+# release tarball's .sha256.
+pkgname=crumb-desktop-bin
+# @PKGVER@, not @VERSION@: Arch forbids hyphens in pkgver (beta versions use underscores)
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Crumb's native Linux desktop app: Qt6/QML over cxx-qt"
+arch=('x86_64')
+url="https://github.com/evanbrobertson/RecipeApp"
+license=('MIT')
+depends=('qt6-base' 'qt6-declarative' 'qt6-wayland')
+optdepends=('libsecret: read the saved session from the system keyring'
+            'gnome-keyring: read the saved session from the system keyring')
+source=("crumb-desktop-linux-x86_64-@VERSION@.tar.gz::https://github.com/evanbrobertson/RecipeApp/releases/download/v@VERSION@/crumb-desktop-linux-x86_64-@VERSION@.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+  install -Dm755 "$srcdir/crumb-desktop/crumb-desktop" "$pkgdir/usr/bin/crumb-desktop"
+  install -Dm644 "$srcdir/crumb-desktop/crumb-desktop.desktop" "$pkgdir/usr/share/applications/crumb-desktop.desktop"
+  install -Dm644 "$srcdir/crumb-desktop/crumb-desktop.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/crumb-desktop.png"
+  install -Dm644 "$srcdir/crumb-desktop/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Crumb
+Comment=Your private recipe box
+Exec=crumb-desktop
+Icon=crumb-desktop
+Terminal=false
+Categories=Utility;
+StartupWMClass=crumb-desktop
