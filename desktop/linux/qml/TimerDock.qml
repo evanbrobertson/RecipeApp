@@ -5,8 +5,8 @@ import app.crumb.desktop 1.0
 
 // The kitchen timers dock (web TimerDock.svelte + lib/timers.svelte.ts). Timers live in
 // `Store` under the web's key and shape, so they persist and every page shows them. Tap one
-// to dismiss it. A finished timer shows "Done!" with a pulsing ring and a toast; there is no
-// chime because the app doesn't link QtMultimedia, so the alert is visual only.
+// to dismiss it. A finished timer shows "Done!" with a pulsing ring and a toast, and plays the
+// web's chime (`Sound`, src/chime.rs).
 Item {
     id: dock
 
@@ -50,6 +50,7 @@ Item {
                 var w = ApplicationWindow.window
                 if (w)
                     w.toast({ "title": "⏰ " + t.label + " is up!", "tone": "primary", "duration": 15000 })
+                Sound.chime()
             }
         }
         if (changed)

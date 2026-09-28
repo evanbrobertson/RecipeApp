@@ -4,6 +4,7 @@
 //! the cxx-qt generated symbols; `main.rs` is a thin wrapper calling [`run`].
 
 mod api;
+mod chime;
 pub mod config;
 mod core_bridge;
 mod fonts;

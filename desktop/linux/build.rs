@@ -41,6 +41,7 @@ fn main() {
     .file("src/core_bridge.rs")
     .file("src/store.rs")
     .file("src/api.rs")
+    .file("src/chime.rs")
     .file("src/native.rs")
     .qrc_resources(resources());
 
