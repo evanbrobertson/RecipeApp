@@ -76,6 +76,7 @@ src/
   video_jobs.rs   # Their queue: worker pool, bounded wait, job status for the Add box, heavy-work budget
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
+android/          # Native Android app (Kotlin + Jetpack Compose), a REST client linking crumb-core; see android/README.md
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
