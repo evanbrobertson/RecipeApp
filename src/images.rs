@@ -430,13 +430,17 @@ async fn load_source(
     http: &reqwest::Client,
     image: &str,
     referer: Option<&str>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LoadError> {
     if image.starts_with("data:") {
-        return decode_data_uri(image);
+        return decode_data_uri(image).map_err(LoadError::dead);
     }
-    let parsed = url::Url::parse(image).map_err(|e| format!("bad image URL: {e}"))?;
+    let parsed =
+        url::Url::parse(image).map_err(|e| LoadError::dead(format!("bad image URL: {e}")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(format!("unsupported image URL scheme {}", parsed.scheme()));
+        return Err(LoadError::dead(format!(
+            "unsupported image URL scheme {}",
+            parsed.scheme()
+        )));
     }
     // What a browser on the recipe's page would send; some CDNs refuse hotlinks without it
     let referer = referer.filter(|r| r.starts_with("http"));
@@ -458,21 +462,58 @@ async fn load_source(
 /// Image types first, as a browser's `<img>` request asks (no AVIF: it can't be decoded here).
 const IMAGE_ACCEPT: &str = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8";
 
+/// Why a photo couldn't be had.
+#[derive(Debug)]
+pub struct LoadError {
+    message: String,
+    /// The link itself is bad: the site answered 4xx or with a page instead of a photo, or
+    /// the URL can't be fetched at all. Asking again won't help. A timeout, a 5xx or a photo
+    /// too large to resize may be fine later, or in a browser.
+    pub dead: bool,
+}
+
+impl LoadError {
+    fn dead(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            dead: true,
+        }
+    }
+
+    fn passing(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            dead: false,
+        }
+    }
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// Refuses a response that isn't a usable image before reading its body.
 fn check_response(
     status: u16,
     content_type: Option<&str>,
     length: Option<u64>,
-) -> Result<(), String> {
+) -> Result<(), LoadError> {
     if !(200..300).contains(&status) {
-        return Err(format!("fetch returned {status}"));
+        let message = format!("fetch returned {status}");
+        return Err(if (400..500).contains(&status) {
+            LoadError::dead(message)
+        } else {
+            LoadError::passing(message)
+        });
     }
     let kind = content_type.unwrap_or("").to_ascii_lowercase();
     if kind.starts_with("text/") || kind.contains("json") {
-        return Err(format!("not an image ({kind})"));
+        return Err(LoadError::dead(format!("not an image ({kind})")));
     }
     if length.is_some_and(|n| n > MAX_SOURCE_BYTES as u64) {
-        return Err(TOO_LARGE.into());
+        return Err(LoadError::passing(TOO_LARGE));
     }
     Ok(())
 }
@@ -480,7 +521,7 @@ fn check_response(
 /// How a wreq image fetch failed.
 enum Wreq {
     /// The server answered, but not with a usable image.
-    Answered(String),
+    Answered(LoadError),
     /// No response, or the body didn't arrive; worth trying another client.
     NoAnswer(String),
 }
@@ -511,7 +552,7 @@ async fn load_with_wreq(
     crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
         .await
         .map_err(|e| match e {
-            crate::scraper::ReadError::TooLarge => Wreq::Answered(TOO_LARGE.into()),
+            crate::scraper::ReadError::TooLarge => Wreq::Answered(LoadError::passing(TOO_LARGE)),
             crate::scraper::ReadError::Failed(e) => Wreq::NoAnswer(format!("read failed: {e}")),
         })
 }
@@ -520,7 +561,7 @@ async fn load_with_reqwest(
     http: &reqwest::Client,
     url: url::Url,
     referer: Option<&str>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LoadError> {
     let mut req = http
         .get(url)
         .timeout(FETCH_TIMEOUT)
@@ -529,20 +570,47 @@ async fn load_with_reqwest(
     if let Some(r) = referer {
         req = req.header(header::REFERER, r);
     }
-    let mut res = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
+    let mut res = req
+        .send()
+        .await
+        .map_err(|e| LoadError::passing(format!("fetch failed: {e}")))?;
     let content_type = res
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
     check_response(res.status().as_u16(), content_type, res.content_length())?;
     let mut body = Vec::new();
-    while let Some(chunk) = res.chunk().await.map_err(|e| format!("read failed: {e}"))? {
+    while let Some(chunk) = res
+        .chunk()
+        .await
+        .map_err(|e| LoadError::passing(format!("read failed: {e}")))?
+    {
         if body.len() + chunk.len() > MAX_SOURCE_BYTES {
-            return Err(TOO_LARGE.into());
+            return Err(LoadError::passing(TOO_LARGE));
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Whether a new recipe's photo link is dead, fetched as the resizer would. Only a link the
+/// site itself refuses counts (see [`LoadError::dead`]); a slow or failing site gets the
+/// benefit of the doubt. An embedded photo is never dead here: it was read when kept.
+pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<&str>) -> bool {
+    if image.starts_with("data:") {
+        return false;
+    }
+    match load_source(http, image, referer).await {
+        Ok(_) => false,
+        Err(err) => {
+            tracing::info!(
+                "[img] {}: new recipe's photo {}: {err}",
+                crate::telemetry::host_of(image),
+                if err.dead { "is dead" } else { "didn't load" }
+            );
+            err.dead
+        }
+    }
 }
 
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or

@@ -11,6 +11,8 @@ export interface Imported {
   cookbook?: BookImported
   /** A cooking video Wee Chef watched in the server's queue. */
   fromVideo?: boolean
+  /** The page's photo link was dead, so it was saved without one. */
+  droppedPhoto?: boolean
 }
 
 /** A cooking video's place in the server's queue (`GET /api/import/jobs/{id}`). */

@@ -1554,6 +1554,105 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
 }
 
 #[tokio::test]
+async fn imports_drop_a_dead_photo_link() {
+    let png = png_bytes(40, 30);
+    let page = |name: &str, image: &str| {
+        format!(
+            r#"<html><head><script type="application/ld+json">{{"@context":"https://schema.org","@type":"Recipe",
+            "name":"{name}","image":"{image}","recipeIngredient":["1 egg"],
+            "recipeInstructions":[{{"@type":"HowToStep","text":"Cook."}}]}}</script></head><body></body></html>"#
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let pages: Vec<(String, String)> = vec![
+        ("/fresh".into(), page("Fresh", &format!("{site}/photo.png"))),
+        // A CDN link that went stale
+        ("/stale".into(), page("Stale", &format!("{site}/gone.jpg"))),
+        // A page where the photo should be
+        (
+            "/blocked".into(),
+            page("Blocked", &format!("{site}/blocked.jpg")),
+        ),
+        // The photo server having a bad moment: kept
+        ("/flaky".into(), page("Flaky", &format!("{site}/busy.jpg"))),
+        (
+            "/mcp-stale".into(),
+            page("By Claude", &format!("{site}/gone.jpg")),
+        ),
+    ];
+    let mut app = axum::Router::new()
+        .route(
+            "/photo.png",
+            axum::routing::get(move || async move { ([(header::CONTENT_TYPE, "image/png")], png) }),
+        )
+        .route(
+            "/gone.jpg",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/blocked.jpg",
+            axum::routing::get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html>no hotlinking</html>",
+                )
+            }),
+        )
+        .route(
+            "/busy.jpg",
+            axum::routing::get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        );
+    for (path, html) in pages {
+        app = app.route(
+            &path,
+            axum::routing::get(move || async move { axum::response::Html(html) }),
+        );
+    }
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let t = TestApp::new(None);
+    for (path, kept) in [
+        ("/fresh", true),
+        ("/stale", false),
+        ("/blocked", false),
+        ("/flaky", true),
+    ] {
+        let url = format!("{site}{path}");
+        let (status, res) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {res}");
+        assert_eq!(res.get("droppedPhoto").is_some(), !kept, "{path}: {res}");
+        let (_, recipe) = t
+            .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+            .await;
+        assert_eq!(recipe["image"].is_string(), kept, "{path}: {recipe}");
+    }
+
+    // The same link again is the saved recipe, with nothing more to say
+    let (_, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/stale")})),
+        )
+        .await;
+    assert_eq!(res["isNew"], false);
+    assert!(res.get("droppedPhoto").is_none(), "{res}");
+
+    // Claude hears about it too
+    let (msg, err) = mcp_call(
+        &t,
+        "import_recipe_from_url",
+        json!({"url": format!("{site}/mcp-stale")}),
+    )
+    .await;
+    assert!(!err, "{msg}");
+    assert!(msg.contains("saved without a photo"), "{msg}");
+}
+
+#[tokio::test]
 async fn recipe_pages_preload_the_hero() {
     let t = TestApp::new(None);
     let id = add_recipe(&t, "Hero", "Dinner", "eggs", "10 min").await;
