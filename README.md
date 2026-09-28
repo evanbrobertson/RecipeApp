@@ -392,6 +392,8 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `BROWSER_SCRAPING`  | No         | Set to `off` to disable the headless browser fallback                         |
 | `BROWSER_NO_SANDBOX` | No        | Set to `1` if Chromium can't start sandboxed on your host (the log says so); off by default |
 | `CRUMB_RUN_AS_ROOT` | No         | Docker only: `1` skips the entrypoint's drop to the unprivileged `crumb` user |
+| `SCRAPE_WORDPRESS`  | No         | Set to `off` to stop blocked WordPress recipe sites being read through their REST API |
+| `SCRAPE_ARCHIVE`    | No         | Set to `off` to stop blocked recipe sites being read from the Internet Archive's copy |
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |

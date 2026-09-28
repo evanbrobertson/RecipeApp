@@ -276,7 +276,7 @@ fn count(keys: &[&str], min: usize) -> Option<usize> {
     }
 }
 
-fn switched_off(key: &str) -> bool {
+pub(crate) fn switched_off(key: &str) -> bool {
     env(&[key]).is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "off" | "false" | "0"))
 }
 
