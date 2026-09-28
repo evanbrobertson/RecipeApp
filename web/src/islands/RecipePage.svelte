@@ -562,7 +562,7 @@
             <h2 class="text-primary flex items-center gap-2 font-bold">
               <StickyNote class="size-[18px]" /> Notes
             </h2>
-            <p class="hand mt-2 text-[26px] leading-tight whitespace-pre-line">{recipe.notes}</p>
+            <p class="note-hand mt-2 whitespace-pre-line">{recipe.notes}</p>
           </div>
         {/if}
 

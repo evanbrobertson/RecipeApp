@@ -1343,7 +1343,7 @@ impl<'a> View<'a> {
         }
         if let Some(notes) = self.notes {
             out.push_str(&format!(
-                "<div class=\"card share-notes\"><h2>{}Notes</h2><p class=\"hand\">{}</p></div>",
+                "<div class=\"card share-notes\"><h2>{}Notes</h2><p class=\"note-hand\">{}</p></div>",
                 icon("note"),
                 escape(notes)
             ));

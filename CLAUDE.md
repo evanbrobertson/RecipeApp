@@ -14,7 +14,7 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Styling:** Tailwind CSS 4, "Green Tile" design language: semantic tokens and shared classes in
   `web/src/styles/app.css` (cream/paper/tint/line, tile green, one butter accent), no component library
 - **Fonts:** self-hosted woff2 in `web/src/assets/fonts`: Nunito Sans (body), DM Serif Display (titles), Caveat
-  (greetings and the cook's notes only), each with metric-matched fallbacks
+  (greetings and tips only), Kalam (the cook's notes), each with metric-matched fallbacks
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,

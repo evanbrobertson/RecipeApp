@@ -373,7 +373,7 @@
           id="r-notes"
           bind:value={draft.notes}
           rows="3"
-          class="input hand text-[24px] leading-snug"
+          class="input note-hand text-[1.3125rem] leading-normal"
           placeholder="Less sugar next time…"
         ></textarea>
       </div>

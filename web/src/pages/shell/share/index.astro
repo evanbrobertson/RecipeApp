@@ -15,6 +15,8 @@ import "../../../styles/share.css"
 import nunito from "../../../assets/fonts/nunito-sans.woff2?url"
 import dmSerif from "../../../assets/fonts/dm-serif-display.woff2?url"
 import caveat from "../../../assets/fonts/caveat.woff2?url"
+// Notes: Kalam draws ¼ ½ ¾; the other fractions come from Nunito Sans (already loaded)
+import kalam from "../../../assets/fonts/kalam.woff2?url"
 import themeBoot from "../../../lib/theme-boot.js?raw"
 import ShareActions from "../../../islands/ShareActions.svelte"
 import ShareScale from "../../../islands/ShareScale.svelte"
@@ -37,6 +39,8 @@ import ShareScale from "../../../islands/ShareScale.svelte"
       @font-face{font-family:"Nunito Sans";src:url(${nunito}) format("woff2");font-weight:200 1000;font-display:swap}
       @font-face{font-family:"DM Serif Display";src:url(${dmSerif}) format("woff2");font-weight:400;font-display:swap}
       @font-face{font-family:"Caveat";src:url(${caveat}) format("woff2");font-weight:700;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${kalam}) format("woff2");font-weight:400;font-display:swap}
+      @font-face{font-family:"Kalam";src:url(${nunito}) format("woff2");font-weight:400;font-display:swap;unicode-range:U+2150-215F}
     `}
     />
     <script is:inline set:html={themeBoot} />
