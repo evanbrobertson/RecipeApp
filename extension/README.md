@@ -30,6 +30,8 @@ Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).
   if the player hasn't fetched captions yet); each miss is logged to the YouTube tab's console as
   `[Crumb] …`. When nothing could be read, the Add page says so. Your YouTube sign-in is never read or sent, and the
   requests to YouTube are the ones its own page makes.
+- **Saying it's here** (`src/content.ts`): on a Crumb page it sets `data-crumb-extension` (the
+  extension's version) on `<html>`, so the site can tell (`web/src/lib/extension.ts`).
 - **Setting up**: install it, then open your Crumb while signed in and choose **Use this Crumb**
   on the card it shows (Crumb pages carry `<meta name="application-name" content="Crumb">`), or
   type the address on the settings page.
