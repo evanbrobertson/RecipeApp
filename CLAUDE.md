@@ -6,6 +6,10 @@ in a clean UI. Also a remote MCP connector for Claude.
 ## Tech Stack
 
 - **Server:** Rust (axum 0.8, tokio, rusqlite bundled, scraper, reqwest/rustls), crate `crumb` at the repo root
+- **Shared crates (`crates/`):** `crumb-core` (pure logic: model, validation, fractions, categories, text parser,
+  Markdown, Try next, ingredient scaling, mise en place, timers, text export, sun clock, check wording),
+  `crumb-client` (typed Rust client for the API), `crumb-ffi` (UniFFI bindings to crumb-core for Kotlin and Swift).
+  Thin clients, fat server: the native apps call these instead of re-implementing logic
 - **Frontend:** Astro 7 static build + Svelte 5 islands, in `web/`
 - **Styling:** Tailwind CSS 4, "Green Tile" design language: semantic tokens and shared classes in
   `web/src/styles/app.css` (cream/paper/tint/line, tile green, one butter accent), no component library
@@ -45,6 +49,10 @@ bun run format                   # oxfmt
 ## Project Structure
 
 ```
+crates/
+  crumb-core/     # Pure logic shared by the server and every client; the server re-exports it (crumb::model, ...)
+  crumb-client/   # Typed API client, tested against the real router
+  crumb-ffi/      # UniFFI bindings (uniffi.toml: Kotlin package app.crumb.core, Swift module CrumbCore)
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
@@ -54,21 +62,19 @@ src/
   accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, invites, sessions, identities, share index); account_api.rs
   social.rs       # Sign in with Google / Apple for AUTH_MODE=accounts (OIDC code flow; hosted uses Better Auth's)
   hosted.rs       # AUTH_MODE=hosted: asks the Better Auth service (auth/) who's signed in, proxies /api/auth/*
-  model.rs        # Recipe/cookbook types, validation, normalize_sections
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
   web.rs          # Static files + page-data injection for dynamic pages
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
-  suggest.rs      # Try next ranking + Surprise me (pure, unit-tested)
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   video.rs        # Cooking videos: caption, else download + whisper transcript + frames for Wee Chef
   video_jobs.rs   # Their queue: worker pool, bounded wait, job status for the Add box, heavy-work budget
-  scraper.rs, text_parser.rs, importers.rs, llm.rs, browser.rs, markdown.rs
+  scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
 web/src/
@@ -122,6 +128,10 @@ web/src/
   feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
+
+- **Core changes land on master first.** Changes to `crates/`, `src/` or the API go in their own PR against
+  master, never on a platform branch (`android/`, `ios/`, `desktop/`). Platform branches then merge master in, so
+  they only ever differ from master in their own directory and CI workflow.
 
 ## Code Style
 

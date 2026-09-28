@@ -19,19 +19,19 @@ use axum::extract::{Path as UrlPath, Query};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
-use base64::Engine;
 use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use rusqlite::OptionalExtension;
 
 use crate::AppState;
+use crumb_core::photo::{MAX_SOURCE_BYTES, TOO_LARGE, decode_data_uri};
+pub use crumb_core::photo::{embed, is_embedded_photo};
 
 /// Widths the server makes. Must match `IMG_WIDTHS` in `web/src/lib/img.ts`.
 pub const WIDTHS: [u32; 5] = [160, 320, 480, 768, 1200];
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_SOURCE_BYTES: usize = 15 * 1024 * 1024;
 /// Decoded size guards against decompression bombs.
 const MAX_SIDE: u32 = 12_000;
 const MAX_PIXELS: u64 = 50_000_000;
@@ -455,7 +455,6 @@ async fn load_source(
     load_with_reqwest(http, parsed, referer).await
 }
 
-const TOO_LARGE: &str = "image too large";
 /// Image types first, as a browser's `<img>` request asks (no AVIF: it can't be decoded here).
 const IMAGE_ACCEPT: &str = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8";
 
@@ -546,63 +545,6 @@ async fn load_with_reqwest(
     Ok(body)
 }
 
-/// Bytes of a `data:image/...;base64,` URI.
-fn decode_data_uri(uri: &str) -> Result<Vec<u8>, String> {
-    let rest = uri.strip_prefix("data:").ok_or("not a data URI")?;
-    let (meta, data) = rest.split_once(',').ok_or("malformed data URI")?;
-    let meta = meta.to_ascii_lowercase();
-    if !meta.starts_with("image/") || !meta.split(';').any(|p| p == "base64") {
-        return Err("data URI isn't a base64 image".into());
-    }
-    if data.len() > MAX_SOURCE_BYTES / 3 * 4 + 4096 {
-        return Err(TOO_LARGE.into());
-    }
-    let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    let data = percent_encoding::percent_decode_str(&data).decode_utf8_lossy();
-    let engine = base64::engine::general_purpose::STANDARD;
-    engine
-        .decode(data.as_bytes())
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(data.as_bytes()))
-        .map_err(|e| format!("bad base64 in data URI: {e}"))
-}
-
-/// The type of a photo that may be kept in a recipe itself, by its first bytes: JPEG, PNG
-/// or WebP, whatever it's labelled.
-fn photo_type(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        Some("image/jpeg")
-    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("image/webp")
-    } else {
-        None
-    }
-}
-
-/// Whether `image` is a photo kept in the recipe itself (older photo imports, or one saved
-/// from another Crumb's share): a base64 `data:image/(jpeg|png|webp)` URI whose bytes are
-/// that, no bigger than the resizer takes. Any other `data:` URI isn't one.
-pub fn is_embedded_photo(image: &str) -> bool {
-    let Some(meta) = image
-        .get(..image.find(',').unwrap_or(0))
-        .and_then(|m| m.strip_prefix("data:"))
-    else {
-        return false;
-    };
-    let named = meta.split(';').next().unwrap_or("").to_ascii_lowercase();
-    matches!(named.as_str(), "image/jpeg" | "image/png" | "image/webp")
-        && decode_data_uri(image).is_ok_and(|b| photo_type(&b).is_some())
-}
-
-/// A photo's bytes as a `data:` URI to keep in the recipe, when they're a JPEG, PNG or WebP
-/// no bigger than the resizer takes.
-pub fn embed(bytes: &[u8]) -> Option<String> {
-    let kind = photo_type(bytes).filter(|_| bytes.len() <= MAX_SOURCE_BYTES)?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Some(format!("data:{kind};base64,{b64}"))
-}
-
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
 /// None when it can't be had or isn't a JPEG, PNG or WebP.
 pub async fn fetch_to_embed(http: &reqwest::Client, url: &str) -> Option<String> {
@@ -680,6 +622,7 @@ pub fn preview_jpeg(bytes: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     pub fn png(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, y| {
