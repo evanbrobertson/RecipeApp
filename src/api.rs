@@ -69,6 +69,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/checks", routing::get(checks_status).post(check_all))
         .route("/api/checks/review", routing::get(checks_review))
+        .route("/api/staples", routing::get(staples))
         .route(
             "/api/recipes/{id}/cooked",
             routing::get(cook_stats)
@@ -827,6 +828,12 @@ async fn checks_review(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Va
     Ok(Json(
         json!({"recipes": checks::to_review(&state.db.lock())?}),
     ))
+}
+
+async fn staples(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    Ok(Json(recipes::to_value(&recipes::staples(
+        &state.db.lock(),
+    )?)))
 }
 
 async fn check_all(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {

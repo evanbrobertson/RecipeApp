@@ -114,6 +114,8 @@ A flag also goes away when you change or remove the line.
 
 **Suggestions page.** When recipes have flagged lines, the navigation shows **Suggestions** with a count. On a phone, the tab bar shows **Review**. The Suggestions page lists each recipe and the number of flagged lines in it. Wee Chef changes nothing on this page.
 
+**Wee Chef tip: staples.** Below the list, the Suggestions page shows up to 12 ingredients to keep on hand: the ones most of your recipes use, for example "Salt · 28 of 30 recipes". Crumb removes amounts, units, sizes and preparation ("2 large eggs, beaten" is eggs, "3 garlic cloves, minced" is garlic) and counts each recipe once. Some names count as one ingredient, for example scallions and green onions. Water is not included. The tip needs at least three recipes, and an ingredient must be in at least two. It does not need an AI key.
+
 **Check with Wee Chef.** This menu item on the recipe page needs the check key. It checks the recipe again now. Wee Chef only flags lines on a recipe that is already in your recipe box. The one exception is a new import that you did not edit and that Wee Chef did not check yet. Wee Chef treats that recipe as a new import. The check can also do the small clean-up again: checkbox characters, web codes, fractions, raw times and categories. You can undo these changes.
 
 **Check all recipes with Wee Chef.** This item on the More page needs the check key. It checks these recipes:

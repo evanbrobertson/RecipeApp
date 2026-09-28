@@ -3,6 +3,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right"
   import ClipboardCheck from "@lucide/svelte/icons/clipboard-check"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
+  import ShoppingBasket from "@lucide/svelte/icons/shopping-basket"
   import Sparkles from "@lucide/svelte/icons/sparkles"
   import { untrack } from "svelte"
   import EmptyState from "../components/EmptyState.svelte"
@@ -22,23 +23,37 @@
     fields: Record<string, number>
   }
 
+  /** Wee Chef's "keep these on hand" tip: the ingredients most recipes in the box use. */
+  interface Staples {
+    /** Recipes in the box. */
+    recipes: number
+    /** Most-used first, lowercase ("olive oil"); empty for a box too small to tell. */
+    staples: { name: string; recipes: number }[]
+  }
+
   // `checks` only when Wee Chef checks are set up on the server
-  const page = pageState<{ recipes: Pending[]; checks?: ChecksStatus }>(async () => {
-    const [list, checks] = await Promise.all([
-      api<{ recipes: Pending[] }>("/api/checks/review"),
-      api<ChecksStatus>("/api/checks"),
-    ])
-    return { recipes: list.recipes, checks: checks.enabled ? checks : undefined }
-  })
+  const page = pageState<{ recipes: Pending[]; staples: Staples; checks?: ChecksStatus }>(
+    async () => {
+      const [list, staples, checks] = await Promise.all([
+        api<{ recipes: Pending[] }>("/api/checks/review"),
+        api<Staples>("/api/staples"),
+        api<ChecksStatus>("/api/checks"),
+      ])
+      return { recipes: list.recipes, staples, checks: checks.enabled ? checks : undefined }
+    },
+  )
 
   let recipes = $state<Pending[] | undefined>(page.data?.recipes)
   let checks = $state<ChecksStatus | undefined>(page.data?.checks)
+  const staples = $derived(page.data?.staples)
   $effect(() => {
     if (!recipes && page.data) {
       recipes = page.data.recipes
       checks = page.data.checks
     }
   })
+
+  const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
 
   let starting = $state(false)
   const running = $derived(!!checks && checks.pending > 0)
@@ -217,6 +232,32 @@
           </a>
         {/each}
       </div>
+    {/if}
+
+    {#if staples?.staples.length}
+      <section class="card flex flex-col gap-4 p-5" aria-labelledby="staples-title">
+        <div class="flex items-start gap-3">
+          <span class="bg-tint text-primary rounded-ctl grid size-12 flex-none place-items-center">
+            <ShoppingBasket class="size-6" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="kicker">Wee Chef tip</p>
+            <h2 id="staples-title" class="font-bold">
+              Keep these ingredients on-hand, as most of your recipes use these!
+            </h2>
+          </div>
+        </div>
+        <ul class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {#each staples.staples as s (s.name)}
+            <li class="border-line rounded-ctl flex min-w-0 flex-col border px-3 py-2">
+              <span class="truncate font-bold">{capitalise(s.name)}</span>
+              <span class="text-ink-muted text-sm">
+                {s.recipes} of {staples.recipes} recipes
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
     {/if}
   {/if}
 </div>
