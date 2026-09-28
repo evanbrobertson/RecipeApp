@@ -102,6 +102,46 @@ pub fn session_cookie(set_cookie: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// A session's user agent as "Firefox on Linux", roughly: enough to tell one's devices
+/// apart. Words it as `deviceName` in `web/src/lib/account.ts` does.
+pub fn device_name(agent: Option<&str>) -> String {
+    let Some(agent) = agent.filter(|a| !a.is_empty()) else {
+        return "Unknown device".into();
+    };
+    let has = |needle: &str| agent.contains(needle);
+    let browser = if has("Edg/") {
+        "Edge"
+    } else if has("Firefox/") {
+        "Firefox"
+    } else if has("Chrome/") {
+        "Chrome"
+    } else if has("Safari/") {
+        "Safari"
+    } else if has("okhttp") || has("Android") {
+        "Crumb app"
+    } else {
+        "Browser"
+    };
+    let system = if has("iPhone") || has("iPad") {
+        "iOS"
+    } else if has("Android") {
+        "Android"
+    } else if has("Mac OS X") {
+        "macOS"
+    } else if has("Windows") {
+        "Windows"
+    } else if has("Linux") {
+        "Linux"
+    } else {
+        ""
+    };
+    if system.is_empty() {
+        browser.into()
+    } else {
+        format!("{browser} on {system}")
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ErrorBody {
@@ -281,6 +321,28 @@ pub fn cook_steps(recipe: &Recipe) -> Vec<CookStep> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devices_are_named_like_the_web() {
+        let firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0";
+        assert_eq!(device_name(Some(firefox)), "Firefox on Linux");
+        let chrome = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+        assert_eq!(device_name(Some(chrome)), "Chrome on Windows");
+        let edge = "Mozilla/5.0 (Windows NT 10.0) Chrome/126.0 Safari/537.36 Edg/126.0";
+        assert_eq!(device_name(Some(edge)), "Edge on Windows");
+        let safari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15";
+        assert_eq!(device_name(Some(safari)), "Safari on macOS");
+        let phone = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1";
+        assert_eq!(device_name(Some(phone)), "Safari on iOS");
+        assert_eq!(device_name(Some("okhttp/4.12.0")), "Crumb app");
+        assert_eq!(
+            device_name(Some("Dalvik (Linux; Android 14)")),
+            "Crumb app on Android"
+        );
+        assert_eq!(device_name(Some("curl/8.0")), "Browser");
+        assert_eq!(device_name(None), "Unknown device");
+        assert_eq!(device_name(Some("")), "Unknown device");
+    }
 
     #[test]
     fn image_keys_match_the_web() {
