@@ -1,0 +1,44 @@
+---
+import Icon from "../../components/Icon.astro"
+import { ArrowLeft, ChevronRight, MessagesSquare } from "lucide"
+import Layout from "../../layouts/Layout.astro"
+import type { IconNode } from "lucide"
+
+// One row per app that can reach your recipe box
+const connectors: { href: string; icon: IconNode; label: string; text: string }[] = [
+  {
+    href: "/connect",
+    icon: MessagesSquare,
+    label: "Claude",
+    text: "Save, search and tweak recipes from a chat",
+  },
+]
+---
+
+<Layout title="Connections" section="more">
+  <div class="mx-auto flex max-w-[600px] flex-col gap-8">
+    <div>
+      <a href="/more" class="btn btn-ghost mb-3 -ml-3 px-3"><Icon icon={ArrowLeft} /> More</a>
+      <h1 class="page-title">Connections</h1>
+      <p class="text-ink-muted mt-2">Use your recipe box from other apps.</p>
+    </div>
+
+    <section>
+      <h2 class="settings-heading">Apps</h2>
+      <div class="list-card">
+        {
+          connectors.map((c) => (
+            <a href={c.href} class="list-row settings-row">
+              <Icon icon={c.icon} class="settings-icon" />
+              <span class="min-w-0 flex-1">
+                <span class="block font-bold">{c.label}</span>
+                <span class="text-ink-muted block text-sm">{c.text}</span>
+              </span>
+              <Icon icon={ChevronRight} class="text-ink-muted size-5 flex-none" />
+            </a>
+          ))
+        }
+      </div>
+    </section>
+  </div>
+</Layout>

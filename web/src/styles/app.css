@@ -767,6 +767,9 @@
 }
 .review-badge:empty::after {
   content: var(--review-count, none);
+  /* Trim the line box to the digits' cap height so they sit dead centre, not on the
+     font's tall ascender */
+  text-box: trim-both cap alphabetic;
 }
 .review-badge {
   display: none;
@@ -783,5 +786,6 @@
   color: var(--on-butter, #1f2a22);
   font-size: 13px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
