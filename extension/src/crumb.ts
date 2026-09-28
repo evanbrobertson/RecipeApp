@@ -35,6 +35,14 @@ export function previewUrl(crumb: string, page: string): string {
   return `${crumb}/preview?url=${encodeURIComponent(page)}`
 }
 
+/**
+ * Crumb's Add page with a video's link filled in. `via=extension` tells it the extension has
+ * what it read of the video waiting (web/src/islands/TopBox.svelte).
+ */
+export function addVideoUrl(crumb: string, video: string): string {
+  return `${crumb}/add?url=${encodeURIComponent(video)}&via=extension`
+}
+
 /** A page the extension can hand to Crumb: http(s), and not the Crumb itself. */
 export function readable(page: string | undefined, crumb: string): boolean {
   if (!page) return false

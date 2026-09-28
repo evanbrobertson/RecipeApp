@@ -113,6 +113,11 @@
   let { tabs = true, onTile = true, autofocus = false }: Props = $props()
 
   let tab = $state<"search" | "add">(tabs ? "search" : "add")
+  /**
+   * What the Crumb browser extension read of a video in the cook's browser (YouTube won't
+   * serve Crumb's server), sent with that link: see extension/src/youtube.ts.
+   */
+  let fromBrowser = $state<{ url: string; video: Record<string, unknown> } | null>(null)
   let query = $state("")
   let input = $state("")
   let file = $state<File | null>(null)
@@ -221,12 +226,26 @@
       tab = "add"
       pickTip()
     }
+    // Opened by the extension for a video: it posts what it read, now or once asked
+    const fromExtension = (e: MessageEvent) => {
+      const data = e.data as { type?: string; url?: unknown; video?: unknown } | null
+      if (e.source !== window || e.origin !== location.origin || data?.type !== "crumb:video") return
+      if (typeof data.url !== "string" || !data.video || typeof data.video !== "object") return
+      fromBrowser = { url: data.url, video: data.video as Record<string, unknown> }
+    }
+    if (params.get("via") === "extension") {
+      addEventListener("message", fromExtension)
+      postMessage({ type: "crumb:want-video" }, location.origin)
+    }
     if (autofocus) (tab === "add" ? addField : searchField)?.focus()
     const close = (e: PointerEvent) => {
       if (menuOpen && root && !root.contains(e.target as Node)) menuOpen = false
     }
     addEventListener("pointerdown", close)
-    return () => removeEventListener("pointerdown", close)
+    return () => {
+      removeEventListener("pointerdown", close)
+      removeEventListener("message", fromExtension)
+    }
   })
 
   async function switchTab(next: "search" | "add") {
@@ -381,7 +400,10 @@
     }
   }
 
-  async function importBody(body: { url: string } | { text: string }, what: string) {
+  async function importBody(
+    body: { url: string; video?: Record<string, unknown> } | { text: string },
+    what: string,
+  ) {
     saving = true
     try {
       progress = ""
@@ -450,7 +472,9 @@
           location.href = `/import?links=${encodeURIComponent(urls.join("\n"))}`
           return
         }
-        return importBody({ url: urls[0]! }, "get that recipe")
+        const url = urls[0]!
+        const video = fromBrowser?.url === url ? fromBrowser.video : undefined
+        return importBody(video ? { url, video } : { url }, "get that recipe")
       }
       default:
         return importBody({ text: input }, "read that recipe")

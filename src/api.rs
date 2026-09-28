@@ -385,7 +385,8 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
 }
 
 /// A link or pasted text. A cooking video answers 202 at once with its job (see
-/// [`import_job`]): `{jobId, status, position?}`.
+/// [`import_job`]): `{jobId, status, position?}`. With a video link, `video` may carry what
+/// the cook's browser read from its page (`video::FromBrowser`).
 async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
     let (recipe, is_new, dropped_photo) = if let Some(url) = body.get("url") {
@@ -393,6 +394,16 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
             .as_str()
             .filter(|u| crate::model::is_valid_url(u))
             .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
+        // A video's page as the cook's browser read it (the extension), for a site that
+        // turns the server away
+        if let Some(read) = body.get("video").filter(|v| v.is_object()) {
+            let read = serde_json::from_value::<crate::video::FromBrowser>(read.clone())
+                .map_err(|_| AppError::bad_request("That video's details didn't make sense"))?;
+            let url = recipes::unwrap_share_link(url);
+            if crate::video::is_video_url(&url) {
+                crate::video::offer(&state, &url, read);
+            }
+        }
         match recipes::start_link(&state, url).await? {
             recipes::Started::Done(recipes::Imported::Recipe {
                 recipe,

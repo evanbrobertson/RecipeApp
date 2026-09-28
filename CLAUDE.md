@@ -23,7 +23,9 @@ in a clean UI. Also a remote MCP connector for Claude.
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
   `src/video_jobs.rs`: `VIDEO_WORKERS` at once (a heavy-work budget Chromium shares), `VIDEO_QUEUE_MAX` waiting,
-  429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job
+  429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job. YouTube turns servers away, so
+  the extension (`extension/src/youtube.ts`) reads a video's description and captions in the browser and the Add page
+  posts them with the link as `video` (`video::FromBrowser`); never ask for or store anyone's YouTube cookies
 - **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it

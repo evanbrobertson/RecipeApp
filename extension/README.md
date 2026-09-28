@@ -20,6 +20,13 @@ Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).
 - **The preview** is the server's (`src/preview.rs`): a "Reading…" page at once, then the
   recipe, or why it couldn't be read. A link already in your box opens that recipe instead.
   **Add to my Crumb** saves it through the usual import, reusing the page the preview read.
+- **YouTube videos** (`src/youtube.ts`): YouTube often turns Crumb's server away ("Sign in to
+  confirm you're not a bot"), so on a YouTube video the extension reads the video's page in your
+  browser: its title, description and the words of its captions (the caption track, else the
+  "Show transcript" panel). The toolbar button, or the card it shows on videos that mention a
+  recipe or ingredients, opens your Crumb's Add page with the link filled in, and hands that page
+  the text; **Add** sends it with the link. Your YouTube sign-in is never read or sent, and the
+  requests to YouTube are the ones its own page makes.
 - **Setting up**: install it, then open your Crumb while signed in and choose **Use this Crumb**
   on the card it shows (Crumb pages carry `<meta name="application-name" content="Crumb">`), or
   type the address on the settings page.

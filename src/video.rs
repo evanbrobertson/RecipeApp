@@ -8,15 +8,22 @@
 //! Every tool is optional: without `yt-dlp` the caption is read from the page itself, and
 //! without Wee Chef only a caption that is a whole recipe can be saved.
 //!
+//! YouTube often won't serve a server at all ("Sign in to confirm you're not a bot"). The
+//! Crumb browser extension then reads the video's page in the cook's own browser and sends
+//! its details and the words of its captions with the link ([`FromBrowser`]); nothing of the
+//! cook's YouTube sign-in leaves the browser.
+//!
 //! Imports wait their turn in [`crate::video_jobs`], which runs [`import`] on its workers.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use regex::Regex;
 use scraper::{Html, Selector};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -49,6 +56,13 @@ const FFMPEG_TIMEOUT: Duration = Duration::from_secs(120);
 const WHISPER_TIMEOUT: Duration = Duration::from_secs(420);
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
+/// For a YouTube video the server had to read on its own: YouTube often turns servers away.
+const YOUTUBE_HINT: &str = "YouTube often won't let Crumb in on its own: open the video with the Crumb browser extension and choose Read in Crumb, or paste the recipe text instead.";
+
+fn is_youtube(url: &str) -> bool {
+    let host = crate::telemetry::host_of(url);
+    host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
+}
 
 /// The programs a video import can use. Found at start (see [`VideoTools::from_env`]).
 #[derive(Debug, Clone, Default)]
@@ -128,6 +142,111 @@ pub fn is_video_url(url: &str) -> bool {
         "youtu.be" => path.len() > 1,
         _ => false,
     }
+}
+
+/// What the cook's browser read from a video's page (the Crumb extension), sent with the
+/// link to `POST /api/recipes/import` as `video`. It's whatever the cook sends, so it's
+/// treated like pasted text: trimmed to size, and only a YouTube image address is fetched.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FromBrowser {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub thumbnail: Option<String>,
+    /// Seconds.
+    pub duration: Option<f64>,
+    /// The words of the video's captions.
+    pub transcript: Option<String>,
+}
+
+/// Longest description kept from the browser (YouTube's own limit is 5 000).
+const MAX_DESCRIPTION_CHARS: usize = 10_000;
+/// How long what the browser read waits for its import to start.
+const KEEP_FROM_BROWSER: Duration = Duration::from_secs(15 * 60);
+const MAX_KEPT_FROM_BROWSER: usize = 64;
+
+fn clip(value: Option<String>, max: usize) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(match value.char_indices().nth(max) {
+        Some((cut, _)) => value[..cut].to_string(),
+        None => value.to_string(),
+    })
+}
+
+/// A YouTube image address (`i.ytimg.com`, `yt3.ggpht.com`), else nothing: the server
+/// fetches it for the recipe's photo, so it can't be just any address.
+fn youtube_image(url: Option<String>) -> Option<String> {
+    let parsed = url::Url::parse(url.as_deref()?).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let ours = ["ytimg.com", "ggpht.com"]
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")));
+    (parsed.scheme() == "https" && ours).then(|| parsed.to_string())
+}
+
+impl FromBrowser {
+    /// Trimmed to size, with a thumbnail only when it's YouTube's.
+    pub fn cleaned(self) -> Self {
+        let transcript =
+            clip(self.transcript, MAX_TRANSCRIPT_CHARS).and_then(|t| clean_transcript(&t));
+        Self {
+            title: clip(self.title, 300),
+            description: clip(self.description, MAX_DESCRIPTION_CHARS),
+            author: clip(self.author, 200),
+            thumbnail: youtube_image(self.thumbnail),
+            duration: self.duration.filter(|d| d.is_finite() && *d > 0.0),
+            transcript,
+        }
+    }
+
+    fn meta(&self, url: &str) -> VideoMeta {
+        VideoMeta {
+            url: url.to_string(),
+            title: self.title.clone(),
+            caption: self.description.clone().unwrap_or_default(),
+            author: self.author.clone(),
+            thumbnail: self.thumbnail.clone(),
+            duration: self.duration,
+            subtitles: false,
+        }
+    }
+}
+
+type BrowserKey = (crate::households::HouseholdId, String);
+
+static FROM_BROWSER: LazyLock<Mutex<HashMap<BrowserKey, (Instant, FromBrowser)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Keeps what the browser read for `url` until its import job runs ([`import`] takes it).
+pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
+    let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    while map.len() >= MAX_KEPT_FROM_BROWSER {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+    map.insert(
+        (state.household, url.to_string()),
+        (Instant::now(), read.cleaned()),
+    );
+}
+
+fn take_from_browser(state: &AppState, url: &str) -> Option<FromBrowser> {
+    let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    map.remove(&(state.household, url.to_string()))
+        .map(|(_, read)| read)
 }
 
 /// What a video's page says about it.
@@ -264,9 +383,20 @@ pub fn caption_has_recipe(caption: &str) -> bool {
 pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     let started = Instant::now();
     let tools = &state.config.video;
-    let meta = metadata(state, url)
-        .await
-        .ok_or_else(|| AppError::new(422, format!("Couldn't open that video. {PASTE_HINT}")))?;
+    // The cook's browser already read the page: the site isn't asked again (it may refuse)
+    let from_browser = take_from_browser(state, url);
+    let hint = if from_browser.is_none() && is_youtube(url) {
+        YOUTUBE_HINT
+    } else {
+        PASTE_HINT
+    };
+    let meta = match &from_browser {
+        Some(read) => read.meta(url),
+        None => metadata(state, url)
+            .await
+            .ok_or_else(|| AppError::new(422, format!("Couldn't open that video. {hint}")))?,
+    };
+    let said_in_browser = from_browser.and_then(|read| read.transcript);
     // A different share link to a video that's already saved
     if meta.url != url {
         let conn = state.db.lock();
@@ -289,13 +419,22 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     }
     let mut how = "caption";
     let mut fields = from_caption.clone().filter(has_both);
-    // 2 and 3. What's said and what's shown
+    // 2. The captions the browser read, when there are any: no download needed
+    if fields.is_none()
+        && ai
+        && let Some(said) = &said_in_browser
+    {
+        let text = video_prompt(&meta, Some(said), false);
+        fields = crate::llm::extract_recipe_from_video(state, &[], &text).await;
+        how = "captions";
+    }
+    // 3 and 4. What's said and what's shown
     let mut frames = Vec::new();
     if fields.is_none() && ai && tools.yt_dlp.is_some() && tools.ffmpeg.is_some() {
         if meta.duration.is_some_and(|d| d > MAX_SECONDS) {
             tracing::info!("[video] too long to watch ({:?}s)", meta.duration);
         } else if let Some(watched) = watch(state, &meta).await {
-            let text = video_prompt(&meta, watched.transcript.as_deref());
+            let text = video_prompt(&meta, watched.transcript.as_deref(), true);
             fields = crate::llm::extract_recipe_from_video(state, &watched.frames, &text).await;
             frames = watched.frames;
             how = "video";
@@ -323,7 +462,7 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
         } else {
             "That video's caption doesn't have the recipe, and Wee Chef isn't set up to watch it."
         };
-        return Err(AppError::new(422, format!("{why} {PASTE_HINT}")));
+        return Err(AppError::new(422, format!("{why} {hint}")));
     };
     fields.url = Some(meta.url.clone());
     // The recipe's own video plays on its page
@@ -357,7 +496,7 @@ fn caption_text(meta: &VideoMeta) -> String {
 }
 
 /// What Wee Chef is told alongside the frames.
-pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>) -> String {
+pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>, frames: bool) -> String {
     let mut out = String::from("A cooking video");
     if let Some(author) = &meta.author {
         out.push_str(&format!(" by {author}"));
@@ -375,9 +514,11 @@ pub fn video_prompt(meta: &VideoMeta, transcript: Option<&str>) -> String {
     });
     out.push_str("\n\nWhat the cook says (automatic transcript, which may mishear words):\n");
     out.push_str(transcript.unwrap_or("(no speech)"));
-    out.push_str(
-        "\n\nThe frames above are stills from the video, in order. Read any on-screen text in them (ingredient lists, amounts, temperatures, times).",
-    );
+    if frames {
+        out.push_str(
+            "\n\nThe frames above are stills from the video, in order. Read any on-screen text in them (ingredient lists, amounts, temperatures, times).",
+        );
+    }
     out
 }
 
@@ -1014,15 +1155,64 @@ mod tests {
     }
 
     #[test]
+    fn keeps_what_the_browser_read_in_bounds() {
+        let read = FromBrowser {
+            title: Some("  Pad thai  ".into()),
+            description: Some("x".repeat(MAX_DESCRIPTION_CHARS + 50)),
+            author: Some(String::new()),
+            thumbnail: Some("https://i.ytimg.com/vi/abc/maxresdefault.jpg".into()),
+            duration: Some(f64::NAN),
+            transcript: Some("so today we're making [Music] pad thai with rice noodles".into()),
+        }
+        .cleaned();
+        assert_eq!(read.title.as_deref(), Some("Pad thai"));
+        assert_eq!(
+            read.description.unwrap().chars().count(),
+            MAX_DESCRIPTION_CHARS
+        );
+        assert_eq!(read.author, None);
+        assert_eq!(read.duration, None);
+        assert_eq!(
+            read.transcript.as_deref(),
+            Some("so today we're making pad thai with rice noodles")
+        );
+        assert!(read.thumbnail.is_some());
+        for not_youtube in [
+            "http://i.ytimg.com/vi/abc/0.jpg",
+            "https://ytimg.com.evil.test/0.jpg",
+            "http://127.0.0.1:3000/api/recipes",
+        ] {
+            assert_eq!(
+                youtube_image(Some(not_youtube.into())),
+                None,
+                "{not_youtube}"
+            );
+        }
+        assert!(youtube_image(Some("https://yt3.ggpht.com/a/b=s88".into())).is_some());
+    }
+
+    #[test]
+    fn knows_youtube() {
+        assert!(is_youtube(
+            "https://www.youtube.com/watch?v=Xy_djhH3WE4&t=122s"
+        ));
+        assert!(is_youtube("https://youtu.be/Xy_djhH3WE4"));
+        assert!(!is_youtube("https://www.tiktok.com/@a/video/1"));
+    }
+
+    #[test]
     fn tells_wee_chef_what_it_has() {
         let meta = VideoMeta {
             author: Some("Chef Jo".into()),
             caption: "Noodles!".into(),
             ..Default::default()
         };
-        let p = video_prompt(&meta, None);
+        let p = video_prompt(&meta, None, true);
         assert!(p.starts_with("A cooking video by Chef Jo."));
         assert!(p.contains("Caption:\nNoodles!"));
         assert!(p.contains("(no speech)"));
+        assert!(p.contains("The frames above"));
+        let p = video_prompt(&meta, Some("hello there"), false);
+        assert!(!p.contains("frames"), "no stills were sent");
     }
 }
