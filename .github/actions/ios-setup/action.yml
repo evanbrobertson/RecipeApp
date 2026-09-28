@@ -1,0 +1,34 @@
+# Everything an iOS build needs on a macOS runner: the newest stable Xcode on the image,
+# Rust with the Apple targets for crumb-core, and XcodeGen for ios/project.yml. Shared by
+# ios.yml's jobs so they can't drift apart.
+name: iOS build setup
+description: Xcode, Rust Apple targets, crumb-core cache and XcodeGen
+
+inputs:
+  save-cache:
+    description: Whether this run may write the Cargo cache
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode
+      shell: bash
+      run: |
+        xcode=$(ls -d /Applications/Xcode_*.app | grep -viE 'beta|release_candidate|_rc' | sort -V | tail -1)
+        sudo xcode-select -s "$xcode"
+        xcodebuild -version
+        echo "Xcode: \`$(xcodebuild -version | head -1)\` ($xcode)" >> "$GITHUB_STEP_SUMMARY"
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      with:
+        toolchain: stable
+        targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        prefix-key: ios
+        save-if: ${{ inputs.save-cache == 'true' }}
+    - name: Install XcodeGen
+      shell: bash
+      run: |
+        brew install xcodegen > /dev/null
+        xcodegen --version

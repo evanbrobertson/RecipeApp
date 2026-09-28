@@ -43,6 +43,8 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/release/version.test.sh
+      # The iOS build scripts only run on macOS runners, so lint them here
+      - run: shellcheck ios/scripts/*.sh
 
   web:
     name: Web (astro check, bun test, oxlint, build)

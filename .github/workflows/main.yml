@@ -208,3 +208,17 @@ jobs:
               --service "$service" --environment "$RAILWAY_ENVIRONMENT" --yes
           done
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # The iOS app rides the same version as the server: a Release build of every master push,
+  # uploaded to TestFlight when the App Store Connect secrets exist (unsigned otherwise), as a
+  # workflow artifact. It never blocks deploy-dev.
+  ios-build:
+    name: iOS release build
+    needs: version
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      upload: true
+    secrets: inherit

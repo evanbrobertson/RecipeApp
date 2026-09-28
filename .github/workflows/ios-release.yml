@@ -1,0 +1,87 @@
+# A versioned Release build of the iOS app (ios/scripts/build-release.sh): signed and exported
+# for the App Store when the App Store Connect secrets exist, and uploaded to TestFlight when
+# `upload` is true; otherwise an unsigned archive. Called by main.yml (every master push, to
+# TestFlight) and promote.yml (the promoted commit, attached to the GitHub Release), and can
+# be run by hand. See ios/README.md for the secrets.
+name: iOS release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to build, e.g. 3.1.0 or 3.1.0-main.57
+        required: true
+        type: string
+      ref:
+        description: Commit to build (default the caller's)
+        required: false
+        type: string
+      upload:
+        description: Upload to TestFlight when signing is set up
+        required: false
+        type: boolean
+        default: false
+      release-tag:
+        description: GitHub Release to attach the build to
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, e.g. 3.1.0 (default 0.0.0-manual.<run>)
+        required: false
+        type: string
+      upload:
+        description: Upload to TestFlight when signing is set up
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: iOS release build
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      # Only used to attach to a release (release-tag)
+      contents: write
+    env:
+      VERSION: ${{ inputs.version || format('0.0.0-manual.{0}', github.run_number) }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: ./.github/actions/ios-setup
+      - name: Build
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          CRUMB_BUNDLE_ID: ${{ vars.CRUMB_IOS_BUNDLE_ID || 'app.crumb.ios' }}
+          UPLOAD: ${{ inputs.upload && '1' || '0' }}
+        run: ios/scripts/build-release.sh "$VERSION" ios-dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crumb-ios-${{ env.VERSION }}
+          path: ios-dist/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Attach to the release
+        if: inputs.release-tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release-tag }}
+        run: gh release upload "$TAG" ios-dist/crumb-ios-*.ipa ios-dist/crumb-ios-*.ipa.sha256 --clobber

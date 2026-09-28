@@ -53,6 +53,11 @@ jobs:
       packages: write
       # Reading the commit's check runs before promoting it
       checks: read
+    outputs:
+      # The commit actually promoted (may fall back past a docs-only push) and its version
+      sha: ${{ steps.build.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     env:
       CHANNEL: ${{ inputs.channel }}
       INPUT_SHA: ${{ inputs.sha }}
@@ -251,3 +256,18 @@ jobs:
               --service "$service" --environment "$RAILWAY_ENVIRONMENT" --yes
           done
           echo "Deployed **$VERSION** to Railway \`$RAILWAY_ENVIRONMENT\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # The iOS build of the same commit, attached to the same release (signed when the App Store
+  # Connect secrets exist). TestFlight already has it from main.yml; submitting for App Store
+  # review stays a manual step in App Store Connect.
+  ios-release:
+    name: iOS release assets
+    needs: promote
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ios-release.yml
+    with:
+      version: ${{ needs.promote.outputs.version }}
+      ref: ${{ needs.promote.outputs.sha }}
+      release-tag: ${{ needs.promote.outputs.tag }}
+    secrets: inherit

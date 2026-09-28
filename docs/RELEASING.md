@@ -50,6 +50,16 @@ The `-main.<run>` version is the build's identity everywhere: it is the image la
 
 **Beta** exists as a channel (tag `vX.Y.Z-beta.N`, a GitHub pre-release, image tag `:beta`, branch `release/beta`). It deploys only once a `beta` GitHub environment with a `RAILWAY_TOKEN` exists; until then it only tags.
 
+## iOS
+
+The iPhone app (`ios/`, with `crumb-core` linked through `crates/crumb-ffi` as an XCFramework) shares the server's version stream.
+
+- **Checks.** `ios.yml` runs on every change to `ios/`, `crates/crumb-core`, `crates/crumb-ffi` or the Cargo files, on macOS runners: it builds the core for iPhone, the simulator and the Mac, runs CrumbKit's tests against the real core, checks swift-format (printing the patch when something isn't formatted), runs the app's unit and UI tests on a simulator against the built-in demo server, and builds Release for iPhone unsigned. The toolchain (Xcode, Rust Apple targets, XcodeGen) is one composite action, `.github/actions/ios-setup`.
+- **Dev builds.** Every master push runs `ios-release.yml`: a versioned Release archive (`ios/scripts/build-release.sh`), uploaded to **TestFlight** when the App Store Connect secrets below exist, and kept as the `crumb-ios-<version>` workflow artifact (30 days). It never blocks deploy-dev.
+- **Promote.** An `ios-release` job builds the promoted commit and attaches `crumb-ios-<version>.ipa` (or `-unsigned.ipa`) and its `.sha256` to the GitHub Release. Submitting a TestFlight build for App Store review is done in App Store Connect.
+- **Version and build.** `3.1.0-main.57` ships as version `3.1.0`; the build number is the build's UTC time, `YYYYMMDD.HHMM`, so each upload is newer than the last.
+- **Signing.** Cloud-managed through an App Store Connect API key (`APPLE_TEAM_ID`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_PRIVATE_KEY`; optionally `IOS_CERTIFICATE_P12_BASE64` and `IOS_CERTIFICATE_PASSWORD`). Without them the build is unsigned. See `ios/README.md`.
+
 ## Secrets and variables
 
 Repository secrets (Settings → Secrets and variables → Actions):
