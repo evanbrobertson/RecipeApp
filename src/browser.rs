@@ -7,6 +7,8 @@
 //! is driven over the DevTools protocol directly (a handful of commands), which keeps the
 //! binary small compared with a full CDP client.
 
+use base64::Engine;
+use crumb_core::photo::MAX_SOURCE_BYTES;
 use futures_util::{SinkExt, StreamExt};
 use regex::Regex;
 use serde_json::{Value, json};
@@ -19,6 +21,7 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 const CANDIDATES: [&str; 4] = [
@@ -32,6 +35,28 @@ const CANDIDATES: [&str; 4] = [
 const RECIPE_READY: &str = r#"[...document.querySelectorAll('script[type="application/ld+json"]')]
   .some((s) => /Recipe/.test(s.textContent || ""))
   || !!document.querySelector('[itemprop="recipeIngredient"], [class*="ingredient"]')"#;
+
+// Runs in the photo's tab: its bytes again (from the HTTP cache, with the cookies the
+// challenge set) as base64, or null when it isn't a photo or is too large
+const READ_IMAGE: &str = r#"(async () => {
+  const res = await fetch(location.href, { cache: "force-cache" })
+  if (!res.ok || !(res.headers.get("content-type") || "").startsWith("image/")) return null
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  if (bytes.length > MAX_BYTES) return null
+  let s = ""
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(s)
+})()"#;
+
+/// What a page load is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Want {
+    /// The rendered HTML.
+    Html,
+    /// The bytes of the photo at the URL.
+    Image,
+}
 
 static VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(\d+)\.\d+\.\d+\.\d+\b").unwrap());
@@ -130,6 +155,19 @@ impl Browser {
 
     /// Loads a page in real Chromium and returns the rendered HTML (after scripts run).
     pub async fn fetch(&self, url: &str) -> Result<String, String> {
+        self.load(url, Want::Html).await
+    }
+
+    /// Loads a photo in real Chromium, as a visitor's browser would, for a site whose bot
+    /// shield answers any other client with a challenge page. The photo's bytes.
+    pub async fn fetch_image(&self, url: &str) -> Result<Vec<u8>, String> {
+        let b64 = self.load(url, Want::Image).await?;
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("bad image data: {e}"))
+    }
+
+    async fn load(&self, url: &str, want: Want) -> Result<String, String> {
         let exe = self
             .executable
             .as_deref()
@@ -145,13 +183,16 @@ impl Browser {
         };
         let _guard = self.lock.lock().await;
         let timeout = Duration::from_secs(40);
-        tokio::time::timeout(timeout + Duration::from_secs(5), run(exe, url, timeout))
-            .await
-            .map_err(|_| "Timed out loading the page".to_string())?
+        tokio::time::timeout(
+            timeout + Duration::from_secs(5),
+            run(exe, url, timeout, want),
+        )
+        .await
+        .map_err(|_| "Timed out loading the page".to_string())?
     }
 }
 
-async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String> {
+async fn run(exe: &Path, url: &str, timeout: Duration, want: Want) -> Result<String, String> {
     let profile = tempfile::tempdir().map_err(|e| e.to_string())?;
     let mut command = Command::new(exe);
     if let Some(ua) = user_agent(exe).await {
@@ -181,7 +222,7 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
         .spawn()
         .map_err(|e| format!("Couldn't start Chromium: {e}"))?;
 
-    let result = drive(&mut child, url, timeout).await;
+    let result = drive(&mut child, url, timeout, want).await;
     let _ = child.kill().await;
     result
 }
@@ -253,6 +294,17 @@ impl Cdp {
         Ok(r.pointer("/result/value").cloned().unwrap_or(Value::Null))
     }
 
+    /// Like [`Self::eval`], awaiting the promise `expression` returns.
+    async fn eval_async(&mut self, expression: &str) -> Result<Value, String> {
+        let r = self
+            .call(
+                "Runtime.evaluate",
+                json!({"expression": expression, "returnByValue": true, "awaitPromise": true}),
+            )
+            .await?;
+        Ok(r.pointer("/result/value").cloned().unwrap_or(Value::Null))
+    }
+
     async fn title(&mut self) -> String {
         self.eval("document.title")
             .await
@@ -262,12 +314,21 @@ impl Cdp {
     }
 }
 
-async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String, String> {
+async fn drive(
+    child: &mut Child,
+    url: &str,
+    timeout: Duration,
+    want: Want,
+) -> Result<String, String> {
     let deadline = Instant::now() + timeout;
     let ws_url = devtools_url(child).await?;
-    let (ws, _) = tokio_tungstenite::connect_async(ws_url.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
+    // A photo comes back as one base64 message, in a frame past the default 16 MB cap
+    let mut config = WebSocketConfig::default();
+    config.max_frame_size = config.max_message_size;
+    let (ws, _) =
+        tokio_tungstenite::connect_async_with_config(ws_url.as_str(), Some(config), false)
+            .await
+            .map_err(|e| e.to_string())?;
     let mut cdp = Cdp {
         ws,
         next_id: 0,
@@ -287,8 +348,10 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
     cdp.session = attached["sessionId"].as_str().map(String::from);
 
     cdp.call("Network.enable", json!({})).await?;
-    cdp.call("Network.setBlockedURLs", json!({"urls": BLOCKED}))
-        .await?;
+    if want == Want::Html {
+        cdp.call("Network.setBlockedURLs", json!({"urls": BLOCKED}))
+            .await?;
+    }
     cdp.call(
         "Network.setExtraHTTPHeaders",
         json!({"headers": {"Accept-Language": "en-US,en;q=0.9"}}),
@@ -328,6 +391,17 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
         tokio::time::sleep(Duration::from_millis(1500)).await;
     }
 
+    let out = match want {
+        Want::Html => page_html(&mut cdp, deadline).await,
+        Want::Image => image_base64(&mut cdp, deadline).await,
+    };
+    cdp.session = None;
+    let _ = cdp.call("Browser.close", json!({})).await;
+    out
+}
+
+/// The rendered page, once its recipe data is there (or soon after).
+async fn page_html(cdp: &mut Cdp, deadline: Instant) -> Result<String, String> {
     // Wait briefly for client-rendered recipe data (JSON-LD or ingredient lists)
     let remaining = deadline.saturating_duration_since(Instant::now());
     let wait_until =
@@ -343,11 +417,32 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
         return Err("Blocked by the site".into());
     }
     let html = cdp.eval("document.documentElement.outerHTML").await?;
-    cdp.session = None;
-    let _ = cdp.call("Browser.close", json!({})).await;
     html.as_str()
         .map(String::from)
         .ok_or_else(|| "Empty page".into())
+}
+
+/// The photo the tab ended up on, base64-encoded. A shield's challenge (SiteGround's goes
+/// through a proof-of-work page) sends the tab back to the photo once it's passed.
+async fn image_base64(cdp: &mut Cdp, deadline: Instant) -> Result<String, String> {
+    loop {
+        let kind = cdp
+            .eval("document.contentType")
+            .await
+            .unwrap_or(Value::Null);
+        if kind.as_str().is_some_and(|k| k.starts_with("image/")) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err("Blocked by the site".into());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let read = READ_IMAGE.replace("MAX_BYTES", &MAX_SOURCE_BYTES.to_string());
+    let data = cdp.eval_async(&read).await?;
+    data.as_str()
+        .map(String::from)
+        .ok_or_else(|| "Not a photo, or too large".into())
 }
 
 #[cfg(test)]
