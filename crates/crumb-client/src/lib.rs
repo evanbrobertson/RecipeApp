@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use reqwest::cookie::{CookieStore, Jar};
 use reqwest::{Client as HttpClient, Response};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::Url;
 
@@ -16,18 +16,25 @@ pub use crumb_core::model::{
 };
 pub use crumb_core::staples::{Staple, Staples};
 
+mod accounts;
 mod checks;
 mod cookbooks;
 mod error;
 mod recipes;
 mod shares;
 mod types;
+pub use accounts::*;
 pub use error::Error;
 pub use types::*;
 
 /// Name of the session cookie the server sets (`src/auth.rs`). The desktop app keeps
 /// this value in the keyring so a signed-in session survives a restart.
 pub const SESSION_COOKIE: &str = "crumb_session";
+
+/// Better Auth's session cookie for the hosted edition (`advanced.cookiePrefix` is
+/// `crumb` in `auth/src/auth.ts`); over HTTPS it gets a `__Secure-` prefix.
+const HOSTED_COOKIE: &str = "crumb.session_token";
+const SECURE_PREFIX: &str = "__Secure-";
 
 /// What to save: a link or pasted text, sent to `POST /api/recipes/import`.
 #[derive(Debug, Clone)]
@@ -37,7 +44,8 @@ pub enum ImportInput {
 }
 
 /// A completed import: the saved recipe and whether it was new (the API's `isNew`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Imported {
     pub recipe: Recipe,
     pub is_new: bool,
@@ -50,7 +58,7 @@ pub struct Imported {
 }
 
 /// A shared cookbook saved from another Crumb ("Added 12 recipes to Weeknights").
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedCookbook {
     pub id: i64,
     pub name: String,
@@ -62,7 +70,7 @@ pub struct ImportedCookbook {
 }
 
 /// A cooking video's place in the server's queue (`GET /api/import/jobs/{id}`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportJob {
     /// `queued`, `running`, `done` or `failed`.
@@ -77,7 +85,7 @@ pub struct ImportJob {
 }
 
 /// The recipe a finished video job saved.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobRecipe {
     pub id: i64,
@@ -139,25 +147,37 @@ impl Client {
         })
     }
 
-    /// Restores a session from a previously saved [`Client::session_cookie`] value.
+    /// Restores a session from a previously saved [`Client::session_cookie`] value: a bare
+    /// `crumb_session` value, or `name=value` for the hosted edition's cookie.
     pub fn with_session(base_url: &str, cookie: &str) -> Result<Self, Error> {
         let client = Self::new(base_url)?;
         client.set_session(cookie);
         Ok(client)
     }
 
-    fn set_session(&self, cookie: &str) {
+    fn set_session(&self, saved: &str) {
+        let (name, value) = split_session(saved);
+        let secure = if name.starts_with(SECURE_PREFIX) {
+            "; Secure"
+        } else {
+            ""
+        };
         self.jar
-            .add_cookie_str(&format!("{SESSION_COOKIE}={cookie}; Path=/"), &self.url);
+            .add_cookie_str(&format!("{name}={value}; Path=/{secure}"), &self.url);
     }
 
-    /// The current `crumb_session` value, to persist in the keyring.
+    /// The session to persist in the keyring: the `crumb_session` value on its own, or
+    /// `name=value` when the server is hosted and Better Auth set the cookie.
     pub fn session_cookie(&self) -> Option<String> {
         let header = self.jar.cookies(&self.url)?;
         let cookies = header.to_str().ok()?;
         cookies.split(';').find_map(|pair| {
             let (name, value) = pair.trim().split_once('=')?;
-            (name == SESSION_COOKIE).then(|| value.to_string())
+            if name == SESSION_COOKIE {
+                Some(value.to_string())
+            } else {
+                is_hosted_cookie(name).then(|| format!("{name}={value}"))
+            }
         })
     }
 
@@ -434,6 +454,26 @@ impl Client {
     }
 }
 
+/// A saved [`Client::session_cookie`] as a `Cookie` header value, for code that makes its
+/// own requests to the server (like the desktop app's photo loader).
+pub fn session_header(saved: &str) -> String {
+    let (name, value) = split_session(saved);
+    format!("{name}={value}")
+}
+
+fn is_hosted_cookie(name: &str) -> bool {
+    name == HOSTED_COOKIE || name.strip_prefix(SECURE_PREFIX) == Some(HOSTED_COOKIE)
+}
+
+/// A saved session as cookie name and value: `name=value` for the hosted edition's
+/// cookie, anything else a bare `crumb_session` value (which may itself contain `=`).
+fn split_session(saved: &str) -> (&str, &str) {
+    match saved.split_once('=') {
+        Some((name, value)) if is_hosted_cookie(name) => (name, value),
+        _ => (SESSION_COOKIE, saved),
+    }
+}
+
 /// The file name in a `Content-Disposition` header: the UTF-8 `filename*` when there is
 /// one (RFC 6266, as `api::attachment` writes it), else the plain `filename`.
 fn attachment_name(header: &str) -> Option<String> {
@@ -527,6 +567,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(book.cookbook.unwrap().added, 2);
+    }
+
+    #[test]
+    fn saved_sessions_as_headers() {
+        assert_eq!(session_header("abc.d=="), "crumb_session=abc.d==");
+        assert_eq!(
+            session_header("__Secure-crumb.session_token=x.y"),
+            "__Secure-crumb.session_token=x.y"
+        );
+    }
+
+    #[test]
+    fn saved_sessions_name_their_cookie() {
+        assert_eq!(split_session("abc.def"), ("crumb_session", "abc.def"));
+        assert_eq!(split_session("abc.d=="), ("crumb_session", "abc.d=="));
+        assert_eq!(
+            split_session("crumb.session_token=abc.d%3D"),
+            ("crumb.session_token", "abc.d%3D")
+        );
+        assert_eq!(
+            split_session("__Secure-crumb.session_token=abc"),
+            ("__Secure-crumb.session_token", "abc")
+        );
     }
 
     #[test]
