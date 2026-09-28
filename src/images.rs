@@ -507,15 +507,25 @@ impl std::fmt::Display for LoadError {
     }
 }
 
-/// Refuses a response that isn't a usable image before reading its body.
+/// Headers a bot shield sets on its challenge page (SiteGround, Cloudflare, AWS WAF). A
+/// browser passes the challenge and gets the photo, so the link isn't dead.
+const CHALLENGE_HEADERS: [&str; 3] = ["sg-captcha", "cf-mitigated", "x-amzn-waf-action"];
+
+/// Refuses a response that isn't a usable image before reading its body. `challenged`: the
+/// answer carries one of [`CHALLENGE_HEADERS`].
 fn check_response(
     status: u16,
     content_type: Option<&str>,
     length: Option<u64>,
+    challenged: bool,
 ) -> Result<(), LoadError> {
+    if challenged {
+        return Err(LoadError::passing(format!("bot challenge ({status})")));
+    }
     if !(200..300).contains(&status) {
         let message = format!("fetch returned {status}");
-        return Err(if (400..500).contains(&status) {
+        // 429 is "slow down", not "gone"
+        return Err(if (400..500).contains(&status) && status != 429 {
             LoadError::dead(message)
         } else {
             LoadError::passing(message)
@@ -523,7 +533,14 @@ fn check_response(
     }
     let kind = content_type.unwrap_or("").to_ascii_lowercase();
     if kind.starts_with("text/") || kind.contains("json") {
-        return Err(LoadError::dead(format!("not an image ({kind})")));
+        let message = format!("not an image ({status} {kind})");
+        // Only a plain 200 page means the link leads somewhere else; a 202 or the like is
+        // a holding page (often an unlabelled bot challenge)
+        return Err(if status == 200 {
+            LoadError::dead(message)
+        } else {
+            LoadError::passing(message)
+        });
     }
     if length.is_some_and(|n| n > MAX_SOURCE_BYTES as u64) {
         return Err(LoadError::passing(TOO_LARGE));
@@ -560,8 +577,16 @@ async fn load_with_wreq(
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    check_response(res.status().as_u16(), content_type, res.content_length())
-        .map_err(Wreq::Answered)?;
+    let challenged = CHALLENGE_HEADERS
+        .iter()
+        .any(|h| res.headers().contains_key(*h));
+    check_response(
+        res.status().as_u16(),
+        content_type,
+        res.content_length(),
+        challenged,
+    )
+    .map_err(Wreq::Answered)?;
     crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
         .await
         .map_err(|e| match e {
@@ -591,7 +616,15 @@ async fn load_with_reqwest(
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    check_response(res.status().as_u16(), content_type, res.content_length())?;
+    let challenged = CHALLENGE_HEADERS
+        .iter()
+        .any(|h| res.headers().contains_key(*h));
+    check_response(
+        res.status().as_u16(),
+        content_type,
+        res.content_length(),
+        challenged,
+    )?;
     let mut body = Vec::new();
     while let Some(chunk) = res
         .chunk()
@@ -809,6 +842,25 @@ mod tests {
         assert_eq!(embed(b"<svg/>"), None);
         let webp = resize_to_webp(&png, 160).unwrap();
         assert!(embed(&webp).unwrap().starts_with("data:image/webp;base64,"));
+    }
+
+    #[test]
+    fn only_a_refusal_makes_a_photo_link_dead() {
+        let dead = |status, kind, challenged| {
+            check_response(status, Some(kind), None, challenged)
+                .err()
+                .map(|e| e.dead)
+        };
+        assert_eq!(dead(200, "image/jpeg", false), None);
+        assert_eq!(dead(404, "text/html", false), Some(true));
+        assert_eq!(dead(200, "text/html", false), Some(true));
+        // SiteGround's shield: 202, an HTML page and `sg-captcha: challenge`
+        assert_eq!(dead(202, "text/html", true), Some(false));
+        assert_eq!(dead(202, "text/html", false), Some(false));
+        // Cloudflare's: 403 with `cf-mitigated: challenge`
+        assert_eq!(dead(403, "text/html", true), Some(false));
+        assert_eq!(dead(429, "text/html", false), Some(false));
+        assert_eq!(dead(503, "text/html", false), Some(false));
     }
 
     #[test]
