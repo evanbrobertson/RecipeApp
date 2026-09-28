@@ -371,3 +371,65 @@ test("people can download their data and delete their account", async () => {
   })
   expect(refused.status).toBe(401)
 })
+
+test("an email changes once the new address confirms it, and the old one can undo it", async () => {
+  const { mailer, call, internal, signUp } = await setup()
+  for (const [who, name] of [["dan", "Dan"], ["eve", "Eve"], ["fay", "Fay"]] as const) {
+    await signUp(who, name)
+  }
+  const change = (who: string, email: string, password = "long enough") =>
+    internal(who, "/internal/change-email", { email, password })
+  const confirm = (token: string) => internal("anyone", "/internal/confirm-email", { token })
+  const linkIn = (text: string) => text.match(/\/email-change#(\S+)/)![1]!
+
+  // It's really them, and the address is free
+  expect((await internal("nobody", "/internal/change-email", { email: "x@example.com" })).status).toBe(
+    401,
+  )
+  expect((await change("dan", "dan@example.org", "nope")).status).toBe(401)
+  expect((await change("dan", "eve@example.com")).status).toBe(409)
+  expect((await change("dan", "DAN@example.com")).status).toBe(400)
+  expect((await change("dan", "not an email")).status).toBe(400)
+
+  // Without email, it changes at once (sign-up doesn't wait on a verified address either)
+  const now = await change("fay", "fay@example.org")
+  expect(now.data).toEqual({ ok: true, pending: false, email: "fay@example.org" })
+  expect((await internal("fay", "/internal/session")).data.session.user.email).toBe("fay@example.org")
+
+  // With email: nothing changes until the new address opens its link
+  Object.assign(mailer, { enabled: true })
+  const asked = await change("dan", "Dan@Example.org")
+  expect(asked.data).toEqual({ ok: true, pending: true, email: "dan@example.org" })
+  const sent = mailer.sent.at(-1)!
+  expect(sent.to).toBe("dan@example.org")
+  expect((await internal("dan", "/internal/session")).data.session.user.email).toBe("dan@example.com")
+  expect((await confirm("made-up")).status).toBe(410)
+  const first = await confirm(linkIn(sent.text))
+  expect(first.data).toEqual({ ok: true, done: "changed", email: "dan@example.org" })
+  expect((await confirm(linkIn(sent.text))).status).toBe(410)
+  expect((await internal("dan", "/internal/session")).data.session.user.email).toBe("dan@example.org")
+  // The old address was never verified (no email at sign-up), so it isn't sent a way back
+  expect(mailer.sent.at(-1)).toBe(sent)
+  const signIn = (email: string) =>
+    call("dan-phone", "/api/auth/sign-in/email", { email, password: "long enough" })
+  expect((await signIn("dan@example.com")).status).toBe(401)
+  expect((await signIn("dan@example.org")).status).toBe(200)
+
+  // An older link, asked for before an address changed, is out of date
+  const stale = await change("dan", "dan@example.net")
+  expect(stale.status).toBe(200)
+  const staleLink = linkIn(mailer.sent.at(-1)!.text)
+  await change("dan", "dan@example.co")
+  await confirm(linkIn(mailer.sent.at(-1)!.text))
+  expect((await confirm(staleLink)).status).toBe(410)
+
+  // dan@example.org was verified: it's told, and its link puts it back and signs everyone out
+  const notice = mailer.sent.at(-1)!
+  expect(notice.to).toBe("dan@example.org")
+  expect(notice.text).toContain("dan@example.co")
+  const back = await confirm(linkIn(notice.text))
+  expect(back.data).toEqual({ ok: true, done: "reverted", email: "dan@example.org" })
+  expect((await internal("dan", "/internal/session")).data.session).toBeNull()
+  expect((await internal("dan-phone", "/internal/session")).data.session).toBeNull()
+  expect((await signIn("dan@example.org")).status).toBe(200)
+})

@@ -8,6 +8,7 @@ import { timingSafeEqual } from "node:crypto"
 import { getMigrations } from "better-auth/db/migration"
 import { type Auth, authOptions, createAuth } from "./auth"
 import { deleteAccount, exportAccount } from "./account"
+import { changeEmail, confirmEmail } from "./email"
 import { crumbSession, isMember } from "./kitchen"
 import { type Mailer, mailerFromEnv } from "./mailer"
 import { type Social, socialFromEnv } from "./social"
@@ -77,6 +78,20 @@ async function internal(
       const body = (await req.json().catch(() => ({}))) as { password?: unknown }
       const password = typeof body.password === "string" ? body.password : ""
       return await deleteAccount(auth, req.headers, password)
+    }
+    // The same, and `{email, password}`: sends the new address a link (see email.ts)
+    case "/internal/change-email": {
+      const body = (await req.json().catch(() => ({}))) as { email?: unknown; password?: unknown }
+      return await changeEmail(auth, opts.mailer, opts.baseURL, req.headers, {
+        email: typeof body.email === "string" ? body.email : "",
+        password: typeof body.password === "string" ? body.password : "",
+      })
+    }
+    // `{token}` from a change-email link, whoever's signed in
+    case "/internal/confirm-email": {
+      const body = (await req.json().catch(() => ({}))) as { token?: unknown }
+      const token = typeof body.token === "string" ? body.token : ""
+      return await confirmEmail(auth, opts.mailer, opts.baseURL, token)
     }
     // The browser's cookies, forwarded: who they're signed in as, and where (`?create=0`:
     // without making a kitchen for someone in no household yet)

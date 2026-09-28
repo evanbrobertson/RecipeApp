@@ -1093,6 +1093,50 @@ impl Accounts {
         Ok((user, household))
     }
 
+    /// Changes an account's email: refused when it's malformed, already theirs (400) or
+    /// another account's (409). Returns the address as stored.
+    pub fn change_email(&self, user: i64, email: &str) -> AppResult<String> {
+        let email = valid_email(email)?;
+        let conn = self.lock();
+        let current: String =
+            conn.query_row("SELECT email FROM users WHERE id = ?1", [user], |r| {
+                r.get(0)
+            })?;
+        if current == email {
+            return Err(AppError::bad_request("email: That's already your email"));
+        }
+        // Their own address in other capitals is fine
+        let taken = conn
+            .query_row(
+                "SELECT 1 FROM users WHERE lower(email) = lower(?1) AND id != ?2",
+                params![email, user],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if taken {
+            return Err(AppError::new(
+                409,
+                "email: There's already an account with that email",
+            ));
+        }
+        conn.execute(
+            "UPDATE users SET email = ?1 WHERE id = ?2",
+            params![email, user],
+        )?;
+        Ok(email)
+    }
+
+    /// When a session was signed in (unix seconds), while it lasts.
+    pub fn session_started(&self, id: i64) -> AppResult<Option<i64>> {
+        Ok(self
+            .lock()
+            .query_row("SELECT created_at FROM sessions WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
     /// Checks the password of an account that has one (true for one that doesn't).
     pub async fn check_password(&self, user: i64, password: &str) -> AppResult<bool> {
         let hash: String = self.lock().query_row(
@@ -1553,6 +1597,48 @@ mod tests {
         assert_eq!(a.session(&phone).unwrap(), None);
         // Not into a household you don't belong to
         assert!(a.start_session(ann, 99, None).is_err());
+    }
+
+    #[tokio::test]
+    async fn an_email_can_be_changed_to_one_nobody_has() {
+        let a = Accounts::open_in_memory().unwrap();
+        let ann = a
+            .set_up("ann@exmaple.com", "Ann", "correct horse")
+            .await
+            .unwrap();
+        a.sign_up("bob@example.com", "Bob", "another pass")
+            .await
+            .unwrap();
+        assert_eq!(
+            a.change_email(ann, " ann@example.com ").unwrap(),
+            "ann@example.com"
+        );
+        assert!(
+            a.authenticate("ann@example.com", "correct horse")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            a.authenticate("ann@exmaple.com", "correct horse")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Their own address in other capitals, yes; unchanged, someone else's or malformed, no
+        assert_eq!(
+            a.change_email(ann, "Ann@Example.com").unwrap(),
+            "Ann@Example.com"
+        );
+        assert_eq!(
+            a.change_email(ann, "Ann@Example.com").unwrap_err().status,
+            400
+        );
+        assert_eq!(
+            a.change_email(ann, "BOB@example.com").unwrap_err().status,
+            409
+        );
+        assert_eq!(a.change_email(ann, "not an email").unwrap_err().status, 400);
     }
 
     #[test]
