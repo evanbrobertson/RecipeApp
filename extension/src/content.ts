@@ -89,14 +89,20 @@ async function handOverVideo() {
   while (Date.now() < until) {
     const got = await send<Waiting | null | boolean>({ type: "takeVideo" })
     if (!got || typeof got !== "object") return
-    if (got.video) {
+    if (got.status !== "reading") {
       waiting = got
       break
     }
     await new Promise((r) => setTimeout(r, VIDEO_ASK_MS))
   }
-  if (!waiting?.video) return
-  const message: VideoForCrumb = { type: "crumb:video", url: waiting.url, video: waiting.video }
+  // Still reading after all that: the page is told it couldn't be read, not left waiting
+  const url = waiting?.url ?? new URLSearchParams(location.search).get("url") ?? ""
+  const message: VideoForCrumb = {
+    type: "crumb:video",
+    url,
+    video: waiting?.video ?? null,
+    captions: waiting?.captions ?? "none",
+  }
   const post = () => window.postMessage(message, location.origin)
   post()
   // The page may not be listening yet: it asks when it is
@@ -115,7 +121,16 @@ function onYouTube(settings: Awaited<ReturnType<typeof load>>) {
       reply(null)
       return false
     }
-    readVideo(id).then(reply, () => reply(null))
+    readVideo(id).then(
+      (read) => {
+        console.info("[Crumb] read the video", id, read ? `(captions: ${read.captions})` : "")
+        reply(read)
+      },
+      (err) => {
+        console.info("[Crumb] couldn't read the video", id, err)
+        reply(null)
+      },
+    )
     return true
   })
   if (!settings.prompt || settings.muted.includes(siteOf(location.hostname))) return

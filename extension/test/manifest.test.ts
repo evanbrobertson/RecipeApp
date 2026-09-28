@@ -15,7 +15,7 @@ describe("manifest", () => {
 
   test("asks for as little as it can", () => {
     const m = manifest("chrome", "1.0.0")
-    expect(m.permissions).toEqual(["storage", "activeTab"])
+    expect(m.permissions).toEqual(["storage", "activeTab", "scripting"])
     expect(m.host_permissions).toBeUndefined()
     expect(m.web_accessible_resources).toBeUndefined()
   })

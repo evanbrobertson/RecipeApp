@@ -31,6 +31,9 @@
     { long: "Paste a TikTok, Reel or YouTube video", short: "cooking\nvideos too" },
   ]
 
+  /** How long the Add box waits for the extension to read a video (it gives up at 20 s). */
+  const EXTENSION_WAIT_MS = 25_000
+
   const URL_RE = /^https?:\/\/\S+$/i
   // Cooking videos Wee Chef watches (src/video.rs): slower than a recipe page
   const VIDEO_RE =
@@ -226,14 +229,38 @@
       tab = "add"
       pickTip()
     }
-    // Opened by the extension for a video: it posts what it read, now or once asked
+    // Opened by the extension for a video: it reads the video in the cook's browser and posts
+    // what it read (or that it couldn't), and the import starts from that
+    let handedOver = false
+    let giveUp: ReturnType<typeof setTimeout> | undefined
+    const couldntRead = () => {
+      saving = false
+      progress = ""
+      toast({
+        title: "Couldn't read that video in your browser",
+        description: "Press Add to have Crumb try, or paste the recipe text.",
+        tone: "error",
+      })
+    }
     const fromExtension = (e: MessageEvent) => {
       const data = e.data as { type?: string; url?: unknown; video?: unknown } | null
       if (e.source !== window || e.origin !== location.origin || data?.type !== "crumb:video") return
-      if (typeof data.url !== "string" || !data.video || typeof data.video !== "object") return
+      if (handedOver || typeof data.url !== "string") return
+      handedOver = true
+      clearTimeout(giveUp)
+      if (!data.video || typeof data.video !== "object") return couldntRead()
       fromBrowser = { url: data.url, video: data.video as Record<string, unknown> }
+      void importBody({ url: data.url, video: fromBrowser.video }, "get that recipe")
     }
-    if (params.get("via") === "extension") {
+    if (params.get("via") === "extension" && shared) {
+      saving = true
+      progress = "Reading the video in your browser…"
+      giveUp = setTimeout(() => {
+        if (!handedOver) {
+          handedOver = true
+          couldntRead()
+        }
+      }, EXTENSION_WAIT_MS)
       addEventListener("message", fromExtension)
       postMessage({ type: "crumb:want-video" }, location.origin)
     }
@@ -245,6 +272,7 @@
     return () => {
       removeEventListener("pointerdown", close)
       removeEventListener("message", fromExtension)
+      clearTimeout(giveUp)
     }
   })
 

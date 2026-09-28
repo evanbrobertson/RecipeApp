@@ -396,6 +396,16 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
             .await
             .ok_or_else(|| AppError::new(422, format!("Couldn't open that video. {hint}")))?,
     };
+    if let Some(read) = &from_browser {
+        tracing::info!(
+            "[video] {}: read in the browser: {} characters of description, {} words of captions",
+            crate::telemetry::host_of(url),
+            read.description.as_deref().map_or(0, |d| d.chars().count()),
+            read.transcript
+                .as_deref()
+                .map_or(0, |t| t.split_whitespace().count())
+        );
+    }
     let said_in_browser = from_browser.and_then(|read| read.transcript);
     // A different share link to a video that's already saved
     if meta.url != url {

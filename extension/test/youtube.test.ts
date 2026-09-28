@@ -6,6 +6,7 @@ import {
   looksLikeRecipe,
   MAX_TRANSCRIPT,
   pickTrack,
+  playerCaptionUrl,
   readPlayer,
   transcriptPanelText,
   videoId,
@@ -130,4 +131,16 @@ test("offers only on videos that say they're a recipe", () => {
   expect(looksLikeRecipe({ title: "Pad thai", description: "Full recipe below" })).toBe(true)
   expect(looksLikeRecipe({ title: "Ingredients you need for pad thai" })).toBe(true)
   expect(looksLikeRecipe({ title: "My trip to Bangkok", description: "Vlog" })).toBe(false)
+})
+
+test("the player's own caption request, as json3", () => {
+  const loaded = [
+    "https://www.youtube.com/s/player/abc/base.js",
+    "https://www.youtube.com/api/timedtext?v=other&lang=en&pot=zzz&fmt=srv3",
+    "https://www.youtube.com/api/timedtext?v=Xy_djhH3WE4&lang=en&pot=abc&fmt=srv3",
+  ]
+  const url = new URL(playerCaptionUrl(loaded, "Xy_djhH3WE4")!)
+  expect(url.searchParams.get("pot")).toBe("abc")
+  expect(url.searchParams.get("fmt")).toBe("json3")
+  expect(playerCaptionUrl(loaded.slice(0, 2), "Xy_djhH3WE4")).toBeNull()
 })

@@ -19,6 +19,9 @@ export interface VideoRead {
   transcript?: string
 }
 
+/** Where the caption words came from, for the console and the Add page's message. */
+export type CaptionSource = "track" | "panel" | "player" | "none"
+
 /** Crumb keeps this much of a transcript; the rest isn't sent. */
 export const MAX_TRANSCRIPT = 30_000
 
@@ -164,6 +167,23 @@ export function transcriptPanelText(json: unknown): string {
   )
 }
 
+/**
+ * The caption file the video's own player already fetched, from the page's resource timing.
+ * YouTube signs these requests (a `pot` token only the player can make), so a copy of the
+ * player's own address works where the listed track's `baseUrl` comes back empty.
+ */
+export function playerCaptionUrl(loaded: readonly string[], id: string): string | null {
+  let url: string | undefined
+  for (let i = loaded.length - 1; i >= 0 && !url; i--) {
+    const u = loaded[i]!
+    if (u.includes("/api/timedtext") && new URL(u).searchParams.get("v") === id) url = u
+  }
+  if (!url) return null
+  const json3 = new URL(url)
+  json3.searchParams.set("fmt", "json3")
+  return json3.toString()
+}
+
 /** Whether a video says it's a recipe, so the extension offers to read it. */
 export function looksLikeRecipe(video: VideoRead): boolean {
   const said = `${video.title ?? ""}\n${video.description ?? ""}`
@@ -197,16 +217,54 @@ async function transcriptPanel(html: string): Promise<string> {
   const key = /"INNERTUBE_API_KEY":"([^"]+)"/.exec(html)?.[1]
   const context = jsonAfter(html, '"INNERTUBE_CONTEXT":')
   if (!params || !key || !context) return ""
+  const client = obj(obj(context).client)
   const body = await text(
     `https://www.youtube.com/youtubei/v1/get_transcript?key=${encodeURIComponent(key)}&prettyPrint=false`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // What YouTube's own page sends with the request
+      headers: {
+        "Content-Type": "application/json",
+        "X-Youtube-Client-Name": "1",
+        "X-Youtube-Client-Version": str(client.clientVersion) ?? "",
+      },
       body: JSON.stringify({ context, params }),
     },
   )
   try {
     return body ? transcriptPanelText(JSON.parse(body)) : ""
+  } catch {
+    return ""
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function loadedUrls(): string[] {
+  return performance.getEntriesByType("resource").map((e) => e.name)
+}
+
+/**
+ * The words from the player's own caption request, on the video's own page. When the player
+ * hasn't fetched captions yet, the CC button is pressed so it does, then pressed again to put
+ * it back as it was.
+ */
+async function playerCaptions(id: string): Promise<string> {
+  if (videoId(location.href) !== id) return ""
+  let url = playerCaptionUrl(loadedUrls(), id)
+  const cc = document.querySelector<HTMLElement>(".ytp-subtitles-button")
+  if (!url && cc && cc.getAttribute("aria-pressed") === "false") {
+    cc.click()
+    for (let waited = 0; !url && waited < 4000; waited += 250) {
+      await sleep(250)
+      url = playerCaptionUrl(loadedUrls(), id)
+    }
+    cc.click()
+  }
+  if (!url) return ""
+  const body = await text(url)
+  try {
+    return body.trim() ? json3Text(JSON.parse(body)) : ""
   } catch {
     return ""
   }
@@ -222,21 +280,48 @@ export async function peekVideo(id: string): Promise<VideoRead | null> {
   return player ? readPlayer(player).video : null
 }
 
-/** Reads a YouTube video's page (fetched afresh: YouTube swaps pages without reloading). */
-export async function readVideo(id: string): Promise<VideoRead | null> {
+/** What reading a video gave, and where its words came from. */
+export interface VideoReading {
+  video: VideoRead
+  captions: CaptionSource
+}
+
+/**
+ * Reads a YouTube video's page (fetched afresh: YouTube swaps pages without reloading), then
+ * its words: the listed caption track, else the "Show transcript" panel, else the player's own
+ * caption request. Each step's failure is logged to the console and the next one tried.
+ */
+export async function readVideo(id: string): Promise<VideoReading | null> {
   const html = await watchPage(id)
   const player = jsonAfter(html, "ytInitialPlayerResponse = ")
-  if (!player) return null
+  if (!player) {
+    console.info("[Crumb] YouTube's page had no player data for", id)
+    return null
+  }
   const { video, tracks } = readPlayer(player)
   if (!video.title && !video.description) return null
-  const track = pickTrack(tracks)
-  let transcript = ""
-  try {
-    if (track) transcript = await captionTrackText(track)
-    if (!transcript) transcript = await transcriptPanel(html)
-  } catch {
-    // The details are still worth sending without the words
+  const steps: [CaptionSource, () => Promise<string>][] = [
+    [
+      "track",
+      async () => {
+        const track = pickTrack(tracks)
+        return track ? captionTrackText(track) : ""
+      },
+    ],
+    ["panel", () => transcriptPanel(html)],
+    ["player", () => playerCaptions(id)],
+  ]
+  for (const [source, step] of steps) {
+    try {
+      const words = await step()
+      if (words) {
+        video.transcript = words
+        return { video, captions: source }
+      }
+      console.info(`[Crumb] no caption words from the ${source}`)
+    } catch (err) {
+      console.info(`[Crumb] reading captions from the ${source} failed`, err)
+    }
   }
-  if (transcript) video.transcript = transcript
-  return video
+  return { video, captions: "none" }
 }

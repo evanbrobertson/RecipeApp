@@ -1,9 +1,9 @@
-import type { VideoRead } from "./youtube"
+import type { CaptionSource, VideoRead, VideoReading } from "./youtube"
 
 /** What the content script asks the background for (it can't open tabs itself). */
 export type Message =
   /** Read `url` in Crumb, in a new tab beside this one; `video` is what was read of a YouTube video. */
-  | { type: "read"; url: string; video?: VideoRead }
+  | { type: "read"; url: string; video?: VideoReading }
   /** Use the Crumb at `origin` (the page the cook is on). */
   | { type: "connect"; origin: string }
   /** Open the extension's settings. */
@@ -16,18 +16,27 @@ export interface ReadVideo {
   type: "readVideo"
 }
 
-/** What was read of a video, waiting for the Crumb tab opened for it; `video` null while reading. */
+/**
+ * A video being read for the Crumb tab opened for it: `reading` until the YouTube tab answers,
+ * then `read` (with the video) or `failed`.
+ */
 export interface Waiting {
   crumb: string
   url: string
+  status: "reading" | "read" | "failed"
   video: VideoRead | null
+  captions: CaptionSource
 }
 
-/** What reaches the Add page (web/src/islands/TopBox.svelte) by `window.postMessage`. */
+/**
+ * What reaches the Add page (web/src/islands/TopBox.svelte) by `window.postMessage`: the
+ * video as read, or `video: null` when it couldn't be read in the browser.
+ */
 export interface VideoForCrumb {
   type: "crumb:video"
   url: string
-  video: VideoRead
+  video: VideoRead | null
+  captions: CaptionSource
 }
 
 export function send<T = unknown>(message: Message): Promise<T> {
