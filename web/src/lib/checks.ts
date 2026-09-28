@@ -49,6 +49,8 @@ export function reviewText(f: CheckFlag): string {
       return "looks like a step, not an ingredient"
     case "ingredient":
       return "looks like an ingredient, not a step"
+    case "dead_photo":
+      return "The photo link doesn't work any more"
     default:
       return "might need a look"
   }

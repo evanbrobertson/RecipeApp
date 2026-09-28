@@ -7,7 +7,9 @@
 //! forever and a changed image gets a new URL.
 //!
 //! Any failure is a quick 404 (the page falls back to the original URL) and is
-//! remembered for a while, so a broken photo isn't refetched on every card render.
+//! remembered for a while, so a broken photo isn't refetched on every card render. A link
+//! the site refuses for good (see [`LoadError::dead`]) is also flagged for the cook to
+//! fix on the Suggestions page ([`crate::checks::flag_dead_photo`]).
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -395,14 +397,25 @@ pub async fn serve_photo(
     let Ok(_permit) = images.work.acquire().await else {
         return not_found();
     };
+    let linked = !image.starts_with("data:");
     let original = match load_source(&state.http, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
             images.record_failure(source);
+            // A link the site refuses for good goes on the Suggestions page (see checks.rs)
+            if linked
+                && err.dead
+                && let Err(e) = crate::checks::flag_dead_photo(&state.db.lock(), id, &image)
+            {
+                tracing::warn!("[img] recipe {id}: couldn't flag its photo: {e:?}");
+            }
             return not_found();
         }
     };
+    if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
+        tracing::warn!("[img] recipe {id}: couldn't clear its photo flag: {e:?}");
+    }
     let worker = state.images.clone();
     let cache_name = name.clone();
     let made = tokio::task::spawn_blocking(move || {

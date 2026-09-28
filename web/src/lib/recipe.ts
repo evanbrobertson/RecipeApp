@@ -109,8 +109,11 @@ export interface ConnectorInfo {
 /** One line Wee Chef looked at twice: fixed on import, or left for the cook to review. */
 export interface CheckFlag {
   id: number
-  /** "recipe" for the one-off clean-up of stray symbols, codes and repeats, and the category. */
-  field: "ingredients" | "instructions" | "recipe"
+  /**
+   * "recipe" for the one-off clean-up of stray symbols, codes and repeats, and the category;
+   * "image" for a photo link the site refuses (its `itemText` is the link).
+   */
+  field: "ingredients" | "instructions" | "recipe" | "image"
   /** The line as it was when checked (flags follow the text, not the position). */
   itemText: string
   kind:
@@ -123,6 +126,7 @@ export interface CheckFlag {
     | "ingredient"
     | "tidy"
     | "category"
+    | "dead_photo"
   state: "fixed" | "review"
   detail: {
     p?: number
@@ -139,8 +143,11 @@ export interface CheckFlag {
 
 /** Wee Chef's check of an imported recipe. */
 export interface RecipeChecks {
-  /** `skipped`: restored from a backup, not checked yet; `tidied`: only tidied on import. */
-  status: "pending" | "done" | "failed" | "skipped" | "tidied"
+  /**
+   * `skipped`: restored from a backup, not checked yet; `tidied`: only tidied on import;
+   * null: never checked, only its photo link is flagged.
+   */
+  status: "pending" | "done" | "failed" | "skipped" | "tidied" | null
   /** The fixes can still be undone (the recipe wasn't edited since). */
   canUndo: boolean
   flags: CheckFlag[]

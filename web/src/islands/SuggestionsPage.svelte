@@ -121,6 +121,7 @@
     instructions: ["step", "steps"],
     notes: ["note", "notes"],
     totalTime: ["time", "times"],
+    image: ["broken photo link", "broken photo links"],
   }
 
   /** "2 steps · 1 ingredient" */
@@ -195,7 +196,7 @@
         title="Nothing to review"
         description={checks
           ? "Wee Chef will flag anything it isn't sure about."
-          : "Wee Chef checks aren't on for this box."}
+          : "Wee Chef will flag any photo link that stops working."}
       />
     {:else}
       <div class="list-card">
