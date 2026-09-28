@@ -302,8 +302,9 @@ Crumb is one server program and one SQLite database file. To start Crumb, refer 
 - **No loading round trip:** for pages that show your recipes, the server inlines the page's data as JSON
   (`#page-data`) into the HTML, so the page renders from a single response.
 - **Tricky sites:** pages are fetched with a real browser's TLS and HTTP/2 fingerprint (Firefox, then Safari if that's refused). If both are blocked or the recipe is rendered by JavaScript, the server retries in headless Chromium (installed in the Docker image).
-- **Cooking videos:** a TikTok, Instagram Reel or YouTube Short is read from its caption when that's the whole
-  recipe. Otherwise `yt-dlp` downloads it, whisper.cpp transcribes what the cook says on the server itself, and
+- **Cooking videos:** a TikTok, Instagram Reel or YouTube video or Short is read from its caption when that's the whole
+  recipe. Otherwise `yt-dlp` downloads it (up to 20 minutes long), what the cook says comes from its English subtitles
+  (YouTube's automatic captions) or else whisper.cpp transcribes it on the server itself, and
   `ffmpeg` takes stills for on-screen text; Wee Chef reads all three together. Without an AI key only captions work.
   Videos wait in one queue shared by every household: `VIDEO_WORKERS` of them are watched at once (each gets its
   share of the cores), up to `VIDEO_QUEUE_MAX` more wait, and past that an import is refused with "try again in a

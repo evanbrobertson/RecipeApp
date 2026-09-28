@@ -27,7 +27,7 @@ Ignore page numbers, headers, photos of the dish, and other recipes that are onl
 Group ingredients and steps into named sections only when the source does; otherwise use a single section with name null.
 Each instruction item is one step. Do not invent ingredients, steps or metadata that are not in the photos. Set isRecipe to false if the photos don't show a recipe.";
 
-const VIDEO_SYSTEM: &str = "You write down the recipe from a short cooking video. You get the video's caption, an automatic transcript of what the cook says, and stills from the video in order, which may show on-screen text such as ingredient lists and amounts.
+const VIDEO_SYSTEM: &str = "You write down the recipe from a cooking video. You get the video's caption, an automatic transcript of what the cook says, and stills from the video in order, which may show on-screen text such as ingredient lists and amounts.
 Combine all three into one recipe. Amounts, temperatures and times written in the caption or on screen win over the transcript, which can mishear numbers; otherwise keep them exactly as given.
 Take the ingredients from everything the cook uses, and write the steps in the order the cook does them, one action or two per step, in plain imperative sentences.
 When no amount is given for an ingredient, list it without one; never guess amounts, temperatures or times. Put tips, swaps and serving ideas the cook mentions in notes.

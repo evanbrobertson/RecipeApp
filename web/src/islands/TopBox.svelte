@@ -28,13 +28,13 @@
     { long: "Paste a link from any recipe site", short: "links from\nany site" },
     { long: "Drop in a Crumb or Just the Recipe backup", short: "backups\nwork too" },
     { long: "Paste a few links at once", short: "a few links\nat once" },
-    { long: "Paste a TikTok, Reel or YouTube Short", short: "cooking\nvideos too" },
+    { long: "Paste a TikTok, Reel or YouTube video", short: "cooking\nvideos too" },
   ]
 
   const URL_RE = /^https?:\/\/\S+$/i
   // Cooking videos Wee Chef watches (src/video.rs): slower than a recipe page
   const VIDEO_RE =
-    /^https?:\/\/((www|m|vm|vt)\.)?(tiktok\.com\/.|instagram\.com\/(reels?|tv)\/|youtube\.com\/shorts\/)/i
+    /^https?:\/\/((www|m|vm|vt)\.)?(tiktok\.com\/.|instagram\.com\/(reels?|tv)\/|youtube\.com\/(shorts\/|live\/|watch\?)|youtu\.be\/.)/i
   // A line that reads like an ingredient: starts with an amount or a bullet, or names a unit
   const INGREDIENT_RE =
     /^\s*([-•*▢□]|\d|[½¼¾⅓⅔⅛]|a (pinch|handful|few))|\b(cups?|tbsp|tsp|tablespoons?|teaspoons?|grams?|g|kg|ml|l|oz|ounces?|lbs?|pounds?|cloves?|pinch)\b/i

@@ -19,7 +19,7 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
   HTML/microdata fallback, headless Chromium over CDP for sites that still block or need JavaScript
-- **Videos:** TikTok / Instagram Reels / YouTube Shorts links go to `src/video.rs`: the caption first, else `yt-dlp`
+- **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
   `src/video_jobs.rs`: `VIDEO_WORKERS` at once (a heavy-work budget Chromium shares), `VIDEO_QUEUE_MAX` waiting,
