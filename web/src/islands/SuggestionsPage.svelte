@@ -55,6 +55,13 @@
 
   const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
 
+  /**
+   * How full and how strong a staple's bar is, 0–1: its recipes against the most-used
+   * staple's, so the top one fills the bar and the rest read at a glance beside it.
+   */
+  const topStaple = $derived(Math.max(1, ...(staples?.staples.map((s) => s.recipes) ?? [])))
+  const share = (used: number) => used / topStaple
+
   let starting = $state(false)
   const running = $derived(!!checks && checks.pending > 0)
   // The most waiting at once in this run: progress is how many of those are through
@@ -243,16 +250,20 @@
           <div class="min-w-0 flex-1">
             <p class="kicker">Wee Chef tip</p>
             <h2 id="staples-title" class="font-bold">
-              Keep these ingredients on-hand, as most of your recipes use these!
+              Your most used ingredients. Essentials like Salt &amp; Pepper are skipped.
             </h2>
           </div>
         </div>
-        <ul class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
           {#each staples.staples as s (s.name)}
-            <li class="border-line rounded-ctl flex min-w-0 flex-col border px-3 py-2">
-              <span class="truncate font-bold">{capitalise(s.name)}</span>
-              <span class="text-ink-muted text-sm">
-                {s.recipes} of {staples.recipes} recipes
+            <li
+              class="border-line rounded-ctl flex min-w-0 flex-col justify-between gap-2.5 border px-4 py-3.5"
+              title={`In ${s.recipes} of ${staples.recipes} recipes`}
+            >
+              <span class="leading-snug font-bold [overflow-wrap:anywhere]">{capitalise(s.name)}</span>
+              <span class="sr-only">in {s.recipes} of {staples.recipes} recipes</span>
+              <span class="staple-bar" aria-hidden="true">
+                <span style:--share={share(s.recipes)}></span>
               </span>
             </li>
           {/each}
@@ -263,6 +274,25 @@
 </div>
 
 <style>
+  /* A staple's bar: fuller and more butter the more recipes use it, faint for the fewest */
+  .staple-bar {
+    display: block;
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--border-muted);
+    overflow: hidden;
+  }
+  .staple-bar > span {
+    display: block;
+    height: 100%;
+    width: max(0.5rem, calc(var(--share) * 100%));
+    border-radius: inherit;
+    /* Butter, from faint and greyed for the least used to rich and full for the most */
+    background: oklch(
+      from var(--butter-hover) calc(l - var(--share) * 0.06) calc(c * (0.3 + var(--share) * 1.5)) h /
+        calc(0.4 + var(--share) * 0.6)
+    );
+  }
   .review-count {
     display: inline-flex;
     min-width: 1.75rem;
