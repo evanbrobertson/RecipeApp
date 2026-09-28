@@ -6,7 +6,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Weekday};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -211,7 +211,7 @@ pub fn parse_minutes(s: &str) -> Option<u32> {
     if s.is_empty() {
         return None;
     }
-    let total = if let Some(m) = crate::scraper::iso_duration_minutes(s) {
+    let total = if let Some(m) = crate::duration::iso_duration_minutes(s) {
         m
     } else if let Ok(bare) = s.parse::<f64>() {
         bare
@@ -516,7 +516,7 @@ pub fn similarity(a: &Features, b: &Features) -> f64 {
 
 // ─── Ranking ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasonKind {
     Like,

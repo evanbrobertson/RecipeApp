@@ -25,10 +25,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 # Build dependencies against stub sources first, so code-only changes reuse this layer
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
-    && cargo build --release --locked && rm -rf src
+COPY crates/crumb-core/Cargo.toml crates/crumb-core/Cargo.toml
+COPY crates/crumb-client/Cargo.toml crates/crumb-client/Cargo.toml
+COPY crates/crumb-ffi/Cargo.toml crates/crumb-ffi/Cargo.toml
+# Only the server is built here; the other members get stubs so Cargo can load the workspace
+RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-ffi/src/bin \
+    && echo 'fn main() {}' > src/main.rs \
+    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs crates/crumb-ffi/src/lib.rs \
+    && echo 'fn main() {}' > crates/crumb-ffi/src/bin/uniffi-bindgen.rs \
+    && cargo build --release --locked && rm -rf src crates
 COPY src ./src
-RUN find src -name '*.rs' -exec touch {} + && cargo build --release --locked
+COPY crates ./crates
+RUN find src crates -name '*.rs' -exec touch {} + && cargo build --release --locked
 
 # ---- Video tools: whisper.cpp (speech to text, on the CPU), its model, and yt-dlp ----
 FROM debian:bookworm-slim AS video
