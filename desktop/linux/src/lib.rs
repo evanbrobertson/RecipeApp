@@ -4,14 +4,17 @@
 //! the cxx-qt generated symbols; `main.rs` is a thin wrapper calling [`run`].
 
 pub mod config;
+mod core_bridge;
 mod fonts;
 mod native;
+mod network;
 mod palette;
 mod recipe;
 mod recipes;
 mod runtime;
 mod session;
 mod smoke;
+mod store;
 pub mod theme;
 mod theme_watch;
 
@@ -65,7 +68,8 @@ pub fn run() {
             })
             .release();
     }
-    if let Some(engine) = engine.as_mut() {
+    if let Some(mut engine) = engine.as_mut() {
+        native::install_network(engine.as_mut());
         engine.load(&QUrl::from(MAIN_QML));
     }
 

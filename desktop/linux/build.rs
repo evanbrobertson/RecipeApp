@@ -22,11 +22,16 @@ fn main() {
                 "QtQuick.Effects",
             ]),
     )
+    .qt_module("Network")
+    .qt_module("Svg")
+    .qt_module("Quick")
     .file("src/palette.rs")
     .file("src/session.rs")
     .file("src/recipes.rs")
     .file("src/recipe.rs")
     .file("src/smoke.rs")
+    .file("src/core_bridge.rs")
+    .file("src/store.rs")
     .file("src/native.rs")
     .qrc_resources(resources());
 
@@ -61,8 +66,27 @@ fn resources() -> QResources {
         }
     }
 
+    let mut icon_resource = QResource::new().prefix("/icons");
+    let icons = manifest.join("assets/icons");
+    let mut names: Vec<_> = std::fs::read_dir(&icons)
+        .map(|dir| {
+            dir.filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "svg"))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    for path in names {
+        let alias = path.file_name().expect("a file name").to_string_lossy().into_owned();
+        icon_resource = icon_resource.file(QResourceFile::new(&path).alias(alias));
+    }
+    println!("cargo::rerun-if-changed=assets/icons");
+
     let fixture = manifest.join("assets/fixture.png");
-    let mut resources = QResources::new().resource(font_resource);
+    let mut resources = QResources::new()
+        .resource(font_resource)
+        .resource(icon_resource);
     if fixture.is_file() {
         let image_resource = QResource::new()
             .prefix("/img")

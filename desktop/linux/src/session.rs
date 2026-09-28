@@ -248,6 +248,7 @@ impl SessionCore {
             let _ = client.logout().await;
         }
         self.store.clear(&self.server);
+        crate::network::sync(&self.server, None);
         self.state = State::Login;
         self.error.clear();
     }
@@ -256,14 +257,17 @@ impl SessionCore {
     pub fn require_login(&mut self) {
         self.client = None;
         self.store.clear(&self.server);
+        crate::network::sync(&self.server, None);
         self.state = State::Login;
         self.error.clear();
     }
 
     fn adopt(&mut self, client: Client) {
-        if let Some(cookie) = client.session_cookie() {
-            self.store.save(&self.server, &cookie);
+        let cookie = client.session_cookie();
+        if let Some(cookie) = &cookie {
+            self.store.save(&self.server, cookie);
         }
+        crate::network::sync(&self.server, cookie.as_deref());
         self.client = Some(client);
         self.state = State::Ready;
         self.error.clear();
