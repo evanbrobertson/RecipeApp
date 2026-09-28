@@ -1435,6 +1435,24 @@ mod tests {
     }
 
     #[test]
+    fn keeps_a_jw_player_file_from_json_ld() {
+        // Allrecipes: a Recipe/NewsArticle whose video is JW Player's mp4
+        let html = r#"<script type="application/ld+json">[{"@type":["Recipe","NewsArticle"],
+          "name":"Slow Cooker Asian Zing Chicken Noodles","recipeIngredient":["1 jar sauce"],
+          "recipeInstructions":[{"@type":"HowToStep","text":"Cook."}],
+          "video":{"@type":"VideoObject","contentUrl":"https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4",
+            "name":"How to Make Slow Cooker Asian Zing Chicken Noodles",
+            "thumbnailUrl":"https://cdn.jwplayer.com/v2/media/9QcFPcvu/thumbnails/g43V12F6.jpg?width=1280"}}]
+          </script>"#;
+        let r =
+            parse_recipe_html(html, "https://www.allrecipes.com/zing-noodles-11725006").unwrap();
+        assert_eq!(
+            r.video.as_deref(),
+            Some("https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4")
+        );
+    }
+
+    #[test]
     fn video_from_the_recipe_card_or_post_but_not_the_sidebar() {
         let page = |body: &str| {
             format!(
