@@ -240,6 +240,31 @@ fn jwplayer_from(u: &url::Url) -> Option<VideoEmbed> {
 
 const FILE_TYPES: [&str; 4] = [".mp4", ".webm", ".m4v", ".mov"];
 
+/// A video file the page plays itself. JW Player's own files (`cdn.jwplayer.com/videos/
+/// {media}-{rendition}.mp4`, as Allrecipes lists them) get the media's poster as a still.
+fn file_from(u: &url::Url, url: &str, host: &str) -> Option<VideoEmbed> {
+    let path = u.path().to_ascii_lowercase();
+    if u.scheme() != "https" || !FILE_TYPES.iter().any(|t| path.ends_with(t)) {
+        return None;
+    }
+    let thumbnail = match (host, segments(u).as_slice()) {
+        ("cdn.jwplayer.com" | "content.jwplatform.com", ["videos", file]) => file
+            .split(['-', '.'])
+            .next()
+            .filter(|id| is_id(id, 16))
+            .map(|id| format!("https://cdn.jwplayer.com/v2/media/{id}/poster.jpg?width=720")),
+        _ => None,
+    };
+    Some(VideoEmbed {
+        provider: "file".into(),
+        label: "Video".into(),
+        embed_url: url.to_string(),
+        watch_url: url.to_string(),
+        thumbnail,
+        vertical: false,
+    })
+}
+
 /// How a page plays the video at `url`, or `None` when it isn't a video Crumb knows how
 /// to play in place (the page links to it instead).
 pub fn video_embed(url: &str) -> Option<VideoEmbed> {
@@ -249,29 +274,17 @@ pub fn video_embed(url: &str) -> Option<VideoEmbed> {
     }
     let u = url::Url::parse(url).ok()?;
     let host = host(&u);
-    match host.as_str() {
+    let site = match host.as_str() {
         "youtube.com" | "youtu.be" | "youtube-nocookie.com" => youtube_from(&u, &host),
         "vimeo.com" => vimeo_from(&u, &host),
         "tiktok.com" => tiktok_from(&u),
         "instagram.com" => instagram_from(&u),
         "dailymotion.com" | "dai.ly" => dailymotion_from(&u, &host),
         "content.jwplatform.com" | "cdn.jwplayer.com" => jwplayer_from(&u),
-        _ if u.scheme() == "https"
-            && FILE_TYPES
-                .iter()
-                .any(|t| u.path().to_ascii_lowercase().ends_with(t)) =>
-        {
-            Some(VideoEmbed {
-                provider: "file".into(),
-                label: "Video".into(),
-                embed_url: url.to_string(),
-                watch_url: url.to_string(),
-                thumbnail: None,
-                vertical: false,
-            })
-        }
         _ => None,
-    }
+    };
+    // A known site's file (not one of its player pages) is still a file
+    site.or_else(|| file_from(&u, url, &host))
 }
 
 /// The link to keep for a video found on a page: its own page on its site when Crumb can
@@ -343,6 +356,19 @@ mod tests {
             j.embed_url,
             "https://cdn.jwplayer.com/players/AbCd1234-XyZ98765.html"
         );
+        // As Allrecipes lists its videos: the player's own file, with its poster
+        let a = video_embed("https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4").unwrap();
+        assert_eq!(a.provider, "file");
+        assert_eq!(
+            a.embed_url,
+            "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+        );
+        assert_eq!(
+            a.thumbnail.as_deref(),
+            Some("https://cdn.jwplayer.com/v2/media/9QcFPcvu/poster.jpg?width=720")
+        );
+        // Its HLS stream isn't one every browser plays
+        assert!(video_embed("https://cdn.jwplayer.com/manifests/9QcFPcvu.m3u8").is_none());
         let f = video_embed("https://cdn.test/v/beef.MP4?x=1").unwrap();
         assert_eq!(f.provider, "file");
         assert!(video_embed("http://cdn.test/v/beef.mp4").is_none());
