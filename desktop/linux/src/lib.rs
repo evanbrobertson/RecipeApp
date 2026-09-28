@@ -16,6 +16,8 @@ mod runtime;
 mod session;
 mod smoke;
 mod store;
+#[cfg(test)]
+mod test_server;
 pub mod theme;
 mod theme_watch;
 

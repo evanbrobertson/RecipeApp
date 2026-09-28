@@ -521,6 +521,92 @@ impl qobject::Api {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_server::TestServer;
+
+    async fn call(client: &Client, op: &str, args: Value) -> Value {
+        dispatch(client, Mode::Password, op, &args, |_| {})
+            .await
+            .unwrap_or_else(|err| panic!("{op}: {err}"))
+    }
+
+    #[tokio::test]
+    async fn recipes_and_cookbooks_round_trip_as_the_apis_json() {
+        let server = TestServer::start(None).await;
+        let client = Client::new(&server.origin).unwrap();
+
+        let made = call(
+            &client,
+            "createRecipe",
+            json!({"fields": {
+                "title": "Soup",
+                "ingredients": [{"name": null, "items": ["1 onion"]}],
+                "instructions": [{"name": null, "items": ["Boil."]}],
+            }}),
+        )
+        .await;
+        assert_eq!(made["isNew"], true);
+        let id = made["id"].as_i64().unwrap();
+        assert_eq!(
+            call(&client, "recipe", json!({"id": id})).await["title"],
+            "Soup"
+        );
+        let list = call(&client, "recipes", json!({"query": "soup"})).await;
+        assert_eq!(list[0]["id"], id);
+
+        let cooked = call(&client, "cooked", json!({"id": id})).await;
+        assert_eq!(cooked["count"], 1);
+        let undone = call(
+            &client,
+            "undoCooked",
+            json!({"id": id, "event": cooked["eventId"]}),
+        )
+        .await;
+        assert_eq!(undone["count"], 0);
+
+        let book = call(&client, "createCookbook", json!({"name": "Weeknights"})).await;
+        let book_id = book["id"].as_i64().unwrap();
+        call(
+            &client,
+            "addToCookbook",
+            json!({"id": book_id, "recipeIds": [id]}),
+        )
+        .await;
+        let open = call(&client, "cookbook", json!({"id": book_id})).await;
+        assert_eq!(open["recipes"][0]["id"], id);
+        assert_eq!(
+            call(&client, "recipeCookbooks", json!({"id": id})).await,
+            json!([book_id])
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let saved = call(
+            &client,
+            "exportRecipe",
+            json!({"id": id, "format": "markdown", "dir": dir.path()}),
+        )
+        .await;
+        let path = saved["path"].as_str().unwrap();
+        assert!(std::fs::read_to_string(path).unwrap().contains("Soup"));
+
+        let status = call(&client, "authStatus", json!({})).await;
+        assert_eq!(status["mode"], "password");
+        call(&client, "deleteRecipe", json!({"id": id})).await;
+        assert_eq!(call(&client, "recipes", json!({})).await, json!([]));
+    }
+
+    #[tokio::test]
+    async fn bad_calls_say_what_is_missing() {
+        let server = TestServer::start(None).await;
+        let client = Client::new(&server.origin).unwrap();
+        let err = dispatch(&client, Mode::Password, "recipe", &json!({}), |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "`id` is missing");
+        let err = dispatch(&client, Mode::Password, "nope", &json!({}), |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "unknown operation: nope");
+    }
 
     #[test]
     fn dialog_urls_become_paths() {
