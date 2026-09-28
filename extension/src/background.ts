@@ -8,23 +8,36 @@
  */
 import { addVideoUrl, crumbOrigin, load, previewUrl, readable, save } from "./crumb"
 import type { Message, ReadVideo, Waiting } from "./messages"
-import { videoId, type VideoRead } from "./youtube"
+import { videoId, type VideoReading } from "./youtube"
 
 const waitingKey = (tabId: number) => `video:${tabId}`
 
-/** Asks a YouTube tab's content script to read its video; null if it can't. */
-async function readInTab(tab: chrome.tabs.Tab | undefined): Promise<VideoRead | null> {
+async function askTab(tabId: number): Promise<VideoReading | null> {
+  const ask: ReadVideo = { type: "readVideo" }
+  return ((await chrome.tabs.sendMessage(tabId, ask)) as VideoReading | null) ?? null
+}
+
+/**
+ * Asks a YouTube tab's content script to read its video; null if it can't. A tab opened
+ * before the extension was installed or updated has no live content script, so it's added
+ * (the toolbar click grants that tab) and asked again.
+ */
+async function readInTab(tab: chrome.tabs.Tab | undefined): Promise<VideoReading | null> {
   if (tab?.id === undefined) return null
   try {
-    const ask: ReadVideo = { type: "readVideo" }
-    return ((await chrome.tabs.sendMessage(tab.id, ask)) as VideoRead | null) ?? null
+    return await askTab(tab.id)
   } catch {
-    // No content script in that tab (opened before the extension was installed)
-    return null
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
+      return await askTab(tab.id)
+    } catch (err) {
+      console.info("[Crumb] couldn't read the video in its tab", err)
+      return null
+    }
   }
 }
 
-async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: VideoRead) {
+async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: VideoReading) {
   const { crumb } = await load()
   if (!crumb) return chrome.runtime.openOptionsPage()
   if (!readable(url, crumb)) return
@@ -34,19 +47,21 @@ async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: Vid
     const tab = await chrome.tabs.create({ url: addVideoUrl(crumb, url!), ...where })
     if (tab.id === undefined) return
     const key = waitingKey(tab.id)
-    const reading: Waiting = { crumb, url: url!, video: null }
+    const reading: Waiting = { crumb, url: url!, status: "reading", video: null, captions: "none" }
     await chrome.storage.session.set({ [key]: reading })
     const got = video ?? (await readInTab(from))
-    if (got) await chrome.storage.session.set({ [key]: { ...reading, video: got } })
-    else await chrome.storage.session.remove(key)
+    const done: Waiting = got
+      ? { ...reading, status: "read", video: got.video, captions: got.captions }
+      : { ...reading, status: "failed" }
+    await chrome.storage.session.set({ [key]: done })
     return
   }
   await chrome.tabs.create({ url: previewUrl(crumb, url!), ...where })
 }
 
 /**
- * Hands the Crumb tab opened for a video what was read of it, once. `video: null` means it's
- * still being read (ask again); null means there's nothing for this tab.
+ * Hands the Crumb tab opened for a video what was read of it, once it's read (or failed).
+ * Status `reading` means ask again; null means there's nothing for this tab.
  */
 async function takeVideo(sender: chrome.runtime.MessageSender): Promise<Waiting | null> {
   const id = sender.tab?.id
@@ -55,7 +70,7 @@ async function takeVideo(sender: chrome.runtime.MessageSender): Promise<Waiting 
   const waiting = (await chrome.storage.session.get(key))[key] as Waiting | undefined
   // Only that tab, and only while it's still on that Crumb
   if (!waiting || new URL(sender.tab.url).origin !== waiting.crumb) return null
-  if (waiting.video) await chrome.storage.session.remove(key)
+  if (waiting.status !== "reading") await chrome.storage.session.remove(key)
   return waiting
 }
 

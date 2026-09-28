@@ -33,8 +33,9 @@ export function manifest(target: Target, version: string): Record<string, unknow
       default_title: "Read this page in Crumb",
       default_icon: { 16: icons[16], 32: icons[32] },
     },
-    // storage: the Crumb's address; activeTab: the page's address when the button's clicked
-    permissions: ["storage", "activeTab"],
+    // storage: the Crumb's address; activeTab: the page's address when the button's clicked;
+    // scripting: on that click, reading a YouTube tab opened before the extension was updated
+    permissions: ["storage", "activeTab", "scripting"],
     background:
       target === "chrome" ? { service_worker: "background.js" } : { scripts: ["background.js"] },
     // Every page, to notice recipes as they open (read in the page, nothing sent)

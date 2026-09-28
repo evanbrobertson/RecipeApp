@@ -25,14 +25,18 @@ Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).
   browser: its title, description and the words of its captions (the caption track, else the
   "Show transcript" panel). The toolbar button, or the card it shows on videos that mention a
   recipe or ingredients, opens your Crumb's Add page with the link filled in, and hands that page
-  the text; **Add** sends it with the link. Your YouTube sign-in is never read or sent, and the
+  the text, and the import starts. The words come from the listed caption track, else the "Show
+  transcript" panel, else the player's own caption request (the CC button is pressed and put back
+  if the player hasn't fetched captions yet); each miss is logged to the YouTube tab's console as
+  `[Crumb] …`. When nothing could be read, the Add page says so. Your YouTube sign-in is never read or sent, and the
   requests to YouTube are the ones its own page makes.
 - **Setting up**: install it, then open your Crumb while signed in and choose **Use this Crumb**
   on the card it shows (Crumb pages carry `<meta name="application-name" content="Crumb">`), or
   type the address on the settings page.
 
-Permissions: `storage` (your Crumb's address and settings, synced with your browser profile) and
-`activeTab` (the page's address when you click the toolbar button). The content script runs on
+Permissions: `storage` (your Crumb's address and settings, synced with your browser profile),
+`activeTab` (the page's address when you click the toolbar button) and `scripting` (on that click,
+reading a YouTube tab that was open before the extension was installed or updated). The content script runs on
 all http(s) pages because noticing recipes as they open is the point.
 
 ## Develop
