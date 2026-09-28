@@ -229,6 +229,31 @@ pub fn is_share_link(url: String) -> bool {
     source::is_share_link(&url)
 }
 
+/// How a recipe page plays its video (see `crumb_core::embed::VideoEmbed`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct VideoEmbed {
+    pub provider: String,
+    pub label: String,
+    pub embed_url: String,
+    pub watch_url: String,
+    pub thumbnail: Option<String>,
+    pub vertical: bool,
+}
+
+/// How to play the video at a recipe's `video` link in place, or null when it's on a site
+/// Crumb can't embed (link to it instead). The API sends the same as `videoEmbed`.
+#[uniffi::export]
+pub fn video_embed(url: String) -> Option<VideoEmbed> {
+    crumb_core::embed::video_embed(&url).map(|e| VideoEmbed {
+        provider: e.provider,
+        label: e.label,
+        embed_url: e.embed_url,
+        watch_url: e.watch_url,
+        thumbnail: e.thumbnail,
+        vertical: e.vertical,
+    })
+}
+
 /// Where a recipe came from, as a link the page may show (its original source first).
 #[uniffi::export]
 pub fn source_url(recipe_json: String) -> Result<Option<String>, CoreError> {

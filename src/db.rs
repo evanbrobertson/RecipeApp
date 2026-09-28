@@ -64,6 +64,7 @@ fn recipes_table_sql(name: &str) -> String {
     instructions text NOT NULL,
     nutrition text,
     notes text,
+    video text,
     original_url text,
     created_at integer NOT NULL,
     updated_at integer NOT NULL
@@ -254,6 +255,10 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
         .any(|c| c.name == "original_url")
     {
         conn.execute_batch("ALTER TABLE recipes ADD COLUMN original_url text")?;
+    }
+    // A link to the recipe's video, played on its page
+    if !columns(conn, "recipes")?.iter().any(|c| c.name == "video") {
+        conn.execute_batch("ALTER TABLE recipes ADD COLUMN video text")?;
     }
     if !columns(conn, "cookbooks")?
         .iter()

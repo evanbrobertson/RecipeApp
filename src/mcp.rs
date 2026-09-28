@@ -825,6 +825,7 @@ fn recipe_properties() -> Map<String, Value> {
         "notes": nullable(Some("Tips, substitutions, storage notes"), None),
         "url": nullable(Some("Original source URL, if known"), Some("uri")),
         "image": nullable(Some("Image URL, if known"), Some("uri")),
+        "video": nullable(Some("Link to a video of the recipe being made (YouTube, Vimeo, TikTok, Instagram...), if known"), Some("uri")),
     });
     v.as_object().unwrap().clone()
 }

@@ -39,6 +39,7 @@ fn json_column(r: &Row, name: &str) -> rusqlite::Result<Value> {
 
 fn recipe_from_row(r: &Row) -> rusqlite::Result<Recipe> {
     let nutrition = json_column(r, "nutrition")?;
+    let video: Option<String> = r.get("video")?;
     Ok(Recipe {
         id: r.get("id")?,
         url: r.get("url")?,
@@ -62,6 +63,8 @@ fn recipe_from_row(r: &Row) -> rusqlite::Result<Recipe> {
             Some(nutrition)
         },
         notes: r.get("notes")?,
+        video_embed: video.as_deref().and_then(crumb_core::embed::video_embed),
+        video,
         original_url: r.get("original_url")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
@@ -198,8 +201,8 @@ pub fn create_recipe(
     conn.execute(
         "INSERT INTO recipes (url, source, title, description, image, author, prep_time, cook_time,
            total_time, freeze_time, recipe_yield, recipe_category, recipe_cuisine, ingredients,
-           instructions, nutrition, notes, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
+           instructions, nutrition, notes, video, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)",
         params![
             fields.url,
             source,
@@ -218,6 +221,7 @@ pub fn create_recipe(
             to_json_text(&normalize_sections(fields.instructions)),
             fields.nutrition.as_ref().map(to_json_text),
             fields.notes,
+            fields.video,
             now,
         ],
     )?;
@@ -257,6 +261,7 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
         ("recipe_category", patch.recipe_category),
         ("recipe_cuisine", patch.recipe_cuisine),
         ("notes", patch.notes),
+        ("video", patch.video),
     ] {
         if let Some(v) = v {
             push(col, text(v));
@@ -669,7 +674,7 @@ pub(crate) fn create_checked(
 }
 
 /// Fields [`refresh_from_source`] can fill or overwrite, as json keys.
-pub const REFRESHABLE: [&str; 15] = [
+pub const REFRESHABLE: [&str; 16] = [
     "title",
     "description",
     "image",
@@ -685,6 +690,7 @@ pub const REFRESHABLE: [&str; 15] = [
     "instructions",
     "nutrition",
     "notes",
+    "video",
 ];
 
 /// Re-scrapes a recipe's source URL and fills in fields that are empty, keeping everything
@@ -775,6 +781,7 @@ pub async fn refresh_from_source(
             &mut patch.recipe_cuisine,
         ),
         ("notes", &current.notes, scraped.notes, &mut patch.notes),
+        ("video", &current.video, scraped.video, &mut patch.video),
     ] {
         if !blank(&got) && (blank(have) || wants(key)) && got != *have {
             *slot = Some(got);

@@ -74,6 +74,7 @@
     recipeCuisine: str(i.recipeCuisine),
     url: str(i.url),
     image: str(i.image),
+    video: str(i.video),
     notes: str(i.notes),
     nutrition: Object.entries(i.nutrition ?? {})
       .map(([k, v]) => `${k}: ${v}`)
@@ -189,6 +190,7 @@
       recipeCuisine: nullable(draft.recipeCuisine),
       url: nullable(draft.url),
       image: nullable(draft.image),
+      video: nullable(draft.video),
       notes: nullable(draft.notes),
       nutrition: Object.keys(nutrition).length ? nutrition : null,
       ingredients: fromDraft(draft.ingredients),
@@ -378,6 +380,18 @@
           placeholder="https://…"
           class="input"
         />
+      </div>
+      <div class="sm:col-span-2">
+        <label class="label" for="r-video">Video link</label>
+        <input
+          id="r-video"
+          bind:value={draft.video}
+          type="url"
+          placeholder="https://youtu.be/…"
+          class="input"
+          aria-describedby="r-video-hint"
+        />
+        <p id="r-video-hint" class="hint">YouTube, Vimeo, TikTok and Instagram play on the page</p>
       </div>
     </div>
   </section>

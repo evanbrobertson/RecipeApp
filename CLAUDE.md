@@ -128,6 +128,9 @@ web/src/
   feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
 - **Env vars:** a new or changed variable goes in `.env.schema` (`auth/.env.schema` for the auth service) with its
   type, default and `@sensitive`/`@required`, and in the README's Configuration table.
+- **Recipe videos:** `video` is a link (the scraper keeps only ones it can play: JSON-LD `VideoObject`, then the
+  recipe card's player, `og:video`, the post's first embed); `crumb_core::embed` works out the player, sent as the
+  read-only `videoEmbed`. The page's `RecipeVideo.svelte` loads nothing from the video's site until Play.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 

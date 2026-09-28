@@ -75,6 +75,8 @@ fn recipe_from(v: &Value) -> Recipe {
         instructions: sections(&v["instructions"]),
         nutrition: None,
         notes: text("notes"),
+        video: None,
+        video_embed: None,
         original_url: text("originalUrl"),
         created_at: 0,
         updated_at: 0,

@@ -300,6 +300,10 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
         return Err(AppError::new(422, format!("{why} {PASTE_HINT}")));
     };
     fields.url = Some(meta.url.clone());
+    // The recipe's own video plays on its page
+    if fields.video.is_none() {
+        fields.video = crumb_core::embed::video_link(&meta.url);
+    }
     if fields.author.as_deref().is_none_or(|a| a.trim().is_empty()) {
         fields.author = meta.author.clone();
     }

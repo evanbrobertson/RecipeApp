@@ -21,6 +21,7 @@
   import Menu, { type MenuItem } from "../components/Menu.svelte"
   import Modal from "../components/Modal.svelte"
   import Photo from "../components/Photo.svelte"
+  import RecipeVideo from "../components/RecipeVideo.svelte"
   import ScaleControl from "../components/ScaleControl.svelte"
   import ShareSheet from "../components/ShareSheet.svelte"
   import WeeChefCard from "../components/WeeChefCard.svelte"
@@ -524,6 +525,12 @@
         onclick={(e) => onPanelClick("method", e)}
         onfocusin={(e) => onPanelFocus("method", e)}
       >
+        {#if recipe.video}
+          <!-- Before the steps, so it plays alongside them (and floats once scrolled past) -->
+          <div class="mb-10">
+            <RecipeVideo video={recipe.video} embed={recipe.videoEmbed} title={recipe.title} />
+          </div>
+        {/if}
         <h2 class="section-title mb-5 flex min-h-11 items-center">Method</h2>
         {#if !recipe.instructions.length}<p class="text-ink-muted text-sm">No steps listed.</p>{/if}
         <div class="space-y-8">

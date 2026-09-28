@@ -2517,6 +2517,8 @@ mod tests {
             instructions,
             nutrition: None,
             notes: notes.map(String::from),
+            video: None,
+            video_embed: None,
             original_url: None,
             created_at: 0,
             updated_at: 0,
