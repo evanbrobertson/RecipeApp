@@ -36,12 +36,14 @@ export function start({ dsn, environment, release }: SentryBoot, early: unknown[
     release,
     integrations: [browserTracingIntegration()],
     beforeBreadcrumb: scrub,
-    beforeSendTransaction(event) {
-      if (event.transaction) event.transaction = redact(event.transaction)
-      if (event.request?.url) event.request.url = redact(event.request.url)
-      for (const span of event.spans ?? [])
-        if (span.description) span.description = redact(span.description)
-      return event
+    // Spans stream one by one (the SDK's default trace lifecycle): the name and any URL-like
+    // attribute (url.full, http.url, the segment's name) lose share tokens
+    beforeSendSpan(span) {
+      span.name = redact(span.name)
+      const attrs = span.attributes as Record<string, unknown>
+      for (const [key, value] of Object.entries(attrs))
+        if (typeof value === "string") attrs[key] = redact(value)
+      return span
     },
     beforeSend(event) {
       if (event.request?.url) event.request.url = redact(event.request.url)

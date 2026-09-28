@@ -236,7 +236,7 @@ You approve the connection with the app password. Refer to [Connect to Claude](#
 
 ### Backups
 
-On the More page, select **Download a backup**. Crumb downloads one JSON file with all your recipes, your cookbooks and your cook history. To restore a backup, drop the file in the Add box or on the Import page.
+On the More page, under Account, select **Download a backup**. Crumb downloads one JSON file with all your recipes, your cookbooks and your cook history. To restore a backup, drop the file in the Add box or on the Import page.
 
 - Crumb saves the restored recipes as they are in the backup. No clean-up or check runs on them.
 - When a restored recipe has a link that is already in your recipe box, Crumb does not add it again.
@@ -406,7 +406,7 @@ Replay masks all text and blocks all media.
 2. In Claude go to **Settings → Connectors → Add custom connector** and paste `https://<your-app>/mcp`.
 3. Click **Connect** and approve with your app password.
 
-The in-app **Connect** page shows your exact URL. Claude Code:
+The in-app page (**More → Connections → Claude**) shows your exact URL. Claude Code:
 `claude mcp add --transport http recipes https://<your-app>/mcp`.
 
 Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
