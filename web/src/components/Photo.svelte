@@ -42,19 +42,17 @@
   const ICONS = [CookingPot, Soup, Salad, Croissant, CakeSlice, Sandwich]
   const Placeholder = $derived(ICONS[recipe.id % ICONS.length]!)
   const img = $derived(sized(recipe, width))
-  let failed = $state(false)
-  let el: HTMLImageElement | undefined = $state()
-  $effect(() => {
-    // A different image (edit, shuffle) gets a fresh try, fallback included
-    void recipe.image
-    failed = false
-    if (el) delete el.dataset.fellBack
-  })
+  // Which image gave up, so a different one (edit, shuffle) gets a fresh try. Derived, not
+  // reset in an effect: an effect that saw the <img> go would bring it back to fail again,
+  // over and over, for as long as the page is open
+  let failedImage = $state<string | null>(null)
+  const failed = $derived(!!recipe.image && failedImage === recipe.image)
 </script>
 
 {#if img && !failed}
+  <!-- Keyed so a new image gets a new element, with its fallback not yet used -->
+  {#key recipe.image}
   <img
-    bind:this={el}
     src={img.src}
     srcset={img.srcset}
     sizes={sizes ?? `${width}px`}
@@ -67,9 +65,11 @@
     data-photo-hero={hero ? recipe.id : undefined}
     class={["object-cover", klass]}
     onerror={(e) => {
-      if (!fallbackSrc(e.currentTarget as HTMLImageElement, img.fallback)) failed = true
+      if (!fallbackSrc(e.currentTarget as HTMLImageElement, img.fallback))
+        failedImage = recipe.image ?? null
     }}
   />
+  {/key}
 {:else}
   <div
     class={["photo-empty grid place-items-center", klass]}

@@ -397,6 +397,11 @@
         return
       }
       if (!res.isNew) flash({ title: "Already in your recipes" })
+      else if (res.droppedPhoto)
+        flash({
+          title: "Saved without its photo",
+          description: "The site's photo link doesn't work. You can add one in Edit.",
+        })
       else if (res.fromVideo) flash({ title: "Saved from the video", tone: "success" })
       location.href = `/recipes/${res.id}`
     } catch (err) {

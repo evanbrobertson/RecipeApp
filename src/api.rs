@@ -388,13 +388,17 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
 /// [`import_job`]): `{jobId, status, position?}`.
 async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
-    let (recipe, is_new) = if let Some(url) = body.get("url") {
+    let (recipe, is_new, dropped_photo) = if let Some(url) = body.get("url") {
         let url = url
             .as_str()
             .filter(|u| crate::model::is_valid_url(u))
             .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
         match recipes::start_link(&state, url).await? {
-            recipes::Started::Done(recipes::Imported::Recipe(recipe, is_new)) => (*recipe, is_new),
+            recipes::Started::Done(recipes::Imported::Recipe {
+                recipe,
+                is_new,
+                dropped_photo,
+            }) => (*recipe, is_new, dropped_photo),
             recipes::Started::Done(recipes::Imported::Book(book)) => {
                 return Ok(Json(book_imported(&book)).into_response());
             }
@@ -417,11 +421,16 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
                 "That's too much text (100,000 characters max)",
             ));
         }
-        recipes::import_from_text(&state, text, true).await?
+        let (recipe, is_new) = recipes::import_from_text(&state, text, true).await?;
+        (recipe, is_new, false)
     } else {
         return Err(AppError::bad_request("Paste a link or the recipe text"));
     };
-    Ok(Json(json!({"id": recipe.id, "title": recipe.title, "isNew": is_new})).into_response())
+    let mut out = json!({"id": recipe.id, "title": recipe.title, "isNew": is_new});
+    if dropped_photo {
+        out["droppedPhoto"] = json!(true);
+    }
+    Ok(Json(out).into_response())
 }
 
 /// Where a video import is: `queued` (with its `position`, 1 = next), `running`, `done`

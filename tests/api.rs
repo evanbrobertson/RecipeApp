@@ -1566,6 +1566,237 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
 }
 
 #[tokio::test]
+async fn imports_drop_a_dead_photo_link() {
+    let png = png_bytes(40, 30);
+    let page = |name: &str, image: &str| {
+        format!(
+            r#"<html><head><script type="application/ld+json">{{"@context":"https://schema.org","@type":"Recipe",
+            "name":"{name}","image":"{image}","recipeIngredient":["1 egg"],
+            "recipeInstructions":[{{"@type":"HowToStep","text":"Cook."}}]}}</script></head><body></body></html>"#
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let pages: Vec<(String, String)> = vec![
+        ("/fresh".into(), page("Fresh", &format!("{site}/photo.png"))),
+        // A CDN link that went stale
+        ("/stale".into(), page("Stale", &format!("{site}/gone.jpg"))),
+        // A page where the photo should be
+        (
+            "/blocked".into(),
+            page("Blocked", &format!("{site}/blocked.jpg")),
+        ),
+        // The photo server having a bad moment: kept
+        ("/flaky".into(), page("Flaky", &format!("{site}/busy.jpg"))),
+        (
+            "/mcp-stale".into(),
+            page("By Claude", &format!("{site}/gone.jpg")),
+        ),
+    ];
+    let mut app = axum::Router::new()
+        .route(
+            "/photo.png",
+            axum::routing::get(move || async move { ([(header::CONTENT_TYPE, "image/png")], png) }),
+        )
+        .route(
+            "/gone.jpg",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/blocked.jpg",
+            axum::routing::get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html>no hotlinking</html>",
+                )
+            }),
+        )
+        .route(
+            "/busy.jpg",
+            axum::routing::get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        );
+    for (path, html) in pages {
+        app = app.route(
+            &path,
+            axum::routing::get(move || async move { axum::response::Html(html) }),
+        );
+    }
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let t = TestApp::new(None);
+    for (path, kept) in [
+        ("/fresh", true),
+        ("/stale", false),
+        ("/blocked", false),
+        ("/flaky", true),
+    ] {
+        let url = format!("{site}{path}");
+        let (status, res) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {res}");
+        assert_eq!(res.get("droppedPhoto").is_some(), !kept, "{path}: {res}");
+        let (_, recipe) = t
+            .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+            .await;
+        assert_eq!(recipe["image"].is_string(), kept, "{path}: {recipe}");
+    }
+
+    // The same link again is the saved recipe, with nothing more to say
+    let (_, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/stale")})),
+        )
+        .await;
+    assert_eq!(res["isNew"], false);
+    assert!(res.get("droppedPhoto").is_none(), "{res}");
+
+    // Claude hears about it too
+    let (msg, err) = mcp_call(
+        &t,
+        "import_recipe_from_url",
+        json!({"url": format!("{site}/mcp-stale")}),
+    )
+    .await;
+    assert!(!err, "{msg}");
+    assert!(msg.contains("saved without a photo"), "{msg}");
+}
+
+#[tokio::test]
+async fn broken_photo_links_are_flagged_without_wee_chef() {
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // Down until `up` is set: then the same link works again
+    let up = Arc::new(AtomicBool::new(false));
+    let png = png_bytes(60, 40);
+    let flag = up.clone();
+    let origin = axum::Router::new()
+        .route(
+            "/gone.jpg",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/busy.jpg",
+            axum::routing::get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        )
+        .route(
+            "/back.png",
+            axum::routing::get(move || {
+                let (png, up) = (png.clone(), flag.load(Ordering::SeqCst));
+                async move {
+                    if up {
+                        ([(header::CONTENT_TYPE, "image/png")], png).into_response()
+                    } else {
+                        StatusCode::NOT_FOUND.into_response()
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let hint = |headers: &axum::http::HeaderMap| {
+        headers
+            .get_all("server-timing")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|v| v.starts_with("crumb-review"))
+            .map(String::from)
+    };
+    let home = || {
+        Request::get("/")
+            .header("sec-fetch-dest", "document")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    // No Wee Chef checks set up: the nav keeps Suggestions hidden while nothing's flagged
+    let t = TestApp::new(None);
+    let stale = add_recipe(&t, "Stale", "Dinner", "eggs", "10 min").await;
+    let busy = add_recipe(&t, "Busy", "Dinner", "eggs", "10 min").await;
+    set_image(&t, stale, &format!("{site}/gone.jpg"));
+    set_image(&t, busy, &format!("{site}/busy.jpg"));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers), None);
+
+    // The resizer finds the dead link (once, however often it's asked); a site having a
+    // bad moment isn't flagged
+    for _ in 0..2 {
+        let (status, _, _) = send_raw(&t, get(&format!("/img/{stale}/320"))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"].as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list["recipes"][0]["id"], stale);
+    assert_eq!(list["recipes"][0]["fields"], json!({"image": 1}));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers).as_deref(), Some("crumb-review;desc=\"1\""));
+
+    // The recipe page and editor get it, though Jev never checked the recipe
+    let (_, checks) = t
+        .json("GET", &format!("/api/recipes/{stale}/checks"), None)
+        .await;
+    assert_eq!(checks["status"], Value::Null);
+    assert_eq!(checks["flags"].as_array().unwrap().len(), 1, "{checks}");
+    let flag = &checks["flags"][0];
+    assert_eq!(flag["field"], "image");
+    assert_eq!(flag["kind"], "dead_photo");
+    assert_eq!(flag["itemText"], format!("{site}/gone.jpg"));
+    let (_, checks) = t
+        .json("GET", &format!("/api/recipes/{busy}/checks"), None)
+        .await;
+    assert_eq!(checks, Value::Null);
+
+    // "Keep as is" sticks for that link, even when the resizer tries it again later
+    let (status, _) = t
+        .json(
+            "POST",
+            &format!("/api/recipes/{stale}/flags/{}/dismiss", flag["id"]),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    crumb::checks::flag_dead_photo(&t.state.db.lock(), stale, &format!("{site}/gone.jpg")).unwrap();
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+
+    // A new link that's dead too is flagged again; saving another photo resolves it
+    t.json(
+        "PATCH",
+        &format!("/api/recipes/{stale}"),
+        Some(json!({"image": format!("{site}/back.png")})),
+    )
+    .await;
+    send_raw(&t, get(&format!("/img/{stale}/320"))).await;
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"].as_array().unwrap().len(), 1, "{list}");
+    t.json(
+        "PATCH",
+        &format!("/api/recipes/{stale}"),
+        Some(json!({"image": null})),
+    )
+    .await;
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+
+    // A link that comes back to life clears its own flag
+    set_image(&t, busy, &format!("{site}/back.png"));
+    crumb::checks::flag_dead_photo(&t.state.db.lock(), busy, &format!("{site}/back.png")).unwrap();
+    up.store(true, Ordering::SeqCst);
+    let (status, _, _) = send_raw(&t, get(&format!("/img/{busy}/320"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = t.json("GET", "/api/checks/review", None).await;
+    assert_eq!(list["recipes"], json!([]));
+    let (_, headers, _) = send_raw(&t, home()).await;
+    assert_eq!(hint(&headers), None);
+}
+
+#[tokio::test]
 async fn recipe_pages_preload_the_hero() {
     let t = TestApp::new(None);
     let id = add_recipe(&t, "Hero", "Dinner", "eggs", "10 min").await;
