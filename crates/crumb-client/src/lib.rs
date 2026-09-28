@@ -41,7 +41,52 @@ pub enum ImportInput {
 pub struct Imported {
     pub recipe: Recipe,
     pub is_new: bool,
+    /// A cooking video Wee Chef watched in the server's queue.
+    pub from_video: bool,
+    /// The page's photo link was dead, so it was saved without one.
+    pub dropped_photo: bool,
+    /// Another Crumb's shared cookbook: where its recipes went. `recipe` is the first new one.
+    pub cookbook: Option<ImportedCookbook>,
 }
+
+/// A shared cookbook saved from another Crumb ("Added 12 recipes to Weeknights").
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportedCookbook {
+    pub id: i64,
+    pub name: String,
+    pub added: usize,
+    #[serde(default)]
+    pub duplicates: usize,
+    #[serde(default)]
+    pub skipped: usize,
+}
+
+/// A cooking video's place in the server's queue (`GET /api/import/jobs/{id}`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportJob {
+    /// `queued`, `running`, `done` or `failed`.
+    pub status: String,
+    /// In the queue: 1 = next.
+    pub position: Option<u32>,
+    /// Done: `{id, title, isNew}`.
+    pub recipe: Option<JobRecipe>,
+    /// Failed: the error's status and message.
+    pub status_code: Option<u16>,
+    pub message: Option<String>,
+}
+
+/// The recipe a finished video job saved.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobRecipe {
+    pub id: i64,
+    pub title: String,
+    pub is_new: bool,
+}
+
+/// How often [`Client::import_with_progress`] asks after a video job, as the web does.
+pub const JOB_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The `{statusCode, statusMessage, message}` body the server sends on errors.
 #[derive(Deserialize)]
@@ -50,19 +95,21 @@ struct ErrorBody {
 }
 
 /// The `{id, title, isNew}` body the import route echoes back. A shared-cookbook link
-/// adds a `cookbook` object instead of being a single recipe.
+/// adds a `cookbook` object instead of being a single recipe; a cooking video answers 202
+/// with `{jobId, status, position?}` instead.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportResponse {
-    id: i64,
-    #[serde(rename = "isNew")]
+    /// A recipe's id, or a video job's (a string).
+    id: Option<serde_json::Value>,
+    #[serde(default)]
     is_new: bool,
-    cookbook: Option<ImportedBook>,
-}
-
-/// How many recipes a shared-cookbook import actually added.
-#[derive(Deserialize)]
-struct ImportedBook {
-    added: usize,
+    #[serde(default)]
+    dropped_photo: bool,
+    cookbook: Option<ImportedCookbook>,
+    job_id: Option<String>,
+    #[serde(flatten)]
+    job: Option<ImportJob>,
 }
 
 /// A Crumb server as a client: base address plus the cookie jar holding the session.
@@ -180,9 +227,19 @@ impl Client {
         self.json(res, false).await
     }
 
-    /// `POST /api/recipes/import`. The route echoes only `id`/`title`/`isNew`, so the
-    /// full recipe is fetched straight after.
+    /// `POST /api/recipes/import`: saves a link or pasted text. A cooking video waits in
+    /// the server's queue; see [`Client::import_with_progress`] to hear how it's going.
     pub async fn import(&self, input: ImportInput) -> Result<Imported, Error> {
+        self.import_with_progress(input, |_| {}).await
+    }
+
+    /// Like [`Client::import`], and while a cooking video waits or is watched, `progress`
+    /// gets the Add box's short lines ("Queued (2nd)…", `crumb_core::add::job_progress`).
+    pub async fn import_with_progress(
+        &self,
+        input: ImportInput,
+        mut progress: impl FnMut(&str),
+    ) -> Result<Imported, Error> {
         let body = match input {
             ImportInput::Url(url) => json!({ "url": url }),
             ImportInput::Text(text) => json!({ "text": text }),
@@ -195,20 +252,67 @@ impl Client {
             )
             .await?;
         let imported: ImportResponse = self.json(res, false).await?;
+        if let (Some(job_id), Some(mut job)) = (imported.job_id, imported.job) {
+            loop {
+                match job.status.as_str() {
+                    "done" => {
+                        let done = job.recipe.ok_or_else(|| {
+                            Error::Decode("a finished video job without its recipe".into())
+                        })?;
+                        return Ok(Imported {
+                            recipe: self.recipe(done.id).await?,
+                            is_new: done.is_new,
+                            from_video: true,
+                            dropped_photo: false,
+                            cookbook: None,
+                        });
+                    }
+                    "failed" => {
+                        return Err(Error::Api {
+                            status: job.status_code.unwrap_or(422),
+                            message: job
+                                .message
+                                .filter(|m| !m.is_empty())
+                                .unwrap_or_else(|| "Couldn't read that video".into()),
+                        });
+                    }
+                    status => progress(&crumb_core::add::job_progress(status, job.position)),
+                }
+                tokio::time::sleep(JOB_POLL).await;
+                job = self.import_job(&job_id).await?;
+            }
+        }
+        let id = imported
+            .id
+            .and_then(|id| id.as_i64())
+            .ok_or_else(|| Error::Decode("an import without a recipe id".into()))?;
         // A shared-cookbook link saves a whole book, not one recipe. When it added no
         // recipes, `id` is the cookbook's id, which is not a recipe id: report it rather
         // than fetch whichever unrelated recipe happens to share that number.
-        if imported.cookbook.is_some_and(|book| book.added == 0) {
+        if imported
+            .cookbook
+            .as_ref()
+            .is_some_and(|book| book.added == 0)
+        {
             return Err(Error::Api {
                 status: 200,
                 message: "That shared cookbook had no new recipes to save.".into(),
             });
         }
-        let recipe = self.recipe(imported.id).await?;
         Ok(Imported {
-            recipe,
+            recipe: self.recipe(id).await?,
             is_new: imported.is_new,
+            from_video: false,
+            dropped_photo: imported.dropped_photo,
+            cookbook: imported.cookbook,
         })
+    }
+
+    /// `GET /api/import/jobs/{id}`: where a cooking video's import is.
+    pub async fn import_job(&self, id: &str) -> Result<ImportJob, Error> {
+        let mut url = self.endpoint("api/import/jobs/");
+        url.push_str(&percent_encode_segment(id));
+        self.fetch(self.http.get(url)).await
     }
 
     /// `POST /api/recipes/{id}/viewed` (204 on success).
@@ -350,6 +454,18 @@ fn attachment_name(header: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// `text` as one URL path segment: anything but unreserved characters percent-encoded.
+fn percent_encode_segment(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 fn percent_decode(text: &str) -> Option<String> {
     let mut bytes = Vec::with_capacity(text.len());
     let mut rest = text.as_bytes();
@@ -385,4 +501,37 @@ fn fnv1a(value: &str) -> String {
         hash = hash.wrapping_mul(0x0100_0193);
     }
     format!("{hash:08x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_answers() {
+        let recipe: ImportResponse =
+            serde_json::from_str(r#"{"id":7,"title":"Pie","isNew":true,"droppedPhoto":true}"#)
+                .unwrap();
+        assert_eq!(recipe.id.and_then(|v| v.as_i64()), Some(7));
+        assert!(recipe.dropped_photo && recipe.job_id.is_none());
+
+        let job: ImportResponse =
+            serde_json::from_str(r#"{"id":"ab12","status":"queued","position":2,"jobId":"ab12"}"#)
+                .unwrap();
+        assert_eq!(job.job_id.as_deref(), Some("ab12"));
+        let job = job.job.unwrap();
+        assert_eq!((job.status.as_str(), job.position), ("queued", Some(2)));
+
+        let book: ImportResponse = serde_json::from_str(
+            r#"{"id":3,"title":"Weeknights","isNew":true,"cookbook":{"id":9,"name":"Weeknights","added":2,"duplicates":1,"skipped":0}}"#,
+        )
+        .unwrap();
+        assert_eq!(book.cookbook.unwrap().added, 2);
+    }
+
+    #[test]
+    fn job_ids_are_one_segment() {
+        assert_eq!(percent_encode_segment("a-b_c.1"), "a-b_c.1");
+        assert_eq!(percent_encode_segment("a/b ?"), "a%2Fb%20%3F");
+    }
 }

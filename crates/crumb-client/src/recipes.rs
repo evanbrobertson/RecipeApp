@@ -204,6 +204,9 @@ impl Client {
         Ok(crate::Imported {
             recipe: self.recipe(saved.id).await?,
             is_new: saved.is_new,
+            from_video: false,
+            dropped_photo: false,
+            cookbook: None,
         })
     }
 }
