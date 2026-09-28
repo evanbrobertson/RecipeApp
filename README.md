@@ -346,6 +346,12 @@ See [DEPLOY.md](./DEPLOY.md) for Railway, and [docs/RELEASING.md](./docs/RELEASI
 
 ## Configuration
 
+Every variable is declared in [`.env.schema`](./.env.schema) (and the hosted edition's auth service in
+[`auth/.env.schema`](./auth/.env.schema)) with its type, default, and whether it's required or secret, in
+[varlock](https://varlock.dev)'s `@env-spec` format. They're plain `.env` files, so they read fine on their
+own. To check a local setup, put your values in a git-ignored `.env.local` and run `bunx varlock load`
+(secrets are masked), or start the server with them: `bunx varlock run -- cargo run`.
+
 | Variable            | Required   | Description                                                                   |
 | ------------------- | ---------- | ----------------------------------------------------------------------------- |
 | `APP_PASSWORD`      | Production | Password for the web app and for approving the Claude connector               |

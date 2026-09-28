@@ -126,6 +126,8 @@ web/src/
   page is idle; keep it off the critical path. Never attach recipe contents, bodies, query strings or cookies.
   Every AI call (Wee Chef's providers and Typesafe) is a `gen_ai.chat` span via `telemetry::AiSpan` (provider, model,
   feature, tokens), kept whatever the sample rate so Sentry's AI dashboards show whole usage and cost; never prompts or replies.
+- **Env vars:** a new or changed variable goes in `.env.schema` (`auth/.env.schema` for the auth service) with its
+  type, default and `@sensitive`/`@required`, and in the README's Configuration table.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.
 
