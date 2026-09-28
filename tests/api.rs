@@ -915,14 +915,14 @@ async fn add_recipe(t: &TestApp, title: &str, category: &str, ingredient: &str, 
 }
 
 #[tokio::test]
-async fn staples_count_normalised_ingredients() {
+async fn staples_count_normalised_ingredients_but_not_salt() {
     let t = TestApp::new(None);
     let (_, body) = t.json("GET", "/api/staples", None).await;
     assert_eq!(body, json!({"recipes": 0, "staples": []}));
 
     for (title, ing) in [
-        ("Omelette", "2 large eggs, beaten"),
-        ("Pancakes", "1 egg"),
+        ("Tacos", "2 limes, juiced"),
+        ("Curry", "1 lime"),
         ("Stir Fry", "3 garlic cloves, minced"),
     ] {
         add_recipe(&t, title, "Main", ing, "20m").await;
@@ -932,8 +932,7 @@ async fn staples_count_normalised_ingredients() {
     assert_eq!(
         body,
         json!({"recipes": 3, "staples": [
-            {"name": "salt", "recipes": 3},
-            {"name": "eggs", "recipes": 2},
+            {"name": "limes", "recipes": 2},
         ]})
     );
 }

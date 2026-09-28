@@ -34,8 +34,35 @@ pub struct Staples {
     pub staples: Vec<Staple>,
 }
 
-/// How many staples the tip lists.
-pub const LIMIT: usize = 12;
+/// How many staples the tip lists: six rows of three.
+pub const LIMIT: usize = 18;
+
+/// Staples nearly every box leans on, left out so the tip shows what's particular to this
+/// one ("oh look, I use lots of salt" tells nobody anything). Keys, as [`key_of`] makes them.
+const OBVIOUS: [&str; 22] = [
+    "salt",
+    "black pepper",
+    "butter",
+    "flour",
+    "sugar",
+    "brown sugar",
+    "powdered sugar",
+    "egg",
+    "milk",
+    "oil",
+    "olive oil",
+    "vegetable oil",
+    "canola oil",
+    "neutral oil",
+    "cooking spray",
+    "baking powder",
+    "baking soda",
+    "vanilla",
+    "vanilla extract",
+    "garlic",
+    "onion",
+    "yellow onion",
+];
 
 /// Fewer recipes than this and there's nothing to tell apart from chance.
 pub const MIN_RECIPES: usize = 3;
@@ -265,8 +292,8 @@ pub fn staple_names(line: &str) -> Vec<String> {
 }
 
 /// The ingredients most of the box's recipes use, most-used first: each recipe counts
-/// once per staple, and only staples in at least two recipes are listed. Empty for a
-/// box of fewer than [`MIN_RECIPES`] recipes.
+/// once per staple, only staples in at least two recipes are listed, and the [`OBVIOUS`]
+/// ones never are. Empty for a box of fewer than [`MIN_RECIPES`] recipes.
 pub fn staples<I, R, S>(recipes: I, limit: usize) -> Vec<Staple>
 where
     I: IntoIterator<Item = R>,
@@ -298,7 +325,7 @@ where
     }
     let mut out: Vec<(usize, usize, String)> = seen
         .into_iter()
-        .filter(|(_, (n, _, _))| *n >= 2)
+        .filter(|(key, (n, _, _))| *n >= 2 && !OBVIOUS.contains(&key.as_str()))
         .map(|(key, (n, order, forms))| {
             // Plural when the box ever writes one ("eggs" over "egg"), else its usual spelling
             let name = forms
@@ -382,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_recipes_merges_synonyms_and_prefers_plurals() {
+    fn counts_recipes_merges_synonyms_and_skips_the_obvious() {
         let box_ = [
             vec![
                 "2 eggs",
@@ -392,22 +419,19 @@ mod tests {
             ],
             vec!["1 egg", "1 tsp sea salt", "2 green onions"],
             vec!["1 large egg", "Pinch of kosher salt", "1 egg, beaten"],
-            vec!["2 cups water", "1 tsp salt"],
+            vec!["2 cups water", "1 tsp salt", "1 tbsp soy sauce"],
+            vec!["2 tbsp soya sauce", "1 bunch green onions"],
         ];
         let got = staples(box_.clone(), 10);
         assert_eq!(
             got,
             [
                 Staple {
-                    name: "salt".into(),
-                    recipes: 4
-                },
-                Staple {
-                    name: "eggs".into(),
+                    name: "green onions".into(),
                     recipes: 3
                 },
                 Staple {
-                    name: "green onions".into(),
+                    name: "soy sauce".into(),
                     recipes: 2
                 },
             ]
