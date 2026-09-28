@@ -5,10 +5,13 @@ use serde_json::json;
 
 /// An error that becomes an h3-style JSON body:
 /// `{"statusCode":404,"statusMessage":"Recipe not found","message":"Recipe not found"}`.
+/// An error a client can act on also carries a `code` (`"site_blocked"`); the field is
+/// left out otherwise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppError {
     pub status: StatusCode,
     pub message: String,
+    pub code: Option<&'static str>,
 }
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -18,7 +21,13 @@ impl AppError {
         Self {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             message: message.into(),
+            code: None,
         }
+    }
+
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -57,11 +66,14 @@ impl From<crumb_core::error::ValidationError> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let body = json!({
+        let mut body = json!({
             "statusCode": self.status.as_u16(),
             "statusMessage": self.message,
             "message": self.message,
         });
+        if let Some(code) = self.code {
+            body["code"] = code.into();
+        }
         (self.status, Json(body)).into_response()
     }
 }

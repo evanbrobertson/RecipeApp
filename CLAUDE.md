@@ -129,7 +129,9 @@ web/src/
   `hosted` (Better Auth in `auth/`, households = organizations, mapped to local ids in `accounts.db`). The web
   talks to either through `web/src/lib/account.ts`; handlers get the signed-in user via `auth::session`/`SignedIn`.
   Account, household, connected apps and data settings live on `/more/account` (`AccountPage.svelte`), not More.
-- **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`.
+- **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`,
+  plus a `code` only when a client can act on it (`site_blocked`: a recipe site's bot check turned the server away, so the web
+  nudges toward the extension instead of showing an error).
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.
