@@ -9,9 +9,7 @@
 //! Any failure is a quick 404 (the page falls back to the original URL) and is
 //! remembered for a while, so a broken photo isn't refetched on every card render. A link
 //! the site refuses for good (see [`LoadError::dead`]) is also flagged for the cook to
-//! fix on the Suggestions page ([`crate::checks::flag_dead_photo`]). A photo behind a bot
-//! shield (see [`LoadError::challenged`]) is fetched once through headless Chromium and its
-//! original kept beside the sized files, so every size is made from that copy.
+//! fix on the Suggestions page ([`crate::checks::flag_dead_photo`]).
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -396,29 +394,11 @@ pub async fn serve_photo(
         return not_found();
     }
 
-    let Ok(mut permit) = images.work.acquire().await else {
+    let Ok(_permit) = images.work.acquire().await else {
         return not_found();
     };
     let linked = !image.starts_with("data:");
-    let kept = format!("{source}-original");
-    let loaded = match read_file(images.cached_path(&kept)).await {
-        Some(b) => Ok(b),
-        None => match load_source(&state.http, &image, page_url.as_deref()).await {
-            Err(err) if err.challenged && state.browser.available() => {
-                // Chromium loads one page at a time; don't hold a resize slot waiting for it
-                drop(permit);
-                let got = through_browser(state, &kept, &image, err).await;
-                let Ok(again) = images.work.acquire().await else {
-                    return not_found();
-                };
-                permit = again;
-                got
-            }
-            other => other,
-        },
-    };
-    let _permit = permit;
-    let original = match loaded {
+    let original = match load_source(&state.http, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
@@ -456,42 +436,6 @@ pub async fn serve_photo(
             not_found()
         }
     }
-}
-
-async fn read_file(path: Option<PathBuf>) -> Option<Vec<u8>> {
-    tokio::fs::read(path?).await.ok()
-}
-
-/// A photo a bot shield keeps from the plain clients, loaded in Chromium as a visitor's
-/// browser would and kept on disk as `kept`. `challenged` is what the plain fetch got,
-/// returned when Chromium can't get past the shield either.
-async fn through_browser(
-    state: &AppState,
-    kept: &str,
-    image: &str,
-    challenged: LoadError,
-) -> Result<Vec<u8>, LoadError> {
-    let images = &state.images;
-    let _slot = images.claim(kept).await;
-    // Another size of the same photo may have fetched it while this one waited
-    if let Some(bytes) = read_file(images.cached_path(kept)).await {
-        return Ok(bytes);
-    }
-    let host = crate::telemetry::host_of(image);
-    let bytes = match state.browser.fetch_image(image).await {
-        Ok(b) => b,
-        Err(err) => {
-            tracing::info!("[img] {host}: Chromium couldn't get the photo either: {err}");
-            return Err(challenged);
-        }
-    };
-    tracing::info!(
-        "[img] {host}: got a photo past a bot shield ({} bytes)",
-        bytes.len()
-    );
-    let (worker, name, copy) = (images.clone(), kept.to_string(), bytes.clone());
-    let _ = tokio::task::spawn_blocking(move || worker.store(&name, &copy)).await;
-    Ok(bytes)
 }
 
 /// The original image bytes, from a `data:` URI or over HTTP.
@@ -539,8 +483,6 @@ pub struct LoadError {
     /// the URL can't be fetched at all. Asking again won't help. A timeout, a 5xx or a photo
     /// too large to resize may be fine later, or in a browser.
     pub dead: bool,
-    /// A bot shield answered in the photo's place; a real browser gets past it.
-    pub challenged: bool,
 }
 
 impl LoadError {
@@ -548,7 +490,6 @@ impl LoadError {
         Self {
             message: message.into(),
             dead: true,
-            challenged: false,
         }
     }
 
@@ -556,15 +497,6 @@ impl LoadError {
         Self {
             message: message.into(),
             dead: false,
-            challenged: false,
-        }
-    }
-
-    fn challenge(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            dead: false,
-            challenged: true,
         }
     }
 }
@@ -588,7 +520,7 @@ fn check_response(
     challenged: bool,
 ) -> Result<(), LoadError> {
     if challenged {
-        return Err(LoadError::challenge(format!("bot challenge ({status})")));
+        return Err(LoadError::passing(format!("bot challenge ({status})")));
     }
     if !(200..300).contains(&status) {
         let message = format!("fetch returned {status}");
@@ -607,7 +539,7 @@ fn check_response(
         return Err(if status == 200 {
             LoadError::dead(message)
         } else {
-            LoadError::challenge(message)
+            LoadError::passing(message)
         });
     }
     if length.is_some_and(|n| n > MAX_SOURCE_BYTES as u64) {
@@ -929,23 +861,6 @@ mod tests {
         assert_eq!(dead(403, "text/html", true), Some(false));
         assert_eq!(dead(429, "text/html", false), Some(false));
         assert_eq!(dead(503, "text/html", false), Some(false));
-    }
-
-    #[test]
-    fn a_bot_shield_sends_the_photo_to_chromium() {
-        let challenged = |status, kind, header| {
-            check_response(status, Some(kind), None, header)
-                .err()
-                .map(|e| e.challenged)
-        };
-        assert_eq!(challenged(200, "image/jpeg", false), None);
-        assert_eq!(challenged(202, "text/html", true), Some(true));
-        assert_eq!(challenged(403, "text/html", true), Some(true));
-        // An unlabelled holding page, but not a page in the photo's place or a refusal
-        assert_eq!(challenged(202, "text/html", false), Some(true));
-        assert_eq!(challenged(200, "text/html", false), Some(false));
-        assert_eq!(challenged(404, "text/html", false), Some(false));
-        assert_eq!(challenged(503, "text/html", false), Some(false));
     }
 
     #[test]
