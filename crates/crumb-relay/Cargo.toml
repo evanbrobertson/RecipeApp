@@ -12,11 +12,15 @@ path = "src/main.rs"
 
 [dependencies]
 axum = "0.8"
+crumb-core = { path = "../crumb-core" }
 crumb-fetch = { path = "../crumb-fetch" }
+crumb-work = { path = "../crumb-work" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 subtle = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"

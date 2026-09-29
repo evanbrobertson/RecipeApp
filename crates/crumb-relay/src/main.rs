@@ -38,7 +38,18 @@ async fn main() -> ExitCode {
         );
     }
 
-    let app = router(Relay::new(&config));
+    let relay = Relay::new(&config);
+    let can = relay.can();
+    if can.is_empty() {
+        tracing::info!("fetching only (no Chromium or video tools, or RELAY_WORK=off)");
+    } else {
+        tracing::info!(
+            "also works for the server: {} ({} at once)",
+            can.join(", "),
+            config.heavy_workers
+        );
+    }
+    let app = router(relay);
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await

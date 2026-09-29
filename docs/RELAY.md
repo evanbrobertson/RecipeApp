@@ -164,6 +164,70 @@ The point of a relay is that its address is *not* blocked. A home IP that fetche
 - Don't point other tools at it. The relay isn't a general proxy: it fetches only public web pages, only with the two browser fingerprints, and refuses the rest.
 - It sits idle most of the time: the server asks only after being blocked twice.
 
+## Relays as workers: Chromium and videos at home
+
+A relay on a machine with **Chromium**, or with **`yt-dlp` and `ffmpeg`** (and optionally `whisper-cli` and its model), also does the server's heavy work, so it runs on your hardware and from your home connection instead of the server's:
+
+- **Chromium pages** (the last step for sites that still block or need JavaScript): the server asks a relay that has Chromium first, and only uses its own if no relay is free. If the relay's Chromium was blocked too, the server doesn't try again from the datacenter.
+- **Cooking videos** (TikTok, Instagram Reels, YouTube): the video's details, the download, the transcript and the stills all happen on the relay. YouTube and the others turn a home connection away far less often than a server. The relay sends back only what's said and a dozen stills; **Wee Chef runs on the server**, so no API key ever goes to a relay.
+
+```
+video import ── /video/meta  ─► relay (yt-dlp)                 ─► details, caption
+             ── /video/watch ─► relay (yt-dlp, whisper, ffmpeg)  ─► transcript + stills
+             ── Wee Chef on the server reads them ─► recipe
+blocked page ── /render      ─► relay (headless Chromium)        ─► the page, read on the server
+```
+
+Nothing changes on the server: it asks each relay's `/health` what it can do (every ten minutes) and hands the work to one that can. A relay that's busy (one heavy job at a time by default) answers 429 and the server does the work itself, as it does when no relay can. Chromium on the server is then only a fallback, which also sidesteps hosts like Railway where Chromium can't start with its sandbox.
+
+**What the relay will run:** Chromium only goes through the relay's own proxy, which refuses private addresses (your router, the tailnet, `localhost`) for everything the page does, as on the server. `yt-dlp` is only given TikTok, Instagram and YouTube links. Pages of sites whose terms forbid automated fetching (`data/site-terms.toml`) are refused by every check the relay makes, redirects and Chromium included. A render counts against the same per-site and per-minute limits as a fetch.
+
+### Set one up
+
+**Docker (simplest):** build the worker image on the machine itself (whisper.cpp is compiled for its CPU; allow 20–40 minutes on a Pi 4 the first time):
+
+```bash
+git clone https://github.com/evanbrobertson/RecipeApp && cd RecipeApp
+docker build -f crates/crumb-relay/Dockerfile --target worker -t crumb-relay-worker .
+docker run -d --name crumb-relay --restart unless-stopped \
+  -e RELAY_TOKEN=paste-the-token-here -e RELAY_NAME=pi1 \
+  -e BROWSER_NO_SANDBOX=1 --shm-size=512m \
+  -p 100.101.102.103:8787:8787 crumb-relay-worker
+```
+
+Chromium's sandbox needs user namespaces, which Docker's default seccomp profile doesn't allow; `BROWSER_NO_SANDBOX=1` is the informed choice to run it unsandboxed inside the container (it still runs as a non-root user, and every request still goes through the proxy). To keep the sandbox instead, run the relay natively (below).
+
+**Natively (systemd):** install the tools and let the relay find them on `PATH`:
+
+```bash
+sudo apt install chromium ffmpeg        # Raspberry Pi OS: chromium-browser
+sudo curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+sudo chmod 755 /usr/local/bin/yt-dlp    # needs python3
+```
+
+For transcripts, build `whisper-cli` from [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and download `ggml-base.en.bin`, then set `WHISPER_PATH` and `WHISPER_MODEL`. Without it the relay still reads a video's subtitles and stills. The unit's `MemoryMax=256M` is for fetching only; give a worker room with a drop-in:
+
+```bash
+sudo systemctl edit crumb-relay
+# [Service]
+# MemoryMax=2G
+# Environment=HOME=/tmp
+sudo systemctl restart crumb-relay
+```
+
+Check what it found: `curl http://100.101.102.103:8787/health` answers `"can": ["render", "video"]`, and the log says `also works for the server: render, video`. On the server the log says `[relay] <site>: pi1 rendered it` or `pi1 watched it`.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `RELAY_WORK` | on | `off`: only fetch, even with the tools installed |
+| `RELAY_HEAVY_WORKERS` | `1` | Chromium pages and videos at once; more get a 429 (the server does them) |
+| `CHROMIUM_PATH` | found | Chromium; `BROWSER_SCRAPING=off` leaves it out |
+| `BROWSER_NO_SANDBOX` | off | `1` runs Chromium without its sandbox (Docker) |
+| `YT_DLP_PATH`, `FFMPEG_PATH` | on `PATH` | `VIDEO_IMPORT=off` leaves videos out |
+| `WHISPER_PATH`, `WHISPER_MODEL` | `whisper-cli` on `PATH`, `/opt/video/models/ggml-base.en.bin` | Transcripts for videos without subtitles |
+
+A Pi 4 or 5 with 4 GB is comfortable for one job at a time: a short video takes a minute or two (most of it whisper), a Chromium page a few seconds. Bump `YT_DLP_VERSION` in the Dockerfile (or `yt-dlp -U`) when video imports start failing, as on the server.
+
 ## What the relay refuses
 
 It sits next to a router and a tailnet, so it fetches **only public web addresses**:
@@ -177,8 +241,8 @@ The checks use the same address the connection is made to: the client's own DNS 
 
 ## For developers
 
-`POST /fetch` with `{"url": "...", "profile": "firefox" | "safari"}` and the bearer token answers `200 {"status", "body", "relay"}` (the site's status; the body is the page for a 2xx and empty otherwise), or `{"error"}` with 400 (refused link or bad request), 401 (token), 429 (limits, with `Retry-After`) or 502 (site unreachable). `GET /health` answers `{"name", "version"}` without a token. The types are in `crates/crumb-fetch/src/wire.rs`, shared by the server (`src/relay.rs`) and the relay.
+`POST /fetch` with `{"url": "...", "profile": "firefox" | "safari"}` and the bearer token answers `200 {"status", "body", "relay"}` (the site's status; the body is the page for a 2xx and empty otherwise), or `{"error"}` with 400 (refused link or bad request), 401 (token), 429 (limits, with `Retry-After`) or 502 (site unreachable). `GET /health` answers `{"name", "version", "can"}` without a token. The types are in `crates/crumb-fetch/src/wire.rs`, shared by the server (`src/relay.rs`) and the relay. The worker routes (`POST /render`, `/video/meta`, `/video/watch`) are in `crates/crumb-work/src/wire.rs`; `crumb-work` holds the Chromium driver and the video tools both run.
 
 `crumb-fetch` holds the browser-profile client both use, so the fingerprints can't drift apart. Its address checks (`crumb_fetch::guard`) are used by the relay only; the server's own fetches of pasted links don't use them.
 
-Releases are automatic: a push to `master` that changes `crates/crumb-relay/` or `crates/crumb-fetch/` works out the next version from the conventional commits touching them (`feat:` a minor, anything else a patch), and `.github/workflows/relay.yml` tags `relay-vX.Y.Z`, builds Linux binaries for x86-64, ARM64 and ARMv7 (on Ubuntu 22.04, so they run on Debian 12 and newer), attaches them to a GitHub Release and pushes the multi-arch image to `ghcr.io/evanbrobertson/recipeapp-relay`. The version in `crates/crumb-relay/Cargo.toml` is only the starting point; each build sets the release's version, so `/health` reports it. Pushing a `relay-vX.Y.Z` tag by hand releases that version; run from the Actions tab the workflow only builds. Pull requests get an ARM64 build and an image build. See [RELEASING.md](RELEASING.md#relay).
+Releases are automatic: a push to `master` that changes `crates/crumb-relay/`, `crates/crumb-fetch/`, `crates/crumb-work/` or `data/site-terms.toml` works out the next version from the conventional commits touching them (`feat:` a minor, anything else a patch), and `.github/workflows/relay.yml` tags `relay-vX.Y.Z`, builds Linux binaries for x86-64, ARM64 and ARMv7 (on Ubuntu 22.04, so they run on Debian 12 and newer), attaches them to a GitHub Release and pushes the multi-arch image to `ghcr.io/evanbrobertson/recipeapp-relay`. The version in `crates/crumb-relay/Cargo.toml` is only the starting point; each build sets the release's version, so `/health` reports it. Pushing a `relay-vX.Y.Z` tag by hand releases that version; run from the Actions tab the workflow only builds. Pull requests get an ARM64 build and an image build. See [RELEASING.md](RELEASING.md#relay).

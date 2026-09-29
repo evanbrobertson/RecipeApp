@@ -22,6 +22,10 @@ pub struct Config {
     pub concurrency: usize,
     /// `RELAY_PER_MINUTE`: fetches started in any minute; more are answered 429.
     pub per_minute: usize,
+    /// `RELAY_WORK=off`: only fetch, even with Chromium or the video tools installed.
+    pub work: bool,
+    /// `RELAY_HEAVY_WORKERS`: Chromium pages and videos at once; more are answered 429.
+    pub heavy_workers: usize,
 }
 
 impl Config {
@@ -68,6 +72,8 @@ impl Config {
             host_interval: Duration::from_secs(number("RELAY_HOST_INTERVAL_SECS", 5, 0)?),
             concurrency: number("RELAY_CONCURRENCY", 2, 1)? as usize,
             per_minute: number("RELAY_PER_MINUTE", 20, 1)? as usize,
+            work: !get("RELAY_WORK").is_some_and(|v| v.eq_ignore_ascii_case("off")),
+            heavy_workers: number("RELAY_HEAVY_WORKERS", 1, 1)? as usize,
         })
     }
 }

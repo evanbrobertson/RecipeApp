@@ -6,7 +6,7 @@ pub mod account_api;
 pub mod accounts;
 pub mod api;
 pub mod auth;
-pub mod browser;
+pub use crumb_work::browser;
 pub mod checks;
 pub mod config;
 pub mod db;

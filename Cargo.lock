@@ -704,6 +704,7 @@ dependencies = [
  "chrono",
  "crumb-core",
  "crumb-fetch",
+ "crumb-work",
  "flate2",
  "futures-util",
  "hmac",
@@ -795,15 +796,37 @@ name = "crumb-relay"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "crumb-core",
  "crumb-fetch",
+ "crumb-work",
  "http-body-util",
+ "serde",
  "serde_json",
  "sha2",
  "subtle",
  "tokio",
+ "toml",
  "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "crumb-work"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "crumb-fetch",
+ "futures-util",
+ "image",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
  "url",
 ]
 
