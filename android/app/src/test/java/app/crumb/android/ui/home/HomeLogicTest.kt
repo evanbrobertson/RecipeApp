@@ -19,15 +19,6 @@ class HomeLogicTest {
     }
 
     @Test
-    fun daysReadLikeTheWeb() {
-        assertEquals("Today", dayLabel(at("2026-09-26T05:00:00Z"), now, zone))
-        // 1am UTC on the 26th is still the 25th in Toronto
-        assertEquals("Yesterday", dayLabel(at("2026-09-26T01:00:00Z"), now, zone))
-        assertEquals("Monday", dayLabel(at("2026-09-21T15:00:00Z"), now, zone))
-        assertEquals("Sep 19", dayLabel(at("2026-09-19T15:00:00Z"), now, zone))
-    }
-
-    @Test
     fun freshMetaSaysWhenAndHow() {
         val r = RecipeSummary(id = 1, title = "Soup", source = "url", createdAt = "2026-09-26T12:00:00Z")
         assertEquals("Today · from a link", freshMeta(r, now, zone))
@@ -42,11 +33,9 @@ class HomeLogicTest {
     }
 
     @Test
-    fun greetingFollowsTheClock() {
-        assertEquals("midnight snack?", greeting(2))
-        assertEquals("what's for breakfast?", greeting(8))
-        assertEquals("what's for lunch?", greeting(12))
-        assertEquals("what's cooking tonight?", greeting(18))
-        assertEquals("something sweet?", greeting(22))
+    fun viewedDaysUseTheViewersOffset() {
+        // 1am UTC on the 26th is still the 25th in Toronto, so it was yesterday
+        assertEquals("Viewed yesterday", viewedLine(at("2026-09-26T01:00:00Z"), now, zone))
+        assertEquals("Viewed monday", viewedLine(at("2026-09-21T15:00:00Z"), now, zone))
     }
 }

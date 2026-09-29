@@ -87,6 +87,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import app.crumb.core.cookProgress
+import app.crumb.core.greeting
 import java.time.LocalTime
 
 /** Everything Home shows below the header, loaded together. */
@@ -169,15 +171,6 @@ class HomeViewModel(private val container: AppContainer) : androidx.lifecycle.Vi
 
 private const val TryNextCount = 4
 
-/** "what's cooking tonight?" by the clock, as index.astro's inline script. */
-fun greeting(hour: Int): String = when {
-    hour < 5 -> "midnight snack?"
-    hour < 11 -> "what's for breakfast?"
-    hour < 15 -> "what's for lunch?"
-    hour < 21 -> "what's cooking tonight?"
-    else -> "something sweet?"
-}
-
 /**
  * Home (web/src/pages/index.astro + islands/HomeFeed.svelte): the tile header with the
  * greeting and the Search/Add box, then pick up where you left off, can't decide, the shelf
@@ -220,7 +213,7 @@ fun HomeScreen(shared: String? = null, onSharedUsed: () -> Unit = {}) {
             ) {
                 Text("Crumb", style = CrumbText.pageTitle, color = c.onTile)
                 Text(
-                    remember { greeting(LocalTime.now().hour) },
+                    remember { greeting(LocalTime.now().hour.toUInt()) },
                     style = CrumbText.hand.copy(fontSize = 38.sp, lineHeight = 38.sp),
                     color = c.onTile,
                     modifier = Modifier.padding(bottom = 6.dp),
@@ -325,8 +318,8 @@ private fun PickUpRow(v: Viewed) {
     val container = AppContainerProvider
     val step = RecipeSession.cookStep(v.id)
     val steps = v.steps
-    // Not started, or on the last step (cook mode stays there after Finish)
-    val progress = if (step != null && steps != null && step > 0 && step < steps - 1) step + 1 to steps else null
+    // Not started, or on the last step (cook mode stays there after Finish): core says which
+    val progress = cookProgress(step?.toLong(), steps?.toLong())
     val photoPx = with(LocalDensity.current) { 64.dp.roundToPx() }
     Row(
         Modifier
@@ -347,8 +340,8 @@ private fun PickUpRow(v: Viewed) {
             Text(v.title, color = c.ink, fontFamily = NunitoSans, fontSize = 17.sp, fontWeight = FontWeight.Bold, lineHeight = 21.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (progress != null) {
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ProgressBar(progress.first / progress.second.toFloat(), Modifier.weight(1f))
-                    Text("Step ${progress.first} of ${progress.second}", style = CrumbText.meta, color = c.inkMuted)
+                    ProgressBar(progress.step / progress.of.toFloat(), Modifier.weight(1f))
+                    Text("Step ${progress.step} of ${progress.of}", style = CrumbText.meta, color = c.inkMuted)
                 }
             } else {
                 Text(viewedLine(v.at), color = c.inkMuted, fontFamily = NunitoSans, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))

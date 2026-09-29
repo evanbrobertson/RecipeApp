@@ -3,40 +3,20 @@ package app.crumb.android.ui.home
 import app.crumb.android.data.RecipeSummary
 import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
-import java.util.Locale
 
-// Home's day and source wording, ported from HomeFeed.svelte. HomeLogicTest pins it.
+// Home's day and source wording comes from crumb-core (`freshMeta`, `viewedLine`, `dayLabel`),
+// so the phone says it exactly as the web does. These only supply the clock and the offset.
 
-/** "Today", "Yesterday", a weekday within the week, else "Sep 20" (web `dayLabel`). */
-fun dayLabel(ms: Long, nowMs: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): String {
-    val day = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
-    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
-    return when {
-        !day.isBefore(today) -> "Today"
-        day == today.minusDays(1) -> "Yesterday"
-        !day.isBefore(today.minusDays(6)) -> day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
-        else -> day.format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
-    }
-}
+/** The viewer's UTC offset at [nowMs] in minutes, east positive, as core's day labels take it. */
+fun offsetMinutes(nowMs: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): Int =
+    zone.rules.getOffset(Instant.ofEpochMilli(nowMs)).totalSeconds / 60
 
-private val Source = mapOf(
-    "url" to "from a link",
-    "text" to "from pasted text",
-    "claude" to "via Claude",
-    "manual" to "written by you",
-    "import" to "imported",
-)
-
-/** "Yesterday · from a link" under a new recipe (web `freshMeta`). */
+/** "Yesterday · from a link" under a new recipe, or null when it has no creation time. */
 fun freshMeta(recipe: RecipeSummary, nowMs: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): String? {
     val at = recipe.createdAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: return null
-    val how = Source[recipe.source]
-    val day = dayLabel(at, nowMs, zone)
-    return if (how != null) "$day · $how" else day
+    return app.crumb.core.freshMeta(at, recipe.source, nowMs, offsetMinutes(nowMs, zone))
 }
 
-/** "Viewed yesterday" under a recent recipe (web `viewedLine`). */
+/** "Viewed yesterday" under a recent recipe. */
 fun viewedLine(at: Long?, nowMs: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): String =
-    at?.let { "Viewed ${dayLabel(it, nowMs, zone).lowercase()}" } ?: "Viewed recently"
+    app.crumb.core.viewedLine(at, nowMs, offsetMinutes(nowMs, zone))
