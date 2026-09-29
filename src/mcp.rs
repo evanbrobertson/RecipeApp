@@ -118,6 +118,19 @@ fn tool_error(message: impl Into<String>) -> Value {
     json!({"content": [{"type": "text", "text": message.into()}], "isError": true})
 }
 
+/// A scrape's error. When the site's bot check turned the server away, the assistant is told
+/// what will work: the user's own browser, with the Crumb extension.
+fn scrape_error(err: AppError) -> Value {
+    if err.code == Some(crate::scraper::SITE_BLOCKED) {
+        return tool_error(
+            "The site blocked Crumb's server with a bot check, so this page can't be read from here. \
+             Ask the user to open the page in their own browser and use the Crumb browser extension \
+             on it, or to paste the recipe text so you can use import_recipe_from_text.",
+        );
+    }
+    tool_error(err.message)
+}
+
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
@@ -371,7 +384,7 @@ impl Ctx<'_> {
                         saved
                     }
                     Ok(recipes::Imported::Book(book)) => text(book_saved(&book)),
-                    Err(err) => tool_error(err.message),
+                    Err(err) => scrape_error(err),
                 }
             }
             "update_recipe" => {
@@ -783,7 +796,7 @@ impl Ctx<'_> {
                         r.id,
                         self.link(r.id)
                     )),
-                    Err(err) => tool_error(err.message),
+                    Err(err) => scrape_error(err),
                 }
             }
             _ => return None,

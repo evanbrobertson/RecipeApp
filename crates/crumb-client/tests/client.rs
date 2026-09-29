@@ -105,7 +105,9 @@ async fn auth_is_required_until_login() {
     ));
 
     match client.login("wrong").await {
-        Err(Error::Api { status, message }) => {
+        Err(Error::Api {
+            status, message, ..
+        }) => {
             assert_eq!(status, 401);
             assert_eq!(message, "Incorrect password");
         }
@@ -333,6 +335,7 @@ async fn creates_patches_and_deletes_a_recipe() {
         Err(Error::Api {
             status: 400,
             message,
+            code: None,
         }) => assert!(!message.is_empty()),
         other => panic!("expected an Api 400, got {other:?}"),
     }
@@ -798,7 +801,9 @@ async fn accounts_set_up_sign_in_and_out() {
     ));
 
     match accounts.sign_in("ann@example.com", "wrong").await {
-        Err(Error::Api { status, message }) => {
+        Err(Error::Api {
+            status, message, ..
+        }) => {
             assert_eq!(status, 401);
             assert_eq!(message, "Incorrect email or password");
         }

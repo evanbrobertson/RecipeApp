@@ -99,7 +99,8 @@
   import Search from "@lucide/svelte/icons/search"
   import X from "@lucide/svelte/icons/x"
   import { onMount, tick } from "svelte"
-  import { api, errorMessage } from "../lib/api"
+  import BlockedNudge from "../components/BlockedNudge.svelte"
+  import { api, errorMessage, isSiteBlocked } from "../lib/api"
   import { autosize } from "../lib/autosize"
   import { bookImportedTitle } from "../lib/format"
   import { importRecipe } from "../lib/importLink"
@@ -140,6 +141,8 @@
   let manual = $state<AddMode | null>(null)
   let menuOpen = $state(false)
   let saving = $state(false)
+  /** The link a site's bot check kept the server from reading: a nudge, not an error toast. */
+  let blocked = $state<string | null>(null)
   let count = $state<number | null>(null)
   let detected = $state<Detected>({ mode: "auto", summary: "" })
   let tipIndex = $state(-1)
@@ -433,6 +436,7 @@
     what: string,
   ) {
     saving = true
+    blocked = null
     try {
       progress = ""
       // A cooking video waits its turn in the server's queue: say where it is
@@ -455,9 +459,19 @@
       else if (res.fromVideo) flash({ title: "Saved from the video", tone: "success" })
       location.href = `/recipes/${res.id}`
     } catch (err) {
-      toast({ title: `Couldn't ${what}`, description: errorMessage(err), tone: "error" })
+      if ("url" in body && isSiteBlocked(err)) blocked = body.url
+      else toast({ title: `Couldn't ${what}`, description: errorMessage(err), tone: "error" })
       saving = false
     }
+  }
+
+  /** From the nudge: the link is left behind and the field waits for the recipe's text. */
+  async function pasteInstead() {
+    blocked = null
+    input = ""
+    manual = "text"
+    await tick()
+    addField?.focus()
   }
 
   async function add(e?: Event) {
@@ -751,6 +765,12 @@
         }}
       />
     </form>
+
+    {#if blocked}
+      <div class="mt-3">
+        <BlockedNudge url={blocked} onpaste={pasteInstead} ondismiss={() => (blocked = null)} />
+      </div>
+    {/if}
 
     {#if menuOpen}
       <div class="menu menu-surface" role="menu" aria-label="How to add">

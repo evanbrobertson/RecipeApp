@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::AppState;
+use crate::error::AppError;
 use crate::households::HouseholdId;
 use crate::model::{Recipe, now_secs};
 use crate::scraper::Scraped;
@@ -57,7 +58,9 @@ fn kept() -> std::sync::MutexGuard<'static, HashMap<Key, (Instant, Scraped)>> {
     map
 }
 
-fn keep(state: &AppState, url: &str, scraped: &Scraped) {
+/// Keeps a scrape for the import that follows: what a preview showed, or what the cook's
+/// browser read from the page (`scraper::page`).
+pub fn keep(state: &AppState, url: &str, scraped: &Scraped) {
     let mut map = kept();
     let key = (state.household, url.to_string());
     // A household over its own share loses its own oldest first
@@ -108,6 +111,9 @@ pub fn routes() -> Router<AppState> {
 struct Params {
     url: Option<String>,
     go: Option<String>,
+    /// `extension`: the extension opened this tab and is about to hand over the page as it
+    /// read it (see [`waiting`]).
+    via: Option<String>,
 }
 
 /// Whether the request came from Crumb or the browser itself, not from another site.
@@ -152,6 +158,12 @@ async fn page(
     if !trusted(&headers) {
         return waiting(&state, &url, "ask");
     }
+    // The extension read the recipe in the cook's browser and hands it over from this page
+    // (`POST /api/preview`), then reloads with `go=1`: nothing is scraped meanwhile. If it
+    // could hand nothing over, that reload scrapes as usual.
+    if params.go.is_none() && params.via.as_deref() == Some("extension") {
+        return waiting(&state, &url, "handover");
+    }
     if params.go.is_none() {
         return waiting(&state, &url, "loading");
     }
@@ -162,7 +174,7 @@ async fn page(
             keep(&state, &url, &scraped);
             ready(&state, &url, &scraped)
         }
-        Err(err) => failed(&state, &url, err.status, &err.message),
+        Err(err) => failed(&state, &url, &err),
     }
 }
 
@@ -240,11 +252,15 @@ fn waiting(state: &AppState, url: &str, step: &str) -> Response {
 }
 
 /// The scrape didn't give a recipe: why, with the page's own link.
-fn failed(state: &AppState, url: &str, status: StatusCode, message: &str) -> Response {
+fn failed(state: &AppState, url: &str, err: &AppError) -> Response {
+    let (status, message) = (err.status, err.message.as_str());
     let host = share::host_of(url).unwrap_or_default();
-    let data = json!({"preview": {
+    let mut data = json!({"preview": {
         "state": "failed", "url": url, "host": host, "message": message,
     }});
+    if let Some(code) = err.code {
+        data["preview"]["code"] = code.into();
+    }
     let title = "Couldn't read that recipe";
     html(state, status, |t| {
         let mut page = share::start_page(t, title, "", &data);

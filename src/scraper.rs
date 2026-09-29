@@ -23,11 +23,19 @@ use crate::error::{AppError, AppResult};
 use crate::model::{RecipeFields, Section, normalize_sections};
 
 pub mod fallbacks;
+pub mod page;
 
 /// The User-Agent for the plain `reqwest` image fallback (wreq's profiles set their own).
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
+
+/// What a cook is told when the site's bot check turned the server away. The extension reads
+/// the page from their own browser, which is already past the check.
+const BLOCKED_MESSAGE: &str = "This site asked for a human check, so Crumb couldn't read it from here. The Crumb extension can read it from your browser, which is already past the check.";
+
+/// The `AppError` code for [`BLOCKED_MESSAGE`]; the web and MCP key their nudges on it.
+pub const SITE_BLOCKED: &str = "site_blocked";
 
 /// How a page was fetched, in the order they're tried.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,6 +209,14 @@ enum Verdict {
     Failed(String),
 }
 
+/// Why a scrape gave nothing: the message for the cook, and whether the last thing that
+/// happened was the site's bot protection turning the server away.
+#[derive(Debug)]
+pub struct ScrapeError {
+    pub message: String,
+    pub blocked: bool,
+}
+
 fn judge(fetched: Fetched, url: &str) -> Verdict {
     match fetched {
         Fetched::Recipe(scraped) => Verdict::Recipe(scraped),
@@ -269,12 +285,12 @@ pub async fn scrape_with<F, Fut>(
     url: &str,
     steps: Steps,
     mut fetch: F,
-) -> Result<(Method, Scraped), String>
+) -> Result<(Method, Scraped), ScrapeError>
 where
     F: FnMut(Method) -> Fut,
     Fut: Future<Output = Fetched>,
 {
-    let (mut problem, blocked) = match judge(fetch(Method::Firefox).await, url) {
+    let (mut problem, mut blocked) = match judge(fetch(Method::Firefox).await, url) {
         Verdict::Recipe(recipe) => return Ok((Method::Firefox, *recipe)),
         Verdict::Blocked(_) => match judge(fetch(Method::Safari).await, url) {
             Verdict::Recipe(recipe) => return Ok((Method::Safari, *recipe)),
@@ -298,7 +314,8 @@ where
             Fetched::Page { html, .. } => match Scraped::from_page(&html, url) {
                 Some(scraped) => return Ok((Method::Browser, scraped)),
                 None => {
-                    problem = "Couldn't find a recipe on that page, even in a real browser.".into()
+                    problem = "Couldn't find a recipe on that page, even in a real browser.".into();
+                    blocked = is_challenge_page(&html);
                 }
             },
             Fetched::Recipe(scraped) => return Ok((Method::Browser, *scraped)),
@@ -312,7 +329,10 @@ where
         }
     }
 
-    Err(format!("{problem} {PASTE_HINT}"))
+    Err(ScrapeError {
+        message: format!("{problem} {PASTE_HINT}"),
+        blocked,
+    })
 }
 
 /// The page the first relay that can gives, or "unreachable" (also with no relay set up).
@@ -375,9 +395,13 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
             tracing::info!("[scraper] {host}: {}", method.label());
             Ok(scraped)
         }
-        Err(message) => {
+        Err(err) => {
             tracing::info!("[scraper] {host}: failed");
-            Err(AppError::new(422, message))
+            Err(if err.blocked {
+                AppError::new(422, BLOCKED_MESSAGE).with_code(SITE_BLOCKED)
+            } else {
+                AppError::new(422, err.message)
+            })
         }
     }
 }
@@ -1230,7 +1254,7 @@ mod tests {
     fn scripted(
         browser: bool,
         responses: Vec<(Method, Fetched)>,
-    ) -> (Result<(Method, Scraped), String>, Vec<Method>) {
+    ) -> (Result<(Method, Scraped), ScrapeError>, Vec<Method>) {
         let steps = Steps {
             browser,
             wordpress: false,
@@ -1244,7 +1268,7 @@ mod tests {
     fn scripted_steps(
         steps: Steps,
         mut responses: Vec<(Method, Fetched)>,
-    ) -> (Result<(Method, Scraped), String>, Vec<Method>) {
+    ) -> (Result<(Method, Scraped), ScrapeError>, Vec<Method>) {
         let asked = std::cell::RefCell::new(Vec::new());
         let result = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1302,6 +1326,7 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .message
                 .starts_with("The site responded with 404.")
         );
         assert_eq!(asked, vec![Method::Firefox]);
@@ -1310,11 +1335,21 @@ mod tests {
             false,
             vec![(Method::Firefox, Fetched::Unreachable("dns".into()))],
         );
-        assert!(result.unwrap_err().starts_with("Couldn't reach that site."));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .starts_with("Couldn't reach that site.")
+        );
         assert_eq!(asked, vec![Method::Firefox]);
 
         let (result, _) = scripted(false, vec![(Method::Firefox, ok("<p>no recipe</p>"))]);
-        assert!(result.unwrap_err().contains("Couldn't find a recipe"));
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Couldn't find a recipe")
+        );
     }
 
     #[test]
@@ -1356,12 +1391,14 @@ mod tests {
                 (Method::Safari, status(403)),
             ],
         );
-        let message = result.unwrap_err();
+        let err = result.unwrap_err();
+        let message = err.message;
         assert!(
             message.starts_with("The site responded with 403."),
             "{message}"
         );
         assert!(message.ends_with(PASTE_HINT));
+        assert!(err.blocked);
         assert_eq!(asked, vec![Method::Firefox, Method::Safari, Method::Relay]);
 
         let (result, _) = scripted(
@@ -1375,11 +1412,34 @@ mod tests {
                 ),
             ],
         );
-        assert!(
-            result
-                .unwrap_err()
-                .contains("A real browser was blocked too.")
-        );
+        let err = result.unwrap_err();
+        assert!(err.message.contains("A real browser was blocked too."));
+        assert!(err.blocked);
+    }
+
+    #[test]
+    fn only_a_block_is_reported_as_one() {
+        let blocked = |responses| scripted(true, responses).0.unwrap_err().blocked;
+        // The last word was a bot check, from the wreq profiles or in the browser
+        assert!(blocked(vec![
+            (Method::Firefox, ok(CHALLENGE)),
+            (Method::Safari, status(403)),
+            (Method::Browser, ok(CHALLENGE)),
+        ]));
+        // A block the browser got past, only to find no recipe, isn't one
+        assert!(!blocked(vec![
+            (Method::Firefox, status(403)),
+            (Method::Safari, status(403)),
+            (Method::Browser, ok("<p>no recipe</p>")),
+        ]));
+        assert!(!blocked(vec![
+            (Method::Firefox, status(404)),
+            (Method::Browser, ok("<p>no recipe</p>")),
+        ]));
+        assert!(!blocked(vec![
+            (Method::Firefox, Fetched::Unreachable("dns".into())),
+            (Method::Browser, Fetched::Unreachable("dns".into())),
+        ]));
     }
 
     fn all_steps() -> Steps {
@@ -1476,7 +1536,7 @@ mod tests {
             ..all_steps()
         };
         let (result, _) = scripted_steps(steps, script);
-        let message = result.unwrap_err();
+        let message = result.unwrap_err().message;
         assert!(
             message.starts_with("The site showed a bot check"),
             "{message}"
@@ -1596,6 +1656,7 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .message
                 .starts_with("The site responded with 403.")
         );
     }

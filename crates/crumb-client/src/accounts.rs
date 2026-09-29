@@ -772,6 +772,7 @@ impl Accounts<'_> {
         let id: i64 = id.parse().map_err(|_| Error::Api {
             status: 400,
             message: "That isn't a household".into(),
+            code: None,
         })?;
         self.client
             .call(
@@ -902,6 +903,7 @@ impl Accounts<'_> {
             Err(Error::Api {
                 status: 404,
                 message: "Passwords can't be reset by email here".into(),
+                code: None,
             })
         }
     }
