@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path as UrlPath, Query};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
 use image::imageops::FilterType;
@@ -517,6 +517,67 @@ async fn load_source(
     if image.starts_with("data:") {
         return decode_data_uri(image).map_err(LoadError::dead);
     }
+    let fetched = fetch_source(state, image, referer).await?;
+    // Some image CDNs send AVIF whatever is asked for, which can't be decoded here (nor by
+    // Qt), but name the original they made it from
+    let Some(original) = fetched
+        .canonical
+        .filter(|c| is_avif(&fetched.body) && c != image)
+    else {
+        return Ok(fetched.body);
+    };
+    match fetch_source(state, &original, referer).await {
+        Ok(again) => Ok(again.body),
+        Err(err) => {
+            tracing::debug!(
+                "[img] {}: AVIF's original didn't load: {err}",
+                crate::telemetry::host_of(image)
+            );
+            Ok(fetched.body)
+        }
+    }
+}
+
+/// What a photo link answered: its body, and the original a CDN named (`rel="canonical"`).
+struct Fetched {
+    body: Vec<u8>,
+    canonical: Option<String>,
+}
+
+/// Whether the bytes are an AVIF file (an ISO-BMFF `ftyp` box with an AVIF brand).
+fn is_avif(bytes: &[u8]) -> bool {
+    bytes.get(4..8) == Some(b"ftyp") && matches!(bytes.get(8..12), Some(b"avif" | b"avis"))
+}
+
+/// The `rel="canonical"` target of a `Link` header, resolved against the photo's URL.
+fn canonical_link(headers: &HeaderMap, base: &url::Url) -> Option<String> {
+    headers
+        .get_all(header::LINK)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .find_map(|link| {
+            let (target, params) = link.trim().strip_prefix('<')?.split_once('>')?;
+            let canonical = params.split(';').any(|p| {
+                p.trim()
+                    .strip_prefix("rel=")
+                    .map(|rel| rel.trim_matches('"'))
+                    .is_some_and(|rel| {
+                        rel.split_ascii_whitespace()
+                            .any(|r| r.eq_ignore_ascii_case("canonical"))
+                    })
+            });
+            let url = base.join(target.trim()).ok()?;
+            (canonical && matches!(url.scheme(), "http" | "https")).then(|| url.to_string())
+        })
+}
+
+/// A photo link over HTTP, checked first: never a listed site's, never the server's own network.
+async fn fetch_source(
+    state: &AppState,
+    image: &str,
+    referer: Option<&str>,
+) -> Result<Fetched, LoadError> {
     let parsed =
         url::Url::parse(image).map_err(|e| LoadError::dead(format!("bad image URL: {e}")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -647,7 +708,7 @@ async fn load_with_wreq(
     client: &wreq::Client,
     url: &str,
     referer: Option<&str>,
-) -> Result<Vec<u8>, Wreq> {
+) -> Result<Fetched, Wreq> {
     // The profile sets the other headers; these two are what an image request differs by
     let mut req = client
         .get(url)
@@ -674,19 +735,23 @@ async fn load_with_wreq(
         challenged,
     )
     .map_err(Wreq::Answered)?;
-    crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
+    let canonical = url::Url::parse(url)
+        .ok()
+        .and_then(|base| canonical_link(res.headers(), &base));
+    let body = crate::scraper::read_capped(res, MAX_SOURCE_BYTES)
         .await
         .map_err(|e| match e {
             crate::scraper::ReadError::TooLarge => Wreq::Answered(LoadError::passing(TOO_LARGE)),
             crate::scraper::ReadError::Failed(e) => Wreq::NoAnswer(format!("read failed: {e}")),
-        })
+        })?;
+    Ok(Fetched { body, canonical })
 }
 
 async fn load_with_reqwest(
     http: &reqwest::Client,
     url: url::Url,
     referer: Option<&str>,
-) -> Result<Vec<u8>, LoadError> {
+) -> Result<Fetched, LoadError> {
     let mut req = http
         .get(url)
         .timeout(FETCH_TIMEOUT)
@@ -712,6 +777,7 @@ async fn load_with_reqwest(
         res.content_length(),
         challenged,
     )?;
+    let canonical = canonical_link(res.headers(), res.url());
     let mut body = Vec::new();
     while let Some(chunk) = res
         .chunk()
@@ -723,7 +789,7 @@ async fn load_with_reqwest(
         }
         body.extend_from_slice(&chunk);
     }
-    Ok(body)
+    Ok(Fetched { body, canonical })
 }
 
 /// Whether a new recipe's photo link is dead, fetched as the resizer would. Only a link the
@@ -835,6 +901,53 @@ mod tests {
         let mut out = Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).unwrap();
         out.into_inner()
+    }
+
+    #[test]
+    fn finds_a_cdns_canonical_original() {
+        let base = url::Url::parse("https://cdn.test/spai/to_auto/site.test/a.jpg").unwrap();
+        let headers = |values: &[&str]| {
+            let mut h = HeaderMap::new();
+            for v in values {
+                h.append(header::LINK, HeaderValue::from_str(v).unwrap());
+            }
+            h
+        };
+        let found = |values: &[&str]| canonical_link(&headers(values), &base);
+        assert_eq!(
+            found(&[r#"<https://site.test/a.jpg>; rel="canonical""#]).as_deref(),
+            Some("https://site.test/a.jpg")
+        );
+        assert_eq!(
+            found(&[r#"<https://x.test/>; rel=preconnect, </a.jpg>; rel="Canonical""#]).as_deref(),
+            Some("https://cdn.test/a.jpg")
+        );
+        assert_eq!(
+            found(&[
+                "<https://x.test/>; rel=preconnect",
+                "<https://site.test/b.jpg>; rel=canonical"
+            ])
+            .as_deref(),
+            Some("https://site.test/b.jpg")
+        );
+        assert_eq!(
+            found(&[r#"<https://site.test/a.jpg>; rel="preload""#]),
+            None
+        );
+        assert_eq!(
+            found(&[r#"<ftp://site.test/a.jpg>; rel="canonical""#]),
+            None
+        );
+        assert_eq!(found(&[]), None);
+    }
+
+    #[test]
+    fn sniffs_avif() {
+        assert!(is_avif(b"\0\0\0\x1cftypavif\0\0\0\0"));
+        assert!(is_avif(b"\0\0\0\x1cftypavis\0\0\0\0"));
+        assert!(!is_avif(b"\0\0\0\x1cftypheic\0\0\0\0"));
+        assert!(!is_avif(&png(2, 2)));
+        assert!(!is_avif(b"ftyp"));
     }
 
     fn dims(webp: &[u8]) -> (u32, u32) {
