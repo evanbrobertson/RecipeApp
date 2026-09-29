@@ -14,6 +14,7 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -117,6 +119,31 @@ class VideoState {
     var slotHeight by mutableIntStateOf(0)
     var slotTopInItem by mutableFloatStateOf(0f)
 
+    // The item's outer edge and the slot, as laid out; the slot's top below the item's is read from
+    // both together, so neither callback's order (nor the card's own top padding) can skew it
+    private var itemCoords: LayoutCoordinates? = null
+    private var slotCoords: LayoutCoordinates? = null
+
+    fun itemPlaced(coords: LayoutCoordinates) {
+        itemCoords = coords
+        measureSlot()
+    }
+
+    fun slotPlaced(coords: LayoutCoordinates) {
+        slotCoords = coords
+        val at = coords.positionInRoot()
+        slotX = at.x
+        slotWidth = coords.size.width
+        slotHeight = coords.size.height
+        measureSlot()
+    }
+
+    private fun measureSlot() {
+        val item = itemCoords?.takeIf { it.isAttached } ?: return
+        val slot = slotCoords?.takeIf { it.isAttached } ?: return
+        slotTopInItem = item.localPositionOf(slot, Offset.Zero).y
+    }
+
     /** The floating window, once it has a place. */
     var win by mutableStateOf<VideoWin?>(null)
 
@@ -126,6 +153,14 @@ class VideoState {
 
     fun stop() {
         playing = false
+    }
+
+    companion object {
+        /** Keeps "playing" through a recreated activity (a rotation, a font size change); the player itself starts over. */
+        val Saver = androidx.compose.runtime.saveable.listSaver<VideoState, Boolean>(
+            save = { listOf(it.playing) },
+            restore = { VideoState().apply { playing = it[0] } },
+        )
     }
 }
 
@@ -139,9 +174,9 @@ fun RecipeVideoCard(video: String, embed: VideoEmbed?, title: String, state: Vid
     val c = Crumb.colors
     val context = LocalContext.current
     val host = app.crumb.core.hostOf(video)
-    var itemY by remember { mutableFloatStateOf(0f) }
 
-    Column(modifier.onGloballyPositioned { itemY = it.positionInRoot().y }) {
+    // Measured outside the caller's padding, so it is the list item's own top
+    Column(Modifier.onGloballyPositioned { state.itemPlaced(it) }.then(modifier)) {
         Row(
             Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -185,13 +220,7 @@ fun RecipeVideoCard(video: String, embed: VideoEmbed?, title: String, state: Vid
                         .then(if (embed.vertical) Modifier.widthIn(max = 352.dp).fillMaxWidth().aspectRatio(9f / 16f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                         .clip(ControlShape)
                         .background(c.tint)
-                        .onGloballyPositioned {
-                            val at = it.positionInRoot()
-                            state.slotX = at.x
-                            state.slotWidth = it.size.width
-                            state.slotHeight = it.size.height
-                            state.slotTopInItem = at.y - itemY
-                        },
+                        .onGloballyPositioned { state.slotPlaced(it) },
                 ) {
                     if (!state.playing) {
                         Box(
@@ -269,7 +298,7 @@ fun RecipeVideoPlayer(
     }
 
     val away by remember {
-        derivedStateOf { slotAway(slotTop(), state.slotHeight.toFloat(), list.layoutInfo.viewportSize.height.toFloat()) }
+        derivedStateOf { slotAway(slotTop(), state.slotHeight.toFloat(), list.layoutInfo.viewportSize.height.toFloat(), atEnd = !list.canScrollForward) }
     }
     val floating = away && state.win != null
 
@@ -353,7 +382,9 @@ private fun FloatingBar(
 ) {
     val c = Crumb.colors
     Row(
-        Modifier.fillMaxWidth().height(VideoWindow.BAR.dp).background(c.tile),
+        // The resize handles sit at the window's corners: keep them (and the bar) clear of the
+        // system's back gesture at the screen's edges
+        Modifier.fillMaxWidth().height(VideoWindow.BAR.dp).background(c.tile).systemGestureExclusion(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         DragHandle(Lucide.MoveDiagonal2, "Resize the video", VideoDrag.Left, win, tall, screen, onWin, onSettled)

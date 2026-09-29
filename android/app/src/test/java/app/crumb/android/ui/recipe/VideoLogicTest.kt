@@ -117,6 +117,13 @@ class VideoLogicTest {
         assertFalse(slotAway(top = 900f, height = 200f, viewport = 800f)) // not reached yet
     }
 
+    @Test fun floatsAtTheEndOfAShortPageOnceTheSlotStartsToLeave() {
+        assertFalse(slotAway(top = -100f, height = 200f, viewport = 800f)) // room left to scroll
+        assertTrue(slotAway(top = -100f, height = 200f, viewport = 800f, atEnd = true))
+        assertFalse(slotAway(top = 0f, height = 200f, viewport = 800f, atEnd = true)) // wholly in view
+        assertFalse(slotAway(top = 50f, height = 200f, viewport = 800f, atEnd = true))
+    }
+
     @Test fun autoplayOnlyWhereTheSiteAllowsIt() {
         assertEquals("https://www.youtube.com/embed/abc?autoplay=1", autoplayUrl(youtube))
         assertEquals("https://x.test/e?a=1&autoplay=1", autoplayUrl(youtube.copy(embedUrl = "https://x.test/e?a=1")))

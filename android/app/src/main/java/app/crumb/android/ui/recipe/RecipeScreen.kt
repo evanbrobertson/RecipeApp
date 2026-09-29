@@ -444,7 +444,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
     val listState = rememberLazyListState()
     val video = recipe.video?.takeIf { it.isNotBlank() }
     val embed = remember(recipe.video, recipe.videoEmbed) { videoEmbedFor(recipe) }
-    val videoState = remember(recipe.id) { VideoState() }
+    val videoState = rememberSaveable(recipe.id, saver = VideoState.Saver) { VideoState() }
     var origin by remember { mutableStateOf(Offset.Zero) }
     // The video card's item: after the hero, the header, the ingredients title, the "none listed"
     // line when there is one, and each ingredient section
@@ -458,7 +458,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
                 if (hasHero) {
                     Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                         // The web caps the hero at 640px wide; a landscape phone is also kept to
-                        // three quarters of its short height so the title shows below it
+                        // 45% of its short height so the title shows below it
                         val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
                         RecipePhoto(
                             photo,

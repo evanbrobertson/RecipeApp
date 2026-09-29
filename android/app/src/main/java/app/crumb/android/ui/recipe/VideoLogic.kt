@@ -117,9 +117,14 @@ object VideoWindow {
     fun showBackLabel(w: Float) = w >= BACK_LABEL
 }
 
-/** Whether the slot is scrolled past, above the screen: under a quarter of it still visible (the web's observer). */
-fun slotAway(top: Float, height: Float, viewport: Float): Boolean {
+/**
+ * Whether the slot is scrolled past, above the screen: under a quarter of it still visible (the web's
+ * observer). A short page can't scroll far enough for that, so once the list is [atEnd] any slot
+ * that has started to leave the top counts too; the web's page always has room to scroll on.
+ */
+fun slotAway(top: Float, height: Float, viewport: Float, atEnd: Boolean = false): Boolean {
     if (top >= 0f || height <= 0f) return false
+    if (atEnd) return true
     val visible = min(top + height, viewport) - max(top, 0f)
     return visible / height < 0.25f
 }
