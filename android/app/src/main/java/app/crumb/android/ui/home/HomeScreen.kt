@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import android.content.res.Configuration
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +40,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -202,23 +206,31 @@ fun HomeScreen(shared: String? = null, onSharedUsed: () -> Unit = {}) {
         if (nextOpen) vm.loadSuggestions()
     }
 
+    // A short (landscape) screen with the keyboard up scrolls the Add field to the very top,
+    // under the clock, so then the page starts below the status bar instead of behind it
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val typing = landscape && WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxSize().then(if (typing) Modifier.statusBarsPadding() else Modifier).imePadding().verticalScroll(rememberScrollState())) {
             Column(
                 Modifier
                     .fillMaxWidth()
                     .tileSurface(c)
-                    .statusBarsPadding()
+                    .then(if (typing) Modifier else Modifier.statusBarsPadding())
                     .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text("Crumb", style = CrumbText.pageTitle, color = c.onTile)
-                Text(
-                    remember { greeting(LocalTime.now().hour.toUInt()) },
-                    style = CrumbText.hand.copy(fontSize = 38.sp, lineHeight = 38.sp),
-                    color = c.onTile,
-                    modifier = Modifier.padding(bottom = 6.dp),
-                )
+                // With the keyboard up on a short screen the title and greeting make way, so the Add
+                // box has room to show whole
+                if (!typing) {
+                    Text("Crumb", style = CrumbText.pageTitle, color = c.onTile)
+                    Text(
+                        remember { greeting(LocalTime.now().hour.toUInt()) },
+                        style = CrumbText.hand.copy(fontSize = 38.sp, lineHeight = 38.sp),
+                        color = c.onTile,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
                 TopBox(recipeCount = state.recipes.size.takeIf { !state.loading }, shared = shared, onSharedUsed = onSharedUsed)
             }
 

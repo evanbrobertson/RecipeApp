@@ -74,5 +74,5 @@ fun nutritionValue(value: kotlinx.serialization.json.JsonElement?): String? {
 private fun JsonObject?.str(key: String): String? =
     (this?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
 
-/** The widest the recipe's 4:3 hero gets, in dp: the web's 640, and no taller than 3/4 of the screen. */
-fun heroMaxWidth(screenHeightDp: Float): Float = minOf(640f, screenHeightDp * 0.75f * 4f / 3f)
+/** The widest the recipe's 4:3 hero gets, in dp: the web's 640, and no taller than 45% of the screen (in landscape that leaves the title on screen). */
+fun heroMaxWidth(screenHeightDp: Float): Float = minOf(640f, screenHeightDp * 0.45f * 4f / 3f)

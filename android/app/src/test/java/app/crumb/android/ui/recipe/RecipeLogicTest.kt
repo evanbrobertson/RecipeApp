@@ -11,8 +11,9 @@ import org.junit.Test
 
 class RecipeLogicTest {
     @Test fun heroIsCappedByTheWebWidthAndTheShortSide() {
-        assertEquals(640f, heroMaxWidth(844f), 0.01f)
-        assertEquals(360f, heroMaxWidth(360f), 0.01f)
+        assertEquals(640f, heroMaxWidth(1200f), 0.01f)
+        assertEquals(506.4f, heroMaxWidth(844f), 0.1f)
+        assertEquals(216f, heroMaxWidth(360f), 0.01f) // a landscape phone: the title stays on screen
     }
 
     private val day = 86_400_000L
