@@ -3,39 +3,29 @@ package app.crumb.android.ui.trash
 import app.crumb.android.data.Restored
 import app.crumb.android.data.Trashed
 import java.time.Instant
-import kotlin.math.ceil
 
-// The trash's wording and small sums, from web/src/islands/TrashPage.svelte and the delete
-// confirmations in RecipePage.svelte and RecipesPage.svelte. TrashLogicTest pins them.
+// The trash's wording, from crumb-core's `trash` module (the web's TrashPage.svelte and the
+// delete confirmations in RecipePage.svelte and RecipesPage.svelte). TrashLogicTest pins them.
 
-private const val DAY_MS = 86_400_000.0
-
-/**
- * "12 days left", counted to the day it goes; null when [purgeAt] isn't a date.
- * TODO(core): trash_left_label (the web computes this inline in TrashPage.svelte)
- */
-fun daysLeftLabel(purgeAt: String, nowMs: Long): String? {
-    val at = runCatching { Instant.parse(purgeAt).toEpochMilli() }.getOrNull() ?: return null
-    val days = maxOf(0, ceil((at - nowMs) / DAY_MS).toInt())
-    return if (days <= 1) "Goes for good today" else "$days days left"
-}
+/** "12 days left", counted to the day it goes (crumb-core); null when [purgeAt] isn't a date. */
+fun daysLeftLabel(purgeAt: String, nowMs: Long): String? =
+    runCatching { Instant.parse(purgeAt).toEpochMilli() }.getOrNull()
+        ?.let { app.crumb.core.trashDaysLeft(it, nowMs) }
 
 /** The "Empty the trash?" body. */
-fun emptyTrashDescription(count: Int): String =
-    "$count recipe${if (count == 1) "" else "s"} will be deleted for good. This can't be undone."
+fun emptyTrashDescription(count: Int): String = app.crumb.core.trashEmpty(count.toUInt())
 
 /** The single delete's confirmation body. */
-const val DELETE_ONE_DESCRIPTION = "It goes to the trash, where you can put it back for 30 days."
+val DELETE_ONE_DESCRIPTION: String get() = app.crumb.core.trashDeleteOne()
 
 /** The bulk delete's confirmation body. */
-fun deleteManyDescription(count: Int): String =
-    "$count recipe${if (count == 1) "" else "s"} will go to the trash, where you can put ${if (count == 1) "it" else "them"} back for 30 days."
+fun deleteManyDescription(count: Int): String = app.crumb.core.trashDeleteMany(count.toUInt())
 
 /** The toast after deleting: "Moved 3 recipes to the trash". */
-fun movedToTrashTitle(count: Int): String = "Moved $count recipe${if (count == 1) "" else "s"} to the trash"
+fun movedToTrashTitle(count: Int): String = app.crumb.core.trashMoved(count.toUInt())
 
 /** The toast after Undo: "Put back" or "Put back 3 recipes". */
-fun putBackTitle(count: Int): String = if (count == 1) "Put back" else "Put back $count recipes"
+fun putBackTitle(count: Int): String = app.crumb.core.trashPutBack(count.toUInt())
 
 /** What a restore from the trash page says: the recipe is back, or its link was saved again since. */
 fun restoredToast(restored: Restored, title: String): Pair<String, String> =
