@@ -102,6 +102,52 @@ pub fn session_cookie(set_cookie: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// Better Auth's session cookie for the hosted edition (`advanced.cookiePrefix` is `crumb`
+/// in `auth/src/auth.ts`); over HTTPS it gets a `__Secure-` prefix.
+pub const HOSTED_COOKIE: &str = "crumb.session_token";
+const SECURE_PREFIX: &str = "__Secure-";
+
+/// Whether a cookie name is the hosted edition's session, with or without `__Secure-`.
+pub fn is_hosted_cookie(name: &str) -> bool {
+    name == HOSTED_COOKIE || name.strip_prefix(SECURE_PREFIX) == Some(HOSTED_COOKIE)
+}
+
+/// What an app saves from one `Set-Cookie` header to stay signed in, in any account mode:
+/// the bare `crumb_session` value, or `name=value` for the hosted edition's cookie (its
+/// name differs over HTTPS). None for other cookies and for one being cleared.
+pub fn saved_session(set_cookie: &str) -> Option<String> {
+    let pair = set_cookie.split(';').next()?.trim();
+    let (name, value) = pair.split_once('=')?;
+    if value.is_empty() {
+        None
+    } else if name == SESSION_COOKIE {
+        Some(value.to_string())
+    } else {
+        is_hosted_cookie(name).then(|| format!("{name}={value}"))
+    }
+}
+
+/// A saved session as cookie name and value: `name=value` for the hosted edition's
+/// cookie, anything else a bare `crumb_session` value (which may itself contain `=`).
+pub fn split_session(saved: &str) -> (&str, &str) {
+    match saved.split_once('=') {
+        Some((name, value)) if is_hosted_cookie(name) => (name, value),
+        _ => (SESSION_COOKIE, saved),
+    }
+}
+
+/// A saved session (see [`saved_session`]) as a `Cookie` header value.
+pub fn session_header(saved: &str) -> String {
+    let (name, value) = split_session(saved);
+    format!("{name}={value}")
+}
+
+/// Whether a saved session is the hosted edition's, so sign-out and account calls take
+/// Better Auth's paths.
+pub fn is_hosted_session(saved: &str) -> bool {
+    split_session(saved).0 != SESSION_COOKIE
+}
+
 /// A session's user agent as "Firefox on Linux", roughly: enough to tell one's devices
 /// apart. Words it as `deviceName` in `web/src/lib/account.ts` does.
 pub fn device_name(agent: Option<&str>) -> String {
@@ -395,6 +441,46 @@ mod tests {
         assert!(!allows_cleartext("http://crumb.example.com/"));
         assert!(!allows_cleartext("http://8.8.8.8/"));
         assert!(!allows_cleartext("nonsense"));
+    }
+
+    #[test]
+    fn sessions_are_saved_in_every_mode() {
+        assert_eq!(
+            saved_session("crumb_session=abc.d==; Path=/; HttpOnly").as_deref(),
+            Some("abc.d==")
+        );
+        assert_eq!(
+            saved_session("__Secure-crumb.session_token=x.y; Path=/; Secure").as_deref(),
+            Some("__Secure-crumb.session_token=x.y")
+        );
+        assert_eq!(
+            saved_session("crumb.session_token=x.y; Path=/").as_deref(),
+            Some("crumb.session_token=x.y")
+        );
+        assert_eq!(saved_session("crumb.session_token=; Max-Age=0"), None);
+        assert_eq!(saved_session("__Secure-other=1"), None);
+        assert_eq!(saved_session("crumb.session_data=1"), None);
+    }
+
+    #[test]
+    fn saved_sessions_name_their_cookie() {
+        assert_eq!(split_session("abc.def"), ("crumb_session", "abc.def"));
+        assert_eq!(split_session("abc.d=="), ("crumb_session", "abc.d=="));
+        assert_eq!(
+            split_session("crumb.session_token=abc.d%3D"),
+            ("crumb.session_token", "abc.d%3D")
+        );
+        assert_eq!(
+            split_session("__Secure-crumb.session_token=abc"),
+            ("__Secure-crumb.session_token", "abc")
+        );
+        assert_eq!(session_header("abc.d=="), "crumb_session=abc.d==");
+        assert_eq!(
+            session_header("__Secure-crumb.session_token=x.y"),
+            "__Secure-crumb.session_token=x.y"
+        );
+        assert!(is_hosted_session("crumb.session_token=x"));
+        assert!(!is_hosted_session("abc.d=="));
     }
 
     #[test]
