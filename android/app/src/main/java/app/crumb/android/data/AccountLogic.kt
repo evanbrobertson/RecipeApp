@@ -164,40 +164,26 @@ data class EmailChange(val email: String, val pending: Boolean = false)
 /** A made account: hosted ones may have to confirm the email before signing in. */
 data class SignedUp(val verify: Boolean, val cookie: String?)
 
-/** Session cookies: `crumb_session` (password and accounts) and Better Auth's (hosted). */
+/**
+ * Session cookies: `crumb_session` (password and accounts) and Better Auth's (hosted), saved
+ * and sent by crumb-core's rules, the same as crumb-client's.
+ */
 object SessionCookies {
     const val CREDENTIAL = "crumb_session"
-    private const val HOSTED = "crumb.session_token"
-    private const val SECURE = "__Secure-"
-
-    private fun isHostedName(name: String) = name == HOSTED || (name.startsWith(SECURE) && name.removePrefix(SECURE) == HOSTED)
 
     /**
      * What to save from a response's `Set-Cookie` headers: the bare `crumb_session` value, or
      * `name=value` for the hosted edition's cookie (its name differs over HTTPS). Cleared
-     * cookies (empty values) don't count. Saved the same way crumb-client keeps them.
+     * cookies (empty values) don't count.
      */
-    // TODO(core): client::session_cookie for the hosted cookie (crumb-client keeps it private)
-    fun fromSetCookie(headers: List<String>): String? = headers.firstNotNullOfOrNull { header ->
-        val pair = header.substringBefore(';').trim()
-        val name = pair.substringBefore('=', "")
-        val value = pair.substringAfter('=', "")
-        when {
-            value.isEmpty() -> null
-            name == CREDENTIAL -> value
-            isHostedName(name) -> "$name=$value"
-            else -> null
-        }
-    }
+    fun fromSetCookie(headers: List<String>): String? =
+        headers.firstNotNullOfOrNull { app.crumb.core.savedSession(it) }
 
     /** A saved cookie as the `Cookie` request header. */
-    fun header(saved: String): String {
-        val name = saved.substringBefore('=')
-        return if (isHostedName(name)) saved else "$CREDENTIAL=$saved"
-    }
+    fun header(saved: String): String = app.crumb.core.sessionHeader(saved)
 
     /** Whether [saved] is Better Auth's cookie, so requests need the hosted edition's paths. */
-    fun isHosted(saved: String?): Boolean = saved != null && isHostedName(saved.substringBefore('='))
+    fun isHosted(saved: String?): Boolean = saved != null && app.crumb.core.isHostedSession(saved)
 }
 
 /** `scheme://host[:port]`, the `Origin` Better Auth wants on a cookie's request. */
