@@ -422,6 +422,11 @@ pub mod qobject {
         #[cxx_name = "photoUrl"]
         fn photo_url(self: &Api, recipe_id: i64, width: i32, image: QString) -> QString;
 
+        /// The recipe `--smoke-page recipe` shows, as JSON, so that page needs no server.
+        #[qinvokable]
+        #[cxx_name = "smokeRecipe"]
+        fn smoke_recipe(self: &Api) -> QString;
+
         /// The signed-in server's address, for links like a recipe's share page.
         #[qinvokable]
         #[cxx_name = "serverUrl"]
@@ -507,6 +512,13 @@ impl qobject::Api {
         };
         core.client()
             .map(|client| QString::from(&client.image_url(recipe_id, width.max(1) as u32, &image)))
+            .unwrap_or_default()
+    }
+
+    pub fn smoke_recipe(&self) -> QString {
+        let recipe = crate::recipe::fixture_recipe();
+        serde_json::to_string(&recipe)
+            .map(|json| QString::from(&json))
             .unwrap_or_default()
     }
 
