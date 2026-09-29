@@ -3,12 +3,22 @@
  * clicks. On a recipe page (see detect.ts) it asks "Read this recipe in Crumb?"; on a Crumb
  * page, before any Crumb is set, it offers to use that one.
  *
- * On YouTube it reads the video's page for Crumb (see youtube.ts), and asks when a video says
- * it's a recipe. On the Crumb tab opened for a video, it hands that page what was read.
+ * When the cook clicks (the background asks), it reads the recipe on the page for Crumb (see
+ * page.ts): only the recipe, never anything else. On YouTube it reads the video's page for
+ * Crumb instead (see youtube.ts), and asks when a video says it's a recipe. On the Crumb tab
+ * opened for a video or a recipe, it hands that page what was read.
  */
 import { load, mayOfferItself, save, siteOf } from "./crumb"
 import { isRecipeItemType, recipeInJsonLd, type Found } from "./detect"
-import { send, type ReadVideo, type VideoForCrumb, type Waiting } from "./messages"
+import {
+  send,
+  type PageForCrumb,
+  type ReadPage,
+  type ReadVideo,
+  type VideoForCrumb,
+  type Waiting,
+} from "./messages"
+import { readRecipe } from "./page"
 import { showToast } from "./toast"
 import { looksLikeRecipe, peekVideo, readVideo, videoId } from "./youtube"
 
@@ -86,8 +96,23 @@ function offerRead(found: Found, title = "Read this recipe in Crumb?") {
 const VIDEO_WAIT_MS = 20_000
 const VIDEO_ASK_MS = 400
 
-/** On the Crumb tab opened for a video: hands the Add page what was read of it. */
-async function handOverVideo() {
+/**
+ * Answers the background's request for the recipe on this page, when the cook clicks. Only the
+ * top frame, only the extension's own background, and only the recipe (see page.ts).
+ */
+function answerReadPage() {
+  chrome.runtime.onMessage.addListener((message: ReadPage, sender, reply) => {
+    if (message?.type !== "readPage" || sender.id !== chrome.runtime.id) return false
+    reply(readRecipe(document))
+    return false
+  })
+}
+
+/**
+ * On the Crumb tab opened for a video or a recipe: hands the page what was read of it. The
+ * Add page takes a video (`crumb:video`), the preview page a recipe (`crumb:page`).
+ */
+async function handOver() {
   if (new URLSearchParams(location.search).get("via") !== "extension") return
   const until = Date.now() + VIDEO_WAIT_MS
   let waiting: Waiting | null = null
@@ -102,18 +127,21 @@ async function handOverVideo() {
   }
   // Still reading after all that: the page is told it couldn't be read, not left waiting
   const url = waiting?.url ?? new URLSearchParams(location.search).get("url") ?? ""
-  const message: VideoForCrumb = {
-    type: "crumb:video",
-    url,
-    video: waiting?.video ?? null,
-    captions: waiting?.captions ?? "none",
-  }
+  const isPage = (waiting?.kind ?? (location.pathname === "/preview" ? "page" : "video")) === "page"
+  const message: VideoForCrumb | PageForCrumb = isPage
+    ? { type: "crumb:page", url, page: waiting?.page ?? null }
+    : {
+        type: "crumb:video",
+        url,
+        video: waiting?.video ?? null,
+        captions: waiting?.captions ?? "none",
+      }
   const post = () => window.postMessage(message, location.origin)
   post()
   // The page may not be listening yet: it asks when it is
+  const want = isPage ? "crumb:want-page" : "crumb:want-video"
   window.addEventListener("message", (e) => {
-    if (e.source === window && e.origin === location.origin && e.data?.type === "crumb:want-video")
-      post()
+    if (e.source === window && e.origin === location.origin && e.data?.type === want) post()
   })
 }
 
@@ -166,7 +194,7 @@ async function main() {
     if (isCrumbApp() && !recipeOnPage()) offerConnect()
     // Until a Crumb is set, recipe pages still offer (and the click opens the settings)
   } else if (location.origin === settings.crumb) {
-    return handOverVideo()
+    return handOver()
   }
   if (!settings.prompt || settings.muted.includes(siteOf(location.hostname))) return
   if (isCrumbApp()) return
@@ -178,4 +206,5 @@ async function main() {
   }, LOOK_AGAIN_MS)
 }
 
+if (window.top === window) answerReadPage()
 void main()
