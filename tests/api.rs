@@ -682,7 +682,7 @@ async fn oauth_flow_then_mcp_tools() {
         ))
         .await;
     let list: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 19);
 
     let (_, _, text) = t
         .send(rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
@@ -8304,4 +8304,52 @@ async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
         mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
     assert!(is_error, "{msg}");
     assert!(msg.contains("terms of service forbid"), "{msg}");
+}
+
+#[tokio::test]
+async fn a_deleted_recipe_waits_in_the_trash() {
+    let t = TestApp::new(None);
+    let (_, soup) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({"title": "Soup", "url": "https://a.example/soup"})),
+        )
+        .await;
+    let id = soup["id"].as_i64().unwrap();
+    let (status, _) = t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, trash) = t.json("GET", "/api/trash", None).await;
+    assert_eq!(trash[0]["id"], id);
+    assert_eq!(trash[0]["title"], "Soup");
+    assert!(trash[0]["purgeAt"].as_str().unwrap() > trash[0]["deletedAt"].as_str().unwrap());
+
+    // Claude is told it's restorable, and can put it back (but has no way to empty the trash)
+    let (msg, is_error) = mcp_call(&t, "list_trash", json!({})).await;
+    assert!(!is_error && msg.contains("Soup"), "{msg}");
+    let (msg, is_error) = mcp_call(&t, "restore_recipe", json!({"id": id})).await;
+    assert!(!is_error && msg.starts_with("Restored \"Soup\""), "{msg}");
+    let (status, back) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!((status, &back["title"]), (StatusCode::OK, &json!("Soup")));
+
+    let (msg, _) = mcp_call(&t, "delete_recipe", json!({"id": id, "confirm": true})).await;
+    assert!(msg.contains("to the trash"), "{msg}");
+    let (status, res) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!((status, &res["isNew"]), (StatusCode::OK, &json!(true)));
+
+    // Deleted for good: one, then all
+    t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    let (status, _) = t.json("DELETE", &format!("/api/trash/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, res) = t.json("DELETE", "/api/trash", None).await;
+    assert_eq!(res["deleted"], 0);
 }

@@ -449,7 +449,7 @@ Replay masks all text and blocks all media.
 The in-app page (**More → Connections → Claude**) shows your exact URL. Claude Code:
 `claude mcp add --transport http recipes https://<your-app>/mcp`.
 
-Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
+Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe` (to the trash, 30 days), `list_trash`, `restore_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
 
 ## Checks
 

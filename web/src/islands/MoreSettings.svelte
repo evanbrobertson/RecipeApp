@@ -14,6 +14,7 @@
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
   import Plug from "@lucide/svelte/icons/plug"
+  import Trash2 from "@lucide/svelte/icons/trash-2"
   import UserRound from "@lucide/svelte/icons/user-round"
   import { onMount } from "svelte"
   import { type Status, authStatus } from "../lib/account"
@@ -232,6 +233,14 @@
       <span class="min-w-0 flex-1">
         <span class="block font-bold">Connections</span>
         <span class="text-ink-muted block text-sm">Claude</span>
+      </span>
+      <ChevronRight class="text-ink-muted size-5 flex-none" />
+    </a>
+    <a href="/more/trash" class="list-row settings-row">
+      <Trash2 class="settings-icon" />
+      <span class="min-w-0 flex-1">
+        <span class="block font-bold">Trash</span>
+        <span class="text-ink-muted block text-sm">Deleted recipes, kept for 30 days</span>
       </span>
       <ChevronRight class="text-ink-muted size-5 flex-none" />
     </a>

@@ -48,6 +48,9 @@ pub fn routes() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(crate::photos::MAX_BODY_BYTES)),
         )
         .route("/api/recipes/bulk-delete", routing::post(bulk_delete))
+        .route("/api/trash", routing::get(list_trash).delete(empty_trash))
+        .route("/api/trash/{id}", routing::delete(purge_trashed))
+        .route("/api/trash/{id}/restore", routing::post(restore_trashed))
         .route("/api/recipes/random", routing::get(random_recipe))
         .route("/api/suggestions", routing::get(suggestions))
         .route(
@@ -632,6 +635,44 @@ async fn delete_recipe(
         return Err(AppError::not_found("Recipe not found"));
     }
     Ok(Json(json!({"ok": true})))
+}
+
+/// The trash: recipes deleted in the last 30 days, newest first (`trash::Trashed::to_json`).
+async fn list_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let list = crate::trash::list(&state.db.lock())?;
+    Ok(Json(Value::Array(
+        list.iter().map(crate::trash::Trashed::to_json).collect(),
+    )))
+}
+
+/// Puts a deleted recipe back: the recipe, with `isNew: false` when its link had been saved
+/// again meanwhile (that recipe is the answer, and the deleted copy is gone).
+async fn restore_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let restored = crate::trash::restore(&state.db.lock(), id)?;
+    Ok(Json(match restored {
+        crate::trash::Restored::Back(r) => recipes::with_is_new(&r, true),
+        crate::trash::Restored::AlreadySaved(r) => recipes::with_is_new(&r, false),
+    }))
+}
+
+async fn purge_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    if !crate::trash::purge(&state.db.lock(), id)? {
+        return Err(AppError::not_found("That recipe isn't in the trash"));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn empty_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let n = crate::trash::empty(&state.db.lock())?;
+    Ok(Json(json!({"deleted": n})))
 }
 
 async fn recipe_cookbooks(

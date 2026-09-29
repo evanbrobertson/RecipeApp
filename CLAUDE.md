@@ -160,6 +160,9 @@ web/src/
   suggests more in the background (`site_terms::Flagger`, `tos-suggestion` GitHub issues, `data/site-terms-ignore.toml`
   for hosts a person cleared); a person edits the list, Wee Chef never does. Robots.txt is ignored on purpose.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
+- **Trash:** `recipes::delete_recipes` moves recipes to `recipe_trash` (`src/trash.rs`): the whole row as JSON, its cookbooks
+  and cooks; restored under its own id within 30 days, then purged. Nothing else needs to skip deleted recipes. The
+  connector can list and restore, never empty it (the safeguard against a recipe's text talking Claude into a delete).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.
 - **Sentry:** the browser SDK gets its DSN, environment and release from a `Server-Timing` header the server adds

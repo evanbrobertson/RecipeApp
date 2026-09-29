@@ -31,6 +31,7 @@ pub mod social;
 pub mod suggestions;
 pub mod telemetry;
 pub mod throttle;
+pub mod trash;
 pub mod video;
 pub mod video_jobs;
 pub mod web;

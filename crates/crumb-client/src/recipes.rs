@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Client, CookStats, Download, Error, FileImport, Recipe, RecipeFormat, RecipeSummary, Staples,
-    Suggestions,
+    Suggestions, Trashed,
 };
 
 /// The `{id, title, isNew}` the photo import answers with.
@@ -63,6 +63,43 @@ impl Client {
                     .post(self.endpoint("api/recipes/bulk-delete"))
                     .json(&json!({ "ids": ids })),
             )
+            .await?;
+        Ok(res.deleted)
+    }
+
+    /// `GET /api/trash`: recipes deleted in the last 30 days, newest first.
+    pub async fn trash(&self) -> Result<Vec<Trashed>, Error> {
+        self.fetch(self.http.get(self.endpoint("api/trash"))).await
+    }
+
+    /// `POST /api/trash/{id}/restore`: puts a deleted recipe back. The bool is the API's
+    /// `isNew`: false when its link had been saved again meanwhile, and that recipe is returned.
+    pub async fn restore_recipe(&self, id: i64) -> Result<(Recipe, bool), Error> {
+        let value: Value = self
+            .fetch(
+                self.http
+                    .post(self.endpoint(&format!("api/trash/{id}/restore"))),
+            )
+            .await?;
+        let is_new = value.get("isNew").and_then(Value::as_bool).unwrap_or(true);
+        let recipe = serde_json::from_value(value).map_err(|e| Error::Decode(e.to_string()))?;
+        Ok((recipe, is_new))
+    }
+
+    /// `DELETE /api/trash/{id}`: deletes one recipe from the trash for good.
+    pub async fn purge_trashed(&self, id: i64) -> Result<(), Error> {
+        self.call(self.http.delete(self.endpoint(&format!("api/trash/{id}"))))
+            .await
+    }
+
+    /// `DELETE /api/trash`: empties the trash; how many went.
+    pub async fn empty_trash(&self) -> Result<u64, Error> {
+        #[derive(Deserialize)]
+        struct Deleted {
+            deleted: u64,
+        }
+        let res: Deleted = self
+            .fetch(self.http.delete(self.endpoint("api/trash")))
             .await?;
         Ok(res.deleted)
     }
