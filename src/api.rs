@@ -41,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/recipes/import", routing::post(import_recipe))
         .route("/api/preview", routing::post(preview_page))
+        .route("/api/recipes/preview", routing::post(crate::preview::api))
         .route("/api/import/jobs/{id}", routing::get(import_job))
         .route(
             "/api/recipes/import/photos",

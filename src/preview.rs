@@ -23,10 +23,11 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::body::Bytes;
 use axum::extract::Query;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::{Router, routing};
+use axum::{Json, Router, routing};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -186,12 +187,12 @@ async fn page(
     }
 }
 
-/// The recipe as saving it would keep it (tidied), in the share page's layout.
-fn ready(state: &AppState, url: &str, scraped: &Scraped) -> Response {
+/// The recipe as saving it would keep it (tidied), with no id and the time as of now.
+fn tidied(url: &str, scraped: &Scraped) -> Recipe {
     let mut fields = scraped.recipe.clone();
     crate::checks::tidy_import(&mut fields, "url");
     let now = now_secs();
-    let recipe = Recipe {
+    Recipe {
         id: 0,
         url: Some(url.to_string()),
         source: "url".into(),
@@ -218,11 +219,69 @@ fn ready(state: &AppState, url: &str, scraped: &Scraped) -> Response {
         original_url: None,
         created_at: now,
         updated_at: now,
-    };
+    }
+}
+
+/// The recipe as saving it would keep it (tidied), in the share page's layout.
+fn ready(state: &AppState, url: &str, scraped: &Scraped) -> Response {
+    let recipe = tidied(url, scraped);
     // A preview's page shows no absolute links, so no origin is needed
     html(state, StatusCode::OK, |t| {
         share::render(t, &recipe, &share::Place::preview(), "")
     })
+}
+
+/// `POST /api/recipes/preview` `{url}`: the same reading as the page, as JSON for the
+/// native apps. `{status: "saved", id, title}` when the link is in the box already;
+/// `{status: "import"}` for a cooking video or another Crumb's shared cookbook (saved, not
+/// previewed); otherwise `{status: "ready", recipe}` (an unsaved recipe: no id or dates),
+/// with the scrape kept for the import that follows, as the page keeps it.
+pub async fn api(
+    crate::Scoped(state): crate::Scoped,
+    body: Bytes,
+) -> Result<Json<Value>, AppError> {
+    let body: Value =
+        serde_json::from_slice(&body).map_err(|_| AppError::bad_request("Invalid JSON body"))?;
+    let raw = body
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|u| crate::model::is_valid_url(u))
+        .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
+    let url = crate::recipes::unwrap_share_link(raw);
+    let saved = crate::recipes::find_by_url(&state.db.lock(), &url)?;
+    if let Some(id) = saved {
+        let title = crate::recipes::get_recipe(&state.db.lock(), id)?
+            .map(|r| r.title)
+            .unwrap_or_default();
+        return Ok(Json(json!({"status": "saved", "id": id, "title": title})));
+    }
+    if crate::video::is_video_url(&url) {
+        return Ok(Json(json!({"status": "import"})));
+    }
+    let scraped = match peek(&state, &url) {
+        Some(scraped) => scraped,
+        None => {
+            if let Some(refusal) = crate::site_terms::check(&url) {
+                return Err(refusal.error());
+            }
+            let scraped = crate::scraper::scrape_page(&state, &url).await?;
+            // Another Crumb's shared cookbook: nothing to read here, but it saves whole
+            if scraped.recipe.title.trim().is_empty() {
+                return Ok(Json(json!({"status": "import"})));
+            }
+            keep(&state, &url, &scraped);
+            scraped
+        }
+    };
+    let mut recipe = serde_json::to_value(tidied(&url, &scraped))
+        .map_err(|_| AppError::bad_request("That recipe couldn't be read"))?;
+    if let Some(map) = recipe.as_object_mut() {
+        for key in ["id", "createdAt", "updatedAt"] {
+            map.remove(key);
+        }
+    }
+    Ok(Json(json!({"status": "ready", "recipe": recipe})))
 }
 
 /// Before the scrape: "reading…" (which carries on by itself) or, arriving from another
