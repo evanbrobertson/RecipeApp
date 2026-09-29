@@ -39,6 +39,8 @@ RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-ffi/
     && cargo build --release --locked && rm -rf src crates
 COPY src ./src
 COPY crates ./crates
+# Reviewed lists compiled into the server (include_str!)
+COPY data ./data
 RUN find src crates -name '*.rs' -exec touch {} + && cargo build --release --locked
 
 # ---- Video tools: whisper.cpp (speech to text, on the CPU), its model, and yt-dlp ----

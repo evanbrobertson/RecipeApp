@@ -7631,3 +7631,85 @@ async fn a_preview_shows_the_recipe_the_extension_read() {
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(res["title"], "Apple Pie");
 }
+
+#[tokio::test]
+async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
+    let t = TestApp::new(None);
+    let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
+
+    // Import: 422 with the code, a polite message naming the site, and nothing saved
+    let (status, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+    assert_eq!(err["code"], "site_terms");
+    assert_eq!(err["statusCode"], 422);
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Allrecipes's terms don't allow automated copying"),
+        "{err}"
+    );
+    assert!(err["message"].as_str().unwrap().contains("extension"));
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Claude is told the terms forbid it, and what to ask the user instead
+    let (msg, is_error) = mcp_call(&t, "import_recipe_from_url", json!({"url": url})).await;
+    assert!(is_error, "{msg}");
+    assert!(
+        msg.contains("terms of service forbid automated fetching"),
+        "{msg}"
+    );
+    assert!(msg.contains("browser extension") && msg.contains("import_recipe_from_text"));
+
+    // The preview fails with the code, without waiting to be asked twice
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    for extra in ["", "&go=1"] {
+        let (status, _, html) = t
+            .send(preview_req(
+                &format!("/preview?url={q}{extra}"),
+                Some("same-origin"),
+            ))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{extra}");
+        let data = page_data(&html);
+        assert_eq!(data["preview"]["state"], "failed");
+        assert_eq!(data["preview"]["code"], "site_terms");
+        assert_eq!(data["preview"]["host"], "allrecipes.com");
+    }
+
+    // What the cook's own browser read (the extension) is still taken
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+    let (status, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page_data(&html)["preview"]["state"], "ready");
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Apple Pie");
+
+    // Refreshing it from its source would fetch it, so that's refused too
+    let (msg, is_error) =
+        mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
+    assert!(is_error, "{msg}");
+    assert!(msg.contains("terms of service forbid"), "{msg}");
+}

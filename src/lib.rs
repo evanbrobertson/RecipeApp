@@ -24,6 +24,7 @@ pub mod recipes;
 pub mod relay;
 pub mod scraper;
 pub mod share;
+pub mod site_terms;
 pub mod social;
 pub mod suggestions;
 pub mod telemetry;
@@ -76,6 +77,8 @@ pub struct AppState {
     pub video_jobs: Arc<video_jobs::VideoJobs>,
     /// `crumb-relay`s asked for pages the server's own fetches were blocked on (see [`relay`]).
     pub relays: Arc<relay::Relays>,
+    /// Wee Chef's look at sites' terms of service (see [`site_terms`]).
+    pub terms: Arc<site_terms::Flagger>,
 }
 
 impl AppState {
@@ -115,6 +118,7 @@ impl AppState {
             };
             Arc::new(opened.expect("accounts database"))
         });
+        let terms = Arc::new(site_terms::Flagger::new(config.terms_db.clone()));
         Self {
             accounts,
             hosted,
@@ -136,6 +140,7 @@ impl AppState {
             share_misses: Arc::default(),
             video_jobs,
             relays,
+            terms,
         }
     }
 }
