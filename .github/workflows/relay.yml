@@ -1,18 +1,27 @@
 # crumb-relay (crates/crumb-relay): the small service that fetches pages for a Crumb server from
-# another network. Its own release stream: push a tag `relay-vX.Y.Z` (the version in
-# crates/crumb-relay/Cargo.toml) and this builds it for Linux on x86-64, 64-bit ARM (Raspberry
-# Pi 3/4/5 on a 64-bit OS) and 32-bit ARMv7 (a Pi on the 32-bit OS), attaches the binaries to a
-# GitHub Release and pushes a multi-arch image to GHCR. Run by hand (Actions -> Relay -> Run
-# workflow), it only builds and keeps the binaries as a workflow artifact. See docs/RELAY.md.
+# another network. Its own release stream, like the browser extension's: a push to master that
+# changes crates/crumb-relay/ or crates/crumb-fetch/ works out the next version from the
+# conventional commits touching them (tags `relay-vX.Y.Z`), builds for Linux on x86-64, 64-bit
+# ARM (Raspberry Pi 3/4/5 on a 64-bit OS) and 32-bit ARMv7 (a Pi on the 32-bit OS), tags and
+# attaches the binaries to a GitHub Release and pushes a multi-arch image to GHCR. A tag pushed
+# by hand releases that version instead. Run by hand (Actions -> Relay -> Run workflow), it only
+# builds and keeps the binaries as a workflow artifact. Pull requests get a quick ARM64 build and
+# an image build in pr.yml. See docs/RELEASING.md and docs/RELAY.md.
 #
 # The build machine is Ubuntu 22.04 on purpose: a binary needs the glibc it was linked against,
 # and 22.04's (2.35) is older than Raspberry Pi OS Bookworm's and Debian 12's (2.36).
 # BoringSSL (under wreq) is built from source by CMake, so the cross builds use the distribution's
-# GCC cross toolchains and clang for the bindings.
+# GCC cross toolchains and clang for the bindings (scripts/relay/cross-build.sh).
 name: Relay
 
 on:
   push:
+    branches: [master]
+    paths:
+      - "crates/crumb-relay/**"
+      - "crates/crumb-fetch/**"
+      - "scripts/relay/**"
+      - ".github/workflows/relay.yml"
     tags: ["relay-v*"]
   workflow_dispatch:
 
@@ -31,8 +40,62 @@ defaults:
     shell: bash
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      last: ${{ steps.version.outputs.last }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: version
+        env:
+          # Commits touching either crate count (the server depends on crumb-fetch)
+          VERSION_TAG_PREFIX: relay-v
+          VERSION_PATHS: crates/crumb-relay crates/crumb-fetch
+        run: |
+          export VERSION_INITIAL
+          VERSION_INITIAL=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/crumb-relay/Cargo.toml | head -n1)
+          if [[ $GITHUB_REF == refs/tags/relay-v* ]]; then
+            # A tag pushed by hand names its own version
+            version=${GITHUB_REF#refs/tags/relay-v}
+            last=""
+          elif [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            # By hand: build only, keep the binaries as a workflow artifact
+            {
+              echo "release=false"
+              echo "version=$VERSION_INITIAL"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            last=$(scripts/release/version.sh last "$GITHUB_SHA")
+            if [[ -n $last ]] && [[ -z $(git log --format=%H "$last..$GITHUB_SHA" -- $VERSION_PATHS) ]]; then
+              echo "Nothing in crumb-relay or crumb-fetch changed since $last; no release." >> "$GITHUB_STEP_SUMMARY"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION_INITIAL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version=$(scripts/release/version.sh next "$GITHUB_SHA")
+          fi
+          {
+            echo "release=true"
+            echo "version=$version"
+            echo "tag=relay-v$version"
+            echo "last=$last"
+          } >> "$GITHUB_OUTPUT"
+          echo "Crumb relay $version" >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Build (${{ matrix.target }})
+    needs: version
+    # A push that releases nothing (the workflow file alone, say) builds nothing
+    if: needs.version.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
@@ -41,45 +104,22 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             docker_arch: amd64
-            packages: ""
-            gcc: gcc
-            gxx: g++
-            sysroot: ""
           - target: aarch64-unknown-linux-gnu
             docker_arch: arm64
-            packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
-            gcc: aarch64-linux-gnu-gcc
-            gxx: aarch64-linux-gnu-g++
-            sysroot: /usr/aarch64-linux-gnu
           - target: armv7-unknown-linux-gnueabihf
             docker_arch: arm
-            packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross
-            gcc: arm-linux-gnueabihf-gcc
-            gxx: arm-linux-gnueabihf-g++
-            sysroot: /usr/arm-linux-gnueabihf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Version
-        id: version
-        run: |
-          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/crumb-relay/Cargo.toml | head -n1)
-          if [[ $GITHUB_REF == refs/tags/relay-v* ]]; then
-            tag=${GITHUB_REF#refs/tags/relay-v}
-            if [[ $tag != "$crate" ]]; then
-              echo "::error::Tag relay-v$tag doesn't match crates/crumb-relay/Cargo.toml ($crate)"
-              exit 1
-            fi
-          fi
-          echo "version=$crate" >> "$GITHUB_OUTPUT"
       - name: Build tools
         env:
-          PACKAGES: ${{ matrix.packages }}
+          TARGET: ${{ matrix.target }}
         run: |
+          packages=$(scripts/relay/cross-build.sh packages "$TARGET")
           sudo apt-get update
           # shellcheck disable=SC2086
-          sudo apt-get install -y --no-install-recommends cmake g++ git libclang-dev make $PACKAGES
+          sudo apt-get install -y --no-install-recommends cmake g++ git libclang-dev make $packages
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -88,28 +128,25 @@ jobs:
         with:
           key: relay-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') }}
+      # Like the extension, the version comes from the tags, not from the manifest: it is set
+      # here for this build only (Cargo.toml and the crate's entry in Cargo.lock, so --locked
+      # still holds) and /health reports it. Nothing is committed.
+      - name: Set version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" crates/crumb-relay/Cargo.toml
+          sed -i "/^name = \"crumb-relay\"\$/{n;s/^version = \".*\"/version = \"$VERSION\"/}" Cargo.lock
+          git diff --stat
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
-          GCC: ${{ matrix.gcc }}
-          GXX: ${{ matrix.gxx }}
-          SYSROOT: ${{ matrix.sysroot }}
-        run: |
-          # Cargo and the cc crate read these per target: TRIPLE_WITH_UNDERSCORES
-          triple=${TARGET//-/_}
-          upper=$(tr '[:lower:]' '[:upper:]' <<<"$triple")
-          export "CC_$triple=$GCC" "CXX_$triple=$GXX"
-          export "CARGO_TARGET_${upper}_LINKER=$GCC"
-          if [[ -n $SYSROOT ]]; then
-            # The bindings for BoringSSL are generated by clang, which needs the target's headers
-            export "BINDGEN_EXTRA_CLANG_ARGS_$triple=--sysroot=$SYSROOT -I$SYSROOT/include"
-          fi
-          cargo build --release --locked -p crumb-relay --target "$TARGET"
+        run: scripts/relay/cross-build.sh build "$TARGET" --release
       - name: Package
         env:
           TARGET: ${{ matrix.target }}
           DOCKER_ARCH: ${{ matrix.docker_arch }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
           name=crumb-relay-$VERSION-$TARGET
@@ -120,12 +157,12 @@ jobs:
           # The image is assembled from the same binaries (crates/crumb-relay/Dockerfile)
           mkdir -p image
           cp "target/$TARGET/release/crumb-relay" "image/crumb-relay-linux-$DOCKER_ARCH"
-      - uses: actions/upload-artifact@v4 # TODO pin to a commit SHA like the other workflows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: relay-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4 # TODO pin to a commit SHA like the other workflows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: relay-image-${{ matrix.docker_arch }}
           path: image/*
@@ -133,17 +170,24 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/relay-v')
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ needs.version.outputs.tag }}
+      LAST: ${{ needs.version.outputs.last }}
+      VERSION_PATHS: crates/crumb-relay crates/crumb-fetch
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v4 # TODO pin to a commit SHA like the other workflows
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: relay-*-linux-gnu*
           path: dist
@@ -154,14 +198,20 @@ jobs:
             echo "Release $TAG already exists; not replacing it"
             exit 0
           fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Crumb relay ${TAG#relay-v}" \
-            --notes "The Crumb relay for Linux on x86-64, 64-bit ARM and 32-bit ARMv7. Setup: docs/RELAY.md. Verify a download with the .sha256 file next to it." \
-            dist/*
+          {
+            echo "The Crumb relay for Linux on x86-64, 64-bit ARM and 32-bit ARMv7. Setup: docs/RELAY.md."
+            echo "Verify a download with the .sha256 file next to it."
+            echo
+            scripts/release/version.sh notes "$LAST" "$GITHUB_SHA"
+          } > "$RUNNER_TEMP/notes.md"
+          # --target: for a master push this creates the tag on that commit
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Crumb relay ${TAG#relay-v}" --notes-file "$RUNNER_TEMP/notes.md" dist/*
 
   image:
     name: Image (GHCR)
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/relay-v')
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -171,14 +221,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4 # TODO pin to a commit SHA like the other workflows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: relay-image-*
           path: dist
           merge-multiple: true
       - run: chmod +x dist/* && ls -l dist
-      - id: version
-        run: echo "version=${GITHUB_REF_NAME#relay-v}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -194,5 +242,5 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:${{ needs.version.outputs.version }}
             ${{ env.IMAGE }}:latest
