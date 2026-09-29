@@ -308,15 +308,9 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
     Ok(recipe)
 }
 
+/// Moves these recipes to the trash (`trash.rs`), where they can be put back for 30 days.
 pub fn delete_recipes(conn: &Connection, ids: &[i64]) -> AppResult<usize> {
-    if ids.is_empty() {
-        return Ok(0);
-    }
-    let placeholders = vec!["?"; ids.len()].join(", ");
-    Ok(conn.execute(
-        &format!("DELETE FROM recipes WHERE id IN ({placeholders})"),
-        params_from_iter(ids.iter()),
-    )?)
+    crate::trash::delete(conn, ids)
 }
 
 pub(crate) fn is_http(s: &str) -> bool {
@@ -427,6 +421,8 @@ pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
     }
     // A cooking video: its caption, or what's said and shown in it
     if crate::video::is_video_url(&url) {
+        // (a video site could be listed: its downloader is a fetch like any other)
+        crate::site_terms::guard(&url)?;
         return state.video_jobs.submit(state, &url).map(Started::Queued);
     }
     import_page(state, &url).await.map(Started::Done)
@@ -437,8 +433,14 @@ async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
     // What a preview of the link just showed, else the page as it is now
     let scraped = match crate::preview::take(state, url) {
         Some(scraped) => scraped,
-        None => crate::scraper::scrape_page(state, url).await?,
+        None => {
+            // A site whose terms forbid automated fetching is refused inside `scrape_page`.
+            // The cook's own browser can read it (the extension's `page`, taken above).
+            crate::scraper::scrape_page(state, url).await?
+        }
     };
+    // Wee Chef looks at an unfamiliar site's terms in the background
+    state.terms.consider(state, url);
     // Another Crumb's share page: take its export (sections, notes and the original link
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {
@@ -485,7 +487,7 @@ async fn drop_dead_photo(state: &AppState, fields: &mut RecipeFields, page_url: 
     let Some(image) = fields.image.as_deref().filter(|i| !i.is_empty()) else {
         return false;
     };
-    if !crate::images::photo_is_dead(&state.http, image, Some(page_url)).await {
+    if !crate::images::photo_is_dead(state, image, Some(page_url)).await {
         return false;
     }
     fields.image = None;
@@ -500,7 +502,7 @@ async fn keep_shared_photo(state: &AppState, image: &mut Option<String>, share_u
     let Some(photo) = image.as_deref().filter(|i| served_by_share(i, share_url)) else {
         return;
     };
-    *image = crate::images::fetch_to_embed(&state.http, photo).await;
+    *image = crate::images::fetch_to_embed(state, photo).await;
 }
 
 /// Whether `image` is a file under the share at `share_url` (on its host, below its path).

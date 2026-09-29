@@ -42,12 +42,60 @@ pub fn check_password(config: &Config, candidate: &str) -> bool {
     expected.ct_eq(&actual).into()
 }
 
-/// Session key derived from the password, so changing it signs everyone out.
-fn signature(password: &str, issued: i64) -> Vec<u8> {
-    let key = Sha256::digest(format!("crumb-session:{password}").as_bytes());
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key).expect("any key length");
-    mac.update(format!("ok:{issued}").as_bytes());
+fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("any key length");
+    mac.update(data);
     mac.finalize().into_bytes().to_vec()
+}
+
+/// Session signature. The key comes from the password *and* the server's random secret
+/// (`session.secret` beside the database), so changing the password signs everyone out, and
+/// someone holding a cookie can't test password guesses against it offline: they would need
+/// the secret too.
+fn signature(config: &Config, password: &str, issued: i64) -> Vec<u8> {
+    let key = hmac(
+        &config.session_secret,
+        format!("crumb-session:{password}").as_bytes(),
+    );
+    hmac(&key, format!("ok:{issued}").as_bytes())
+}
+
+/// The server's session secret: read from `session.secret` next to the database, or made
+/// there on first start. If it can't be stored, a fresh one lasts until restart (everyone signs
+/// in again then) and a warning says so.
+pub fn load_session_secret(db_path: &std::path::Path) -> Vec<u8> {
+    let path = db_path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."))
+        .join("session.secret");
+    if let Ok(text) = std::fs::read_to_string(&path)
+        && let Ok(bytes) = URL_SAFE_NO_PAD.decode(text.trim())
+        && bytes.len() >= 32
+    {
+        return bytes;
+    }
+    let mut secret = vec![0u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret);
+    let written = (|| -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, URL_SAFE_NO_PAD.encode(&secret))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    })();
+    if let Err(err) = written {
+        tracing::warn!(
+            "couldn't store {}: {err}. Sessions will end whenever the server restarts",
+            path.display()
+        );
+    }
+    secret
 }
 
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -78,7 +126,7 @@ pub fn is_logged_in(config: &Config, headers: &HeaderMap) -> bool {
         return false;
     };
     let fresh = (0..MAX_AGE_SECS).contains(&(crate::model::now_secs() - issued));
-    fresh && bool::from(signature(password, issued).ct_eq(&sig))
+    fresh && bool::from(signature(config, password, issued).ct_eq(&sig))
 }
 
 /// Whether the client reached us over HTTPS (Railway terminates TLS at its proxy).
@@ -94,7 +142,7 @@ pub fn is_https(headers: &HeaderMap) -> bool {
 pub fn login_cookie(config: &Config, headers: &HeaderMap) -> Option<HeaderValue> {
     let password = config.app_password.as_ref()?;
     let issued = crate::model::now_secs();
-    let sig = URL_SAFE_NO_PAD.encode(signature(password, issued));
+    let sig = URL_SAFE_NO_PAD.encode(signature(config, password, issued));
     let secure = if is_https(headers) { "; Secure" } else { "" };
     HeaderValue::from_str(&format!(
         "{COOKIE}={issued}.{sig}; Path=/; Max-Age={MAX_AGE_SECS}; HttpOnly; SameSite=Lax{secure}"

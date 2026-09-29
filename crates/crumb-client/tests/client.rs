@@ -3,8 +3,8 @@
 use crumb::{AppState, app, browser::Browser, config::Config, db};
 use crumb_client::{
     AiStatus, Client, CookStats, Cooked, Credentials, Device, Error, ImportInput, Imported,
-    ImportedCookbook, Mode, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section, ShareKind,
-    Status, StatusHousehold,
+    ImportedCookbook, Mode, Preview, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section,
+    ShareKind, Status, StatusHousehold,
 };
 use serde_json::{Value, json};
 
@@ -105,7 +105,9 @@ async fn auth_is_required_until_login() {
     ));
 
     match client.login("wrong").await {
-        Err(Error::Api { status, message }) => {
+        Err(Error::Api {
+            status, message, ..
+        }) => {
             assert_eq!(status, 401);
             assert_eq!(message, "Incorrect password");
         }
@@ -333,6 +335,8 @@ async fn creates_patches_and_deletes_a_recipe() {
         Err(Error::Api {
             status: 400,
             message,
+            code: None,
+            site: None,
         }) => assert!(!message.is_empty()),
         other => panic!("expected an Api 400, got {other:?}"),
     }
@@ -350,6 +354,20 @@ async fn bulk_deletes_recipes() {
     let client = Client::new(&server.origin).unwrap();
     assert_eq!(client.bulk_delete(&[a, b, 999_999]).await.unwrap(), 2);
     assert!(client.recipes(None, None).await.unwrap().is_empty());
+
+    // Both are in the trash, newest first, and can be put back
+    let trash = client.trash().await.unwrap();
+    assert_eq!(trash.len(), 2);
+    assert!(trash.iter().any(|t| t.title == "A"));
+    let (back, is_new) = client.restore_recipe(a).await.unwrap();
+    assert_eq!((back.id, back.title.as_str(), is_new), (a, "A", true));
+    assert!(matches!(
+        client.restore_recipe(a).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+    client.purge_trashed(b).await.unwrap();
+    assert_eq!(client.empty_trash().await.unwrap(), 0);
+    assert_eq!(client.recipes(None, None).await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -798,7 +816,9 @@ async fn accounts_set_up_sign_in_and_out() {
     ));
 
     match accounts.sign_in("ann@example.com", "wrong").await {
-        Err(Error::Api { status, message }) => {
+        Err(Error::Api {
+            status, message, ..
+        }) => {
             assert_eq!(status, 401);
             assert_eq!(message, "Incorrect email or password");
         }
@@ -1260,4 +1280,62 @@ async fn hosted_sign_in_methods_and_unlink() {
     // Nothing linked for Apple: nothing to do
     accounts.unlink(Provider::Apple).await.unwrap();
     assert_eq!(seen(&log, "POST /api/auth/unlink-account").len(), 1);
+}
+
+#[tokio::test]
+async fn a_listed_site_error_carries_its_name() {
+    let server = Server::start(None).await;
+    let client = Client::new(&server.origin).unwrap();
+
+    let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
+    let err = client
+        .import(ImportInput::Url(url.into()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Some("site_terms"));
+    assert_eq!(err.site(), Some("Allrecipes"));
+    assert!(matches!(err, Error::Api { status: 422, .. }));
+}
+
+#[tokio::test]
+async fn previews_a_link_before_it_is_saved() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let recipe_site = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(|| async {
+            axum::response::Html(format!(
+                r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                json!({"@type": "Recipe", "name": "Leek Soup",
+                    "recipeIngredient": ["2 leeks"], "recipeInstructions": ["Simmer."]})
+            ))
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, recipe_site).await.unwrap() });
+    // The test's recipe site is on this machine
+    let server = Server::configured(|config| config.scrape_allow_private = true).await;
+    let client = Client::new(&server.origin).unwrap();
+
+    let url = format!("{site}/soup");
+    let Preview::Ready { recipe } = client.preview(&url).await.unwrap() else {
+        panic!("expected a recipe");
+    };
+    assert_eq!(recipe.title, "Leek Soup");
+    assert_eq!(recipe.url.as_deref(), Some(url.as_str()));
+
+    let imported = client.import(ImportInput::Url(url.clone())).await.unwrap();
+    match client.preview(&url).await.unwrap() {
+        Preview::Saved { id, title } => {
+            assert_eq!((id, title.as_str()), (imported.recipe.id, "Leek Soup"));
+        }
+        other => panic!("expected saved, got {other:?}"),
+    }
+
+    let video = "https://www.youtube.com/watch?v=Xy_djhH3WE4";
+    assert!(matches!(
+        client.preview(video).await.unwrap(),
+        Preview::Import
+    ));
+    let err = client.preview("nope").await.unwrap_err();
+    assert!(matches!(err, Error::Api { status: 400, .. }), "{err:?}");
 }

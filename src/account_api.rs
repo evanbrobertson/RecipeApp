@@ -3,6 +3,7 @@
 //! members, invite links, leaving and switching. With one password these answer as that
 //! mode does (status) or refuse (the rest).
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, header};
@@ -14,6 +15,7 @@ use crate::AppState;
 use crate::accounts::Accounts;
 use crate::auth::{self, SignedIn};
 use crate::error::{AppError, AppResult};
+use crate::throttle::ClientIp;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -148,6 +150,7 @@ pub fn new_session(
 /// anyone has an account, and without the app password when one is set.
 async fn set_up(
     State(state): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
@@ -164,10 +167,11 @@ async fn set_up(
             .get("appPassword")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let attempt = state.login_attempt(&ip, "password")?;
         if !auth::check_password(&state.config, given) {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
             return Err(AppError::new(401, "appPassword: Incorrect app password"));
         }
+        state.login_succeeded(&attempt);
     }
     let user = accounts
         .set_up(
@@ -206,17 +210,22 @@ async fn sign_up(
 }
 
 /// Accounts' `POST /api/auth/login`: `{email, password}`.
-pub async fn log_in(state: &AppState, headers: &HeaderMap, body: &Value) -> AppResult<Response> {
+pub async fn log_in(
+    state: &AppState,
+    ip: &ClientIp,
+    headers: &HeaderMap,
+    body: &Value,
+) -> AppResult<Response> {
     let accounts = accounts(state)?;
     let email = text(body, "email", "Email")?;
     let password = text(body, "password", "Password")?;
+    let attempt = state.login_attempt(ip, email)?;
     match accounts.authenticate(email, password).await? {
-        Some((user, household)) => signed_in_response(accounts, user, household, headers),
-        None => {
-            // Slow down guessing
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-            Err(AppError::new(401, "Incorrect email or password"))
+        Some((user, household)) => {
+            state.login_succeeded(&attempt);
+            signed_in_response(accounts, user, household, headers)
         }
+        None => Err(AppError::new(401, "Incorrect email or password")),
     }
 }
 
@@ -343,20 +352,27 @@ async fn cancel_invite(
 }
 
 /// Public: which household an invite link is for, so its page can say so.
-async fn preview_invite(State(state): State<AppState>, body: Bytes) -> AppResult<Json<Value>> {
+async fn preview_invite(
+    State(state): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
     let accounts = accounts(&state)?;
     let body = json_body(&body)?;
     let token = text(&body, "token", "Invite")?;
+    // Invite tokens are guessable in principle; only bad guesses count
+    state
+        .logins
+        .attempt(&[(&format!("invite:{}", ip.0), crate::throttle::IP_FREE)])?;
     match accounts.preview_invite(token)? {
-        Some(preview) => Ok(Json(json!(preview))),
-        None => {
-            // Slow down guessing
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            Err(AppError::new(
-                410,
-                "This invite has expired or was already used. Ask for a new one.",
-            ))
+        Some(preview) => {
+            state.logins.clear(&[&format!("invite:{}", ip.0)]);
+            Ok(Json(json!(preview)))
         }
+        None => Err(AppError::new(
+            410,
+            "This invite has expired or was already used. Ask for a new one.",
+        )),
     }
 }
 
@@ -365,6 +381,7 @@ async fn preview_invite(State(state): State<AppState>, body: Bytes) -> AppResult
 /// sign-up closed) and `{email, password}` signs in to an existing one and joins.
 async fn accept_invite(
     State(state): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
@@ -395,10 +412,11 @@ async fn accept_invite(
             "This invite has expired or was already used. Ask for a new one.",
         ));
     }
+    let attempt = state.login_attempt(&ip, email)?;
     let Some((user, _)) = accounts.authenticate(email, password).await? else {
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         return Err(AppError::new(401, "Incorrect email or password"));
     };
+    state.login_succeeded(&attempt);
     let household = accounts.accept_invite(token, user)?;
     signed_in_response(accounts, user, household, &headers)
 }
@@ -470,6 +488,7 @@ async fn export_account(
 /// once confirmed the old one gets a link to undo it (see `auth/src/email.ts`).
 async fn change_email(
     State(state): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
     SignedIn(signed): SignedIn,
     headers: HeaderMap,
     body: Bytes,
@@ -493,10 +512,11 @@ async fn change_email(
     }
     let (has_password, _) = accounts.sign_in_methods(signed.user_id)?;
     if has_password {
+        let attempt = state.login_attempt(&ip, &format!("user:{}", signed.user_id))?;
         if password.is_empty() || !accounts.check_password(signed.user_id, password).await? {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
             return Err(AppError::new(401, "password: Incorrect password"));
         }
+        state.login_succeeded(&attempt);
     } else {
         let started = accounts.session_started(signed.id)?.unwrap_or(0);
         if crate::model::now_secs() - started > FRESH_SECS {
@@ -532,6 +552,7 @@ async fn confirm_email(State(state): State<AppState>, body: Bytes) -> AppResult<
 /// recipes and all. Connectors it approved stop working.
 async fn delete_account(
     State(state): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
     SignedIn(signed): SignedIn,
     headers: HeaderMap,
     body: Bytes,
@@ -567,11 +588,12 @@ async fn delete_account(
         None => {
             let (has_password, _) = accounts.sign_in_methods(signed.user_id)?;
             if has_password {
+                let attempt = state.login_attempt(&ip, &format!("user:{}", signed.user_id))?;
                 if password.is_empty() || !accounts.check_password(signed.user_id, password).await?
                 {
-                    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
                     return Err(AppError::new(401, "password: Incorrect password"));
                 }
+                state.login_succeeded(&attempt);
             } else {
                 let confirm = body.get("confirm").and_then(Value::as_str).unwrap_or("");
                 if !confirm.trim().eq_ignore_ascii_case(&signed.email) {

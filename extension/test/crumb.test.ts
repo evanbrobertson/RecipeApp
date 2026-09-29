@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { crumbOrigin, normalize, previewUrl, readable, siteOf } from "../src/crumb"
+import { crumbOrigin, mayOfferItself, normalize, previewUrl, readable, siteOf } from "../src/crumb"
 
 describe("crumbOrigin", () => {
   test("a bare host is https", () => {
@@ -22,6 +22,12 @@ describe("crumbOrigin", () => {
 test("previewUrl encodes the whole page address", () => {
   expect(previewUrl("https://c.example", "https://site.example/soup?x=1&y=2#top")).toBe(
     "https://c.example/preview?url=https%3A%2F%2Fsite.example%2Fsoup%3Fx%3D1%26y%3D2%23top",
+  )
+})
+
+test("previewUrl says the recipe is on its way when the extension read it", () => {
+  expect(previewUrl("https://c.example", "https://site.example/soup", true)).toBe(
+    "https://c.example/preview?url=https%3A%2F%2Fsite.example%2Fsoup&via=extension",
   )
 })
 
@@ -49,5 +55,16 @@ test("normalize fills defaults and cleans what was stored", () => {
     crumb: "",
     prompt: true,
     muted: [],
+  })
+})
+
+describe("mayOfferItself", () => {
+  test("https, or a local http Crumb; not plain http elsewhere", () => {
+    expect(mayOfferItself("https://crumb.example.com")).toBe(true)
+    expect(mayOfferItself("http://localhost:3000")).toBe(true)
+    expect(mayOfferItself("http://127.0.0.1:3000")).toBe(true)
+    expect(mayOfferItself("http://crumb.example.com")).toBe(false)
+    expect(mayOfferItself("file:///x")).toBe(false)
+    expect(mayOfferItself("nope")).toBe(false)
   })
 })

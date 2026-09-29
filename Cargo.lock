@@ -922,6 +922,8 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "crumb-core",
+ "crumb-fetch",
+ "crumb-work",
  "flate2",
  "futures-util",
  "hmac",
@@ -944,6 +946,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "toml",
  "tower",
  "tower-http",
  "tracing",
@@ -951,7 +954,6 @@ dependencies = [
  "url",
  "webp",
  "wreq",
- "wreq-util",
  "zip",
 ]
 
@@ -1008,6 +1010,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumb-fetch"
+version = "0.1.0"
+dependencies = [
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wreq",
+ "wreq-util",
+]
+
+[[package]]
 name = "crumb-ffi"
 version = "0.1.0"
 dependencies = [
@@ -1015,6 +1031,45 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uniffi",
+]
+
+[[package]]
+name = "crumb-relay"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "crumb-core",
+ "crumb-fetch",
+ "crumb-work",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "crumb-work"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "crumb-fetch",
+ "futures-util",
+ "image 0.25.10",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
 ]
 
 [[package]]

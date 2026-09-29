@@ -77,10 +77,26 @@ pub fn etag_for(body: &[u8]) -> String {
     format!("\"{hex}\"")
 }
 
+/// What the browser SDK may send to: the error-reporting host of `SENTRY_DSN`, if there is one.
+fn sentry_connect() -> &'static str {
+    static HOST: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        std::env::var("SENTRY_DSN")
+            .ok()
+            .and_then(|d| d.parse::<sentry::types::Dsn>().ok())
+            .map(|d| format!(" https://{}", d.host()))
+            .unwrap_or_default()
+    });
+    &HOST
+}
+
 fn html_response(status: StatusCode, body: String) -> Response {
     let tag = etag_for(body.as_bytes());
+    let policy = crate::share::app_policy(&body, sentry_connect());
     let mut res = (status, body).into_response();
     let h = res.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(&policy) {
+        h.insert(header::CONTENT_SECURITY_POLICY, v);
+    }
     if let Ok(tag) = HeaderValue::from_str(&tag) {
         h.insert(header::ETAG, tag);
     }
@@ -408,10 +424,20 @@ fn cache_control(path: &str) -> &'static str {
     }
 }
 
+/// Whether a request path is (or, once decoded, reaches) the `shell/` templates, which are only
+/// served with their page data filled in. `ServeDir` decodes the path itself, so `/%73hell/...`
+/// has to be caught here after decoding too, and the check ignores case and repeated slashes.
+fn is_shell_path(path: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
+    let decoded = decoded.replace('\\', "/").to_ascii_lowercase();
+    let trimmed = decoded.trim_start_matches('/');
+    trimmed == "shell" || trimmed.starts_with("shell/")
+}
+
 /// Everything that isn't an app route: pages by clean URL, then files from the build.
 pub async fn static_files(crate::Scoped(state): crate::Scoped, req: Request) -> Response {
     let path = req.uri().path().to_string();
-    if path.starts_with("/shell/") || path == "/shell" {
+    if is_shell_path(&path) {
         return not_found(&state);
     }
     let last = path.rsplit('/').next().unwrap_or("");
@@ -540,6 +566,25 @@ mod tests {
         let s = inline_json(&json!({"t": "</script><script>alert(1)</script>"}));
         assert!(!s.contains("</"));
         assert!(s.contains("\\u003c/script>"));
+    }
+
+    #[test]
+    fn shell_templates_cannot_be_reached_by_encoding() {
+        for hit in [
+            "/shell",
+            "/shell/",
+            "/shell/preview/index.html",
+            "/%73hell/preview/index.html",
+            "/%53hell/preview/index.html",
+            "//shell/recipe/index.html",
+            "/shell%2Frecipe/index.html",
+            "/%2573hell/x",
+        ] {
+            // A doubly encoded name decodes once to text that isn't `shell`
+            assert_eq!(is_shell_path(hit), hit != "/%2573hell/x", "{hit}");
+        }
+        assert!(!is_shell_path("/shelly/x"));
+        assert!(!is_shell_path("/recipes/shell"));
     }
 
     #[test]

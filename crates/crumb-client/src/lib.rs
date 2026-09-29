@@ -100,6 +100,8 @@ pub const JOB_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 #[derive(Deserialize)]
 struct ErrorBody {
     message: Option<String>,
+    code: Option<String>,
+    site: Option<String>,
 }
 
 /// The `{id, title, isNew}` body the import route echoes back. A shared-cookbook link
@@ -247,6 +249,20 @@ impl Client {
         self.json(res, false).await
     }
 
+    /// `POST /api/recipes/preview`: reads a recipe link without saving it. The server
+    /// keeps the reading for a while, so [`Client::import`] of the same link saves it as
+    /// shown. A cooking video or shared cookbook answers [`Preview::Import`].
+    pub async fn preview(&self, url: &str) -> Result<Preview, Error> {
+        let res = self
+            .send(
+                self.http
+                    .post(self.endpoint("api/recipes/preview"))
+                    .json(&json!({ "url": url })),
+            )
+            .await?;
+        self.json(res, false).await
+    }
+
     /// `POST /api/recipes/import`: saves a link or pasted text. A cooking video waits in
     /// the server's queue; see [`Client::import_with_progress`] to hear how it's going.
     pub async fn import(&self, input: ImportInput) -> Result<Imported, Error> {
@@ -294,6 +310,8 @@ impl Client {
                                 .message
                                 .filter(|m| !m.is_empty())
                                 .unwrap_or_else(|| "Couldn't read that video".into()),
+                            code: None,
+                            site: None,
                         });
                     }
                     status => progress(&crumb_core::add::job_progress(status, job.position)),
@@ -317,6 +335,8 @@ impl Client {
             return Err(Error::Api {
                 status: 200,
                 message: "That shared cookbook had no new recipes to save.".into(),
+                code: None,
+                site: None,
             });
         }
         Ok(Imported {
@@ -388,12 +408,19 @@ impl Client {
             return Error::Unauthorized;
         }
         let body = res.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<ErrorBody>(&body)
-            .ok()
+        let parsed = serde_json::from_str::<ErrorBody>(&body).ok();
+        let code = parsed.as_ref().and_then(|body| body.code.clone());
+        let site = parsed.as_ref().and_then(|body| body.site.clone());
+        let message = parsed
             .and_then(|body| body.message)
             .filter(|message| !message.is_empty())
             .unwrap_or(body);
-        Error::Api { status, message }
+        Error::Api {
+            status,
+            message,
+            code,
+            site,
+        }
     }
 
     async fn expect_ok(&self, res: Response, login: bool) -> Result<(), Error> {

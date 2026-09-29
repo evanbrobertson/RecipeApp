@@ -1,0 +1,8 @@
+# Hosts Wee Chef flagged as possibly forbidding automated fetching, that a person read and
+# decided are fine. A host here (or a subdomain of it) is never flagged again. Add an entry
+# when you close a `tos-suggestion` issue without listing the site in site-terms.toml.
+#
+#   [[ignore]]
+#   host = "example.com"
+#   reason = "Terms only ask for attribution; no ban on automated access"
+#   checked = "2026-09-29"

@@ -261,7 +261,7 @@
     onchange={(e) => uploadFiles(e.currentTarget.files)}
   />
   <p class="hint mt-2 px-4">
-    Up to 50 MB each. In text files, put <code>---</code> between recipes. Photos chosen together
+    Up to 25 MB each. In text files, put <code>---</code> between recipes. Photos chosen together
     are read as the pages of one recipe (up to {MAX_PHOTOS}).
   </p>
   {#if fileJobs.length}

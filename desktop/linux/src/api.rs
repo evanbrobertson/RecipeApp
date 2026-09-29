@@ -26,6 +26,8 @@ fn bad(message: impl Into<String>) -> Error {
     Error::Api {
         status: 400,
         message: message.into(),
+        code: None,
+        site: None,
     }
 }
 

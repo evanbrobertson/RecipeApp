@@ -1393,6 +1393,8 @@ impl<'a> View<'a> {
                     "title": self.recipe.title,
                     "url": url,
                     "host": host_of(url),
+                    "video": self.recipe.video,
+                    "videoEmbed": self.recipe.video_embed,
                 }
             });
         }
@@ -1638,12 +1640,41 @@ pub fn content_security_policy(page: &str) -> String {
     policy(page, "'self' data:")
 }
 
-/// [`content_security_policy`] for a preview, whose photo is still on the recipe's site.
+/// [`content_security_policy`] for a preview, whose photo is still on the recipe's site and
+/// whose video (only once the cook presses Play) plays from its own.
 pub fn preview_policy(page: &str) -> String {
-    policy(page, "'self' data: https: http:")
+    policy(page, "'self' data: https: http:").replacen(
+        "default-src 'none';",
+        "default-src 'none'; media-src https:; frame-src https:;",
+        1,
+    )
+}
+
+/// The app's own pages' CSP. Scripts run only from this origin and by the hash of each inline
+/// script the page has; nothing can be embedded as an object or re-based, and the page can't
+/// be framed. Images, media and frames stay open to https because recipe videos and photos
+/// come from other sites; `connect_extra` adds the error-reporting endpoint, if any.
+pub fn app_policy(page: &str, connect_extra: &str) -> String {
+    let scripts = script_hashes(page);
+    format!(
+        "default-src 'self'; script-src {scripts} 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; \
+         connect-src 'self'{connect_extra}; frame-src https:; worker-src 'self' blob:; \
+         object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    )
 }
 
 fn policy(page: &str, images: &str) -> String {
+    let scripts = script_hashes(page);
+    format!(
+        "default-src 'none'; script-src {scripts}; style-src 'self' 'unsafe-inline'; \
+         img-src {images}; font-src 'self'; connect-src 'self'; base-uri 'none'; \
+         form-action 'self'; frame-ancestors 'none'"
+    )
+}
+
+/// `'self'` and the hash of every inline script in `page` that runs.
+fn script_hashes(page: &str) -> String {
     let mut hashes = Vec::new();
     for c in SCRIPT.captures_iter(page) {
         let attrs = &c[1];
@@ -1667,15 +1698,10 @@ fn policy(page: &str, images: &str) -> String {
             }
         }
     }
-    let scripts = std::iter::once("'self'".to_string())
+    std::iter::once("'self'".to_string())
         .chain(hashes)
         .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "default-src 'none'; script-src {scripts}; style-src 'self' 'unsafe-inline'; \
-         img-src {images}; font-src 'self'; connect-src 'self'; base-uri 'none'; \
-         form-action 'self'; frame-ancestors 'none'"
-    )
+        .join(" ")
 }
 
 // ─── Saving another Crumb's share ───────────────────────────────────────────
@@ -1696,6 +1722,7 @@ static EXPORT_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     });
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
+        .dns_resolver(std::sync::Arc::new(crate::scraper::PublicResolver))
         .redirect(policy)
         .build()
         .expect("HTTP client")

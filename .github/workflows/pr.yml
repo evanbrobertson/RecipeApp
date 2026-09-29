@@ -103,3 +103,81 @@ jobs:
           done
           docker logs auth
           exit 1
+
+  # crumb-relay and crumb-fetch are workspace members, so fmt, clippy and the tests already run
+  # for them in the shared checks above. What only shows up elsewhere: the cross build for a
+  # Raspberry Pi (BoringSSL is compiled by the ARM cross toolchain) and the relay's own image.
+  # Both run only when the relay, its shared crate, the lockfile or these workflows change.
+  relay-arm:
+    name: Relay ARM64 build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE...$HEAD")
+          if grep -qE '^crates/crumb-(relay|fetch|work)/|^data/site-terms\.toml$|^Cargo\.(toml|lock)$|^scripts/relay/|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Relay inputs unchanged; skipping the ARM64 build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.build == 'true'
+        run: |
+          packages=$(scripts/relay/cross-build.sh packages aarch64-unknown-linux-gnu)
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends cmake g++ git libclang-dev make $packages
+      - if: steps.changed.outputs.build == 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
+      # A debug build (the release one is fat LTO and takes far longer) still compiles BoringSSL
+      # and links for ARM64, which is what breaks. Its own cache, since relay.yml's is a release one
+      - if: steps.changed.outputs.build == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: relay-check-aarch64-unknown-linux-gnu
+      - if: steps.changed.outputs.build == 'true'
+        run: scripts/relay/cross-build.sh build aarch64-unknown-linux-gnu
+
+  docker-relay:
+    name: Relay image build (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE...$HEAD")
+          if grep -qE '^crates/crumb-(relay|fetch|work)/|^data/site-terms\.toml$|^Cargo\.(toml|lock)$|^\.dockerignore$|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Relay inputs unchanged; skipping its image build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Builds from source, as the Dockerfile says, for the runner's architecture (the release
+      # image is assembled from the cross-built binaries, which relay.yml builds)
+      - if: steps.changed.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: crates/crumb-relay/Dockerfile
+          push: false
+          provenance: false

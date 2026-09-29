@@ -80,6 +80,8 @@ pub fn review_text(kind: &str) -> &'static str {
         "merged" => "might be two ingredients on one line",
         "step" => "looks like a step, not an ingredient",
         "ingredient" => "looks like an ingredient, not a step",
+        // A photo link the site refuses: the flag's text is the link, so this stands alone
+        "dead_photo" => "The photo link doesn't work any more",
         _ => "might need a look",
     }
 }
@@ -194,6 +196,10 @@ mod tests {
             "might be two ingredients on one line"
         );
         assert_eq!(review_text("new"), "might need a look");
+        assert_eq!(
+            review_text("dead_photo"),
+            "The photo link doesn't work any more"
+        );
     }
 
     #[test]

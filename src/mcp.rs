@@ -24,7 +24,7 @@ const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"
 - When the user asks to tweak a saved recipe (scale it, substitute, fix steps), call update_recipe with only the changed fields.
 - To tidy the library, search_recipes with `missing` finds recipes without an image, times, a category, a cookbook and so on; refresh_recipe_from_source fills blanks from the recipe's source page without touching what the user set.
 - Cookbooks are the shelf: get_cookbook, update_cookbook (name, description, colour), add_to_cookbook and remove_from_cookbook organise it.
-- delete_recipe and delete_cookbook first return a preview. Show it to the user and call again with confirm: true only after they agree.
+- delete_recipe and delete_cookbook first return a preview. Show it to the user and call again with confirm: true only after they agree. Deleted recipes go to the trash for 30 days: list_trash and restore_recipe put one back.
 - When the user asks what to cook, call suggest_recipes (or random_recipe for a surprise). When they say they cooked something, call mark_recipe_cooked.
 - Always share the recipe link returned by the tools.";
 
@@ -116,6 +116,27 @@ fn text(value: impl Into<String>) -> Value {
 
 fn tool_error(message: impl Into<String>) -> Value {
     json!({"content": [{"type": "text", "text": message.into()}], "isError": true})
+}
+
+/// A scrape's error. When the site's bot check turned the server away, the assistant is told
+/// what will work: the user's own browser, with the Crumb extension.
+fn scrape_error(err: AppError) -> Value {
+    if err.code == Some(crate::scraper::SITE_BLOCKED) {
+        return tool_error(
+            "The site blocked Crumb's server with a bot check, so this page can't be read from here. \
+             Ask the user to open the page in their own browser and use the Crumb browser extension \
+             on it, or to paste the recipe text so you can use import_recipe_from_text.",
+        );
+    }
+    if err.code == Some(crate::site_terms::SITE_TERMS) {
+        return tool_error(
+            "This site's terms of service forbid automated fetching, so Crumb won't fetch it from \
+             the server. Ask the user to open the page in their own browser and use the Crumb \
+             browser extension on it, or to paste the recipe text so you can use \
+             import_recipe_from_text.",
+        );
+    }
+    tool_error(err.message)
 }
 
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
@@ -371,7 +392,7 @@ impl Ctx<'_> {
                         saved
                     }
                     Ok(recipes::Imported::Book(book)) => text(book_saved(&book)),
-                    Err(err) => tool_error(err.message),
+                    Err(err) => scrape_error(err),
                 }
             }
             "update_recipe" => {
@@ -423,7 +444,7 @@ impl Ctx<'_> {
                     .collect();
                 if a.get("confirm") != Some(&Value::Bool(true)) {
                     return Some(text(format!(
-                        "Not deleted yet. This will permanently delete {} recipe(s):\n{}\n\n\
+                        "Not deleted yet. This will move {} recipe(s) to the trash (restorable for 30 days):\n{}\n\n\
                          Show this list to the user. Only if they agree, call delete_recipe again \
                          with the same ids and confirm: true.",
                         found.len(),
@@ -431,7 +452,46 @@ impl Ctx<'_> {
                     )));
                 }
                 match recipes::delete_recipes(&conn, &ids) {
-                    Ok(n) => text(format!("Deleted {n} recipe(s):\n{}", titles.join("\n"))),
+                    Ok(n) => text(format!(
+                        "Moved {n} recipe(s) to the trash (restore_recipe puts one back within 30 days):\n{}",
+                        titles.join("\n")
+                    )),
+                    Err(err) => tool_error(err.message),
+                }
+            }
+            "list_trash" => match crate::trash::list(&db.lock()) {
+                Ok(list) if list.is_empty() => text("The trash is empty."),
+                Ok(list) => {
+                    let now = crate::model::now_secs();
+                    text(
+                        list.iter()
+                            .map(|t| {
+                                let days = ((t.purge_at() - now) / 86_400).max(0);
+                                format!("- [{}] {} (gone for good in {days} days)", t.id, t.title)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    )
+                }
+                Err(err) => tool_error(err.message),
+            },
+            "restore_recipe" => {
+                let Some(id) = int("id") else {
+                    return Some(invalid("id is required"));
+                };
+                match crate::trash::restore(&db.lock(), id) {
+                    Ok(crate::trash::Restored::Back(r)) => text(format!(
+                        "Restored \"{}\" (id {})\n{}",
+                        r.title,
+                        r.id,
+                        self.link(r.id)
+                    )),
+                    Ok(crate::trash::Restored::AlreadySaved(r)) => text(format!(
+                        "Its link was saved again since, so that recipe stays: \"{}\" (id {})\n{}",
+                        r.title,
+                        r.id,
+                        self.link(r.id)
+                    )),
                     Err(err) => tool_error(err.message),
                 }
             }
@@ -783,7 +843,7 @@ impl Ctx<'_> {
                         r.id,
                         self.link(r.id)
                     )),
-                    Err(err) => tool_error(err.message),
+                    Err(err) => scrape_error(err),
                 }
             }
             _ => return None,
@@ -949,13 +1009,26 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "delete_recipe",
             "title": "Delete recipes",
-            "description": "Permanently delete one or more recipes. Without confirm: true this only returns a preview; show it to the user and call again with confirm: true once they agree.",
+            "description": "Delete one or more recipes (they go to the trash, restorable for 30 days). Without confirm: true this only returns a preview; show it to the user and call again with confirm: true once they agree.",
             "inputSchema": object(props(json!({
                 "id": {"type": "integer"},
                 "ids": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "description": "Several recipes at once (instead of id)"},
                 "confirm": {"type": "boolean", "default": false, "description": "Set only after the user has approved the preview"}
             })), &[]),
             "annotations": {"destructiveHint": true}
+        }),
+        json!({
+            "name": "list_trash",
+            "title": "List deleted recipes",
+            "description": "List recipes deleted in the last 30 days, which restore_recipe can put back.",
+            "inputSchema": object(Map::new(), &[]),
+            "annotations": {"readOnlyHint": true}
+        }),
+        json!({
+            "name": "restore_recipe",
+            "title": "Restore a deleted recipe",
+            "description": "Put a recipe from the trash (list_trash) back in the box, with its cookbooks and cook log.",
+            "inputSchema": object(props(json!({"id": {"type": "integer"}})), &["id"])
         }),
         json!({
             "name": "list_cookbooks",

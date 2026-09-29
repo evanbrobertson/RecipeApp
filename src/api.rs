@@ -18,7 +18,10 @@ use crate::model::{
 use crate::recipes::{self, CookbookPatch, EventKind, ImportSummary};
 use crate::suggestions;
 
-const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
+/// One file: a Crumb backup is about 10 KB a recipe; a Paprika export with photos is the big case.
+const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
+/// Everything one import request may carry; the body limit is a little over it for the framing.
+const MAX_UPLOAD_BYTES: usize = 2 * MAX_FILE_BYTES;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -29,13 +32,16 @@ pub fn routes() -> Router<AppState> {
         .route("/api/export", routing::get(export))
         .route(
             "/api/import/files",
-            routing::post(import_files).layer(DefaultBodyLimit::max(10 * MAX_FILE_BYTES)),
+            routing::post(import_files)
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024 * 1024)),
         )
         .route(
             "/api/recipes",
             routing::get(list_recipes).post(create_recipe),
         )
         .route("/api/recipes/import", routing::post(import_recipe))
+        .route("/api/preview", routing::post(preview_page))
+        .route("/api/recipes/preview", routing::post(crate::preview::api))
         .route("/api/import/jobs/{id}", routing::get(import_job))
         .route(
             "/api/recipes/import/photos",
@@ -43,6 +49,14 @@ pub fn routes() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(crate::photos::MAX_BODY_BYTES)),
         )
         .route("/api/recipes/bulk-delete", routing::post(bulk_delete))
+        .route("/api/trash", routing::get(list_trash).delete(empty_trash))
+        .route("/api/popular", routing::get(popular))
+        .route(
+            "/api/popular/opt-out",
+            routing::get(popular_setting).post(popular_opt_out),
+        )
+        .route("/api/trash/{id}", routing::delete(purge_trashed))
+        .route("/api/trash/{id}/restore", routing::post(restore_trashed))
         .route("/api/recipes/random", routing::get(random_recipe))
         .route("/api/suggestions", routing::get(suggestions))
         .route(
@@ -125,12 +139,13 @@ async fn health(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
 
 async fn login(
     crate::Scoped(state): crate::Scoped,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
     let body = json_body(&body)?;
     if state.config.accounts() || state.config.hosted() {
-        return crate::account_api::log_in(&state, &headers, &body).await;
+        return crate::account_api::log_in(&state, &ip, &headers, &body).await;
     }
     let password = body
         .get("password")
@@ -140,11 +155,11 @@ async fn login(
     if !state.config.auth_enabled() {
         return Ok(Json(json!({"ok": true})).into_response());
     }
+    let attempt = state.login_attempt(&ip, "password")?;
     if !auth::check_password(&state.config, password) {
-        // Slow down guessing
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         return Err(AppError::new(401, "Incorrect password"));
     }
+    state.login_succeeded(&attempt);
     let mut res = Json(json!({"ok": true})).into_response();
     if let Some(cookie) = auth::login_cookie(&state.config, &headers) {
         res.headers_mut().append(header::SET_COOKIE, cookie);
@@ -320,8 +335,12 @@ async fn import_files(
     crate::Scoped(state): crate::Scoped,
     mut multipart: Multipart,
 ) -> AppResult<Json<Vec<ImportSummary>>> {
+    // Streamed: each file is checked while it arrives, so an oversized one is dropped as soon as
+    // it crosses the limit instead of being held whole first.
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    while let Some(field) = multipart
+    let mut results = Vec::new();
+    let mut total = 0usize;
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?
@@ -329,23 +348,36 @@ async fn import_files(
         let Some(name) = field.file_name().map(String::from) else {
             continue;
         };
-        let data = field
-            .bytes()
+        let mut data = Vec::new();
+        let mut too_big = false;
+        while let Some(chunk) = field
+            .chunk()
             .await
-            .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?;
-        if !data.is_empty() {
-            files.push((name, data.to_vec()));
+            .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?
+        {
+            total += chunk.len();
+            if total > MAX_UPLOAD_BYTES {
+                return Err(AppError::bad_request("Upload is over 50 MB"));
+            }
+            if !too_big {
+                if data.len() + chunk.len() > MAX_FILE_BYTES {
+                    too_big = true;
+                    data = Vec::new();
+                } else {
+                    data.extend_from_slice(&chunk);
+                }
+            }
+        }
+        if too_big {
+            results.push(ImportSummary::failed(&name, "File is over 25 MB"));
+        } else if !data.is_empty() {
+            files.push((name, data));
         }
     }
-    if files.is_empty() {
+    if files.is_empty() && results.is_empty() {
         return Err(AppError::bad_request("No files uploaded"));
     }
-    let mut results = Vec::new();
     for (name, data) in files {
-        if data.len() > MAX_FILE_BYTES {
-            results.push(ImportSummary::failed(&name, "File is over 50 MB"));
-            continue;
-        }
         results.push(recipes::import_file(&state, &name, data).await);
     }
     Ok(Json(results))
@@ -387,7 +419,8 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
 
 /// A link or pasted text. A cooking video answers 202 at once with its job (see
 /// [`import_job`]): `{jobId, status, position?}`. With a video link, `video` may carry what
-/// the cook's browser read from its page (`video::FromBrowser`).
+/// the cook's browser read from its page (`video::FromBrowser`); with a recipe link, `page` may carry the
+/// recipe the browser read from it (`scraper::page::FromPage`), which is saved without fetching the link.
 async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
     let (recipe, is_new, dropped_photo) = if let Some(url) = body.get("url") {
@@ -404,6 +437,11 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
             if crate::video::is_video_url(&url) {
                 crate::video::offer(&state, &url, read);
             }
+        }
+        // A recipe page as the cook's browser read it (the extension), for a site that turns
+        // the server away: saved without fetching the page, unless it holds no recipe
+        if let Some(page) = body.get("page").filter(|v| v.is_object()) {
+            keep_page_reading(&state, url, page)?;
         }
         match recipes::start_link(&state, url).await? {
             recipes::Started::Done(recipes::Imported::Recipe {
@@ -443,6 +481,40 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
         out["droppedPhoto"] = json!(true);
     }
     Ok(Json(out).into_response())
+}
+
+/// Keeps the recipe the cook's browser read from the page at `url`, for the import that
+/// follows to save instead of fetching the page. True when it held a recipe; when it didn't,
+/// nothing is kept and the page is scraped as usual.
+fn keep_page_reading(state: &AppState, url: &str, page: &Value) -> AppResult<bool> {
+    let page = crate::scraper::page::FromPage::from_json(page)?;
+    let url = recipes::unwrap_share_link(url);
+    if crate::video::is_video_url(&url) {
+        return Ok(false);
+    }
+    Ok(page.scrape(&url).is_some_and(|scraped| {
+        crate::preview::keep(state, &url, &scraped);
+        true
+    }))
+}
+
+/// `{url, page}`: the recipe the extension read in the cook's browser, for the preview of
+/// `url` (`/preview?url=…&via=extension`) to show. Answers `{found}`; the preview page then
+/// reloads, and shows it, or scrapes as usual when nothing was found.
+async fn preview_page(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Json<Value>> {
+    let body = json_body(&body)?;
+    let url = body
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|u| crate::model::is_valid_url(u))
+        .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
+    let page = body
+        .get("page")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| AppError::bad_request("page: expected the recipe read from the page"))?;
+    let found = keep_page_reading(&state, url, page)?;
+    Ok(Json(json!({"found": found})))
 }
 
 /// Where a video import is: `queued` (with its `position`, 1 = next), `running`, `done`
@@ -569,6 +641,80 @@ async fn delete_recipe(
         return Err(AppError::not_found("Recipe not found"));
     }
     Ok(Json(json!({"ok": true})))
+}
+
+/// Popular: `{enabled, optedOut, minHouseholds, items: [{url, host, title, households}]}`,
+/// links other households saved that this one hasn't (see `popular`).
+async fn popular(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let enabled = crate::popular::Popular::enabled(&state);
+    let opted_out = crate::popular::opted_out(&state.db.lock());
+    let items = crate::popular::for_household(&state).await;
+    Ok(Json(json!({
+        "enabled": enabled,
+        "optedOut": opted_out,
+        "minHouseholds": crate::popular::Popular::min_households(&state),
+        "items": items.iter().map(crate::popular::Link::to_json).collect::<Vec<_>>(),
+    })))
+}
+
+/// `{enabled, optedOut}` without counting anything: for the setting on More.
+async fn popular_setting(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    Ok(Json(json!({
+        "enabled": crate::popular::Popular::enabled(&state),
+        "optedOut": crate::popular::opted_out(&state.db.lock()),
+    })))
+}
+
+/// `{optedOut}`: whether this household's saved links count toward Popular.
+async fn popular_opt_out(
+    crate::Scoped(state): crate::Scoped,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
+    let out = json_body(&body)?
+        .get("optedOut")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| AppError::bad_request("optedOut: expected true or false"))?;
+    crate::popular::set_opted_out(&state.db.lock(), out)?;
+    state.popular.forget().await;
+    Ok(Json(json!({"optedOut": out})))
+}
+
+/// The trash: recipes deleted in the last 30 days, newest first (`trash::Trashed::to_json`).
+async fn list_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let list = crate::trash::list(&state.db.lock())?;
+    Ok(Json(Value::Array(
+        list.iter().map(crate::trash::Trashed::to_json).collect(),
+    )))
+}
+
+/// Puts a deleted recipe back: the recipe, with `isNew: false` when its link had been saved
+/// again meanwhile (that recipe is the answer, and the deleted copy is gone).
+async fn restore_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let restored = crate::trash::restore(&state.db.lock(), id)?;
+    Ok(Json(match restored {
+        crate::trash::Restored::Back(r) => recipes::with_is_new(&r, true),
+        crate::trash::Restored::AlreadySaved(r) => recipes::with_is_new(&r, false),
+    }))
+}
+
+async fn purge_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    if !crate::trash::purge(&state.db.lock(), id)? {
+        return Err(AppError::not_found("That recipe isn't in the trash"));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn empty_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let n = crate::trash::empty(&state.db.lock())?;
+    Ok(Json(json!({"deleted": n})))
 }
 
 async fn recipe_cookbooks(
