@@ -47,7 +47,9 @@ fn main() {
     // QFontDatabase/QStyleHints calls cxx-qt-lib does not expose.
     let builder = unsafe {
         builder.cc_builder(|cc| {
-            cc.file("src/smoke.cpp")
+            // GCC 16 flags Qt 6's own headers with -Wsfinae-incomplete; it is not ours to fix.
+            cc.flag_if_supported("-Wno-sfinae-incomplete")
+                .file("src/smoke.cpp")
                 .file("src/native.cpp")
                 .include("src");
         })
