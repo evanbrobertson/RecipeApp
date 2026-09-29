@@ -107,6 +107,23 @@ pub fn links_in(raw: &str) -> Vec<String> {
     out
 }
 
+static LINK_IN_TEXT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).unwrap());
+static LINK_TAIL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[),.;]+$").unwrap());
+
+/// Every http(s) link anywhere in some text, without trailing punctuation, in order and
+/// without repeats: the Import page's links box ("see https://x.com/a, thanks").
+pub fn links_in_text(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for found in LINK_IN_TEXT_RE.find_iter(raw) {
+        let link = LINK_TAIL_RE.replace(found.as_str(), "").into_owned();
+        if !out.contains(&link) {
+            out.push(link);
+        }
+    }
+    out
+}
+
 /// "1st", "2nd", "3rd", "11th".
 pub fn ordinal(n: u32) -> String {
     let (tens, last) = (n % 100, n % 10);
@@ -187,6 +204,19 @@ mod tests {
         );
         assert_eq!(ordinal(21), "21st");
         assert_eq!(ordinal(113), "113th");
+    }
+
+    #[test]
+    fn links_are_found_inside_prose() {
+        assert_eq!(
+            links_in_text("see https://x.com/a, thanks (https://y.org/b). And https://x.com/a"),
+            vec!["https://x.com/a", "https://y.org/b"]
+        );
+        assert_eq!(
+            links_in_text("<a href=\"https://z.net/c?d=1\">"),
+            vec!["https://z.net/c?d=1"]
+        );
+        assert!(links_in_text("no links").is_empty());
     }
 
     #[test]
