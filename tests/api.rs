@@ -7887,4 +7887,166 @@ fn accounts_modes_refuse_to_start_without_a_fixed_address() {
     config.site_url = None;
     config.railway_domain = Some("app.up.railway.app".into());
     assert!(config.check().is_ok());
+/// A recipe as the extension reads it from a page: its JSON-LD inside a `@graph`.
+fn page_reading(name: &str) -> Value {
+    let ld = json!({"@context": "https://schema.org", "@graph": [
+        {"@type": "WebSite", "name": "Food"},
+        {"@type": "Recipe", "name": name, "url": "https://elsewhere.test/not-this",
+         "recipeIngredient": ["3 apples", "1 cup flour"],
+         "recipeInstructions": [{"@type": "HowToStep", "text": "Slice."}, {"@type": "HowToStep", "text": "Bake."}]},
+    ]});
+    json!({"jsonLd": [ld.to_string()], "image": "https://images.example/pie.jpg", "canonical": "https://elsewhere.test/x"})
+}
+
+#[tokio::test]
+async fn a_recipe_read_in_the_browser_is_saved_without_fetching_the_page() {
+    let t = TestApp::new(None);
+    // Nothing answers there: a fetch would fail, so saving proves there was none
+    let url = "https://recipes.invalid/apple-pie?utm_source=mail";
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["isNew"], true);
+    assert_eq!(res["title"], "Apple Pie");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(
+        recipe["url"], url,
+        "saved under the link, not the page's claim"
+    );
+    assert_eq!(
+        recipe["ingredients"][0]["items"].as_array().unwrap().len(),
+        2
+    );
+
+    // The same link again is the same recipe
+    let (_, again) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(again["isNew"], false);
+}
+
+#[tokio::test]
+async fn a_page_reading_is_size_capped_and_a_bad_one_falls_back_to_scraping() {
+    let t = TestApp::new(None);
+    let big = json!({"jsonLd": ["x".repeat(600 * 1024)]});
+    let (status, err) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": "https://recipes.invalid/big", "page": big})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{err}");
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": "https://recipes.invalid/odd", "page": {"jsonLd": "no"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Unreadable JSON-LD, or none: the page itself is scraped as usual
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = hits.clone();
+    let site = serve(axum::Router::new().route(
+        "/stew",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Site Stew",
+                        "recipeIngredient": ["1 onion", "2 carrots"],
+                        "recipeInstructions": ["Chop.", "Simmer."]})
+                ))
+            }
+        }),
+    ))
+    .await;
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/stew"),
+                "page": {"jsonLd": ["{not json", "{\"@type\":\"Article\"}"], "card": "<p>hi</p>"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Site Stew");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_preview_shows_the_recipe_the_extension_read() {
+    let t = TestApp::new(None);
+    let url = "https://recipes.invalid/apple-pie";
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+
+    // The extension's tab waits for the hand-over instead of scraping
+    let (_, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension"),
+            Some("none"),
+        ))
+        .await;
+    assert_eq!(page_data(&html)["preview"]["state"], "handover");
+
+    // A hand-over that holds no recipe says so; one without a page is refused
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": {"jsonLd": []}})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(false)));
+    let (status, _) = t
+        .json("POST", "/api/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+
+    // The reload shows it, unsaved and unfetched
+    let (status, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "ready");
+    assert_eq!(data["preview"]["title"], "Apple Pie");
+    assert!(html.contains(r#"src="https://images.example/pie.jpg""#));
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Adding it saves that reading
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Apple Pie");
 }
