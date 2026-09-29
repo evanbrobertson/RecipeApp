@@ -23,6 +23,9 @@ pills, 3px spines) follow the web.
   (`readSession` / `writeSession`), with the web's own keys (`crumb:recent`, `crumb:timers`,
   `crumb:scale:<id>`, `crumb:cook:<id>`, `crumb:prep:<id>`, …). `Store.changed(key)` fires on
   every write.
+- **Errors** reach an error callback as `(message, {code, site})`: `code` is the server's
+  machine-readable reason when it gives one (`site_blocked`, `site_terms`), which the Add
+  box and the preview answer with `BlockedNudge` instead of a toast.
 - **`Session`** handles signing in (`connect`, `login`, `signIn`, `signUp`, `logout`), with
   `mode` and `statusJson` from `/api/auth/status`.
 - **Navigation.** `ApplicationWindow.window.go("recipe", {id: 7})`, `.back()` and
@@ -34,6 +37,7 @@ pills, 3px spines) follow the web.
   - `StyledField`, `Icon` (lucide names, as `@lucide/svelte`)
   - `Photo` (`recipeId`, `image`), `RecipeCard`, `EmptyState`
   - `ScrollPage` (the web's `<main>` column), `Modal`, `CrumbMenu`, `Toaster`
+  - `CrumbSwitch` (the web's `.switch`), `BlockedNudge`
 - **Icons** are lucide SVGs in `assets/icons` (ISC). Copy a missing one from
   `lucide-static`'s `icons/` folder with the web's name.
 
@@ -65,19 +69,24 @@ effects don't show there. Qt logs go to the journal: `journalctl --user -t crumb
 
 | Screen | Web source | Desktop files |
 |---|---|---|
-| Add box, Add, Import | `islands/TopBox.svelte`, `pages/add.astro`, `islands/ImportTools.svelte`, `pages/import.astro` | `TopBox.qml`, `AddPage.qml`, `ImportPage.qml` |
+| Add box, Add, Import | `islands/TopBox.svelte`, `pages/add.astro`, `islands/PopularLinks.svelte`, `components/BlockedNudge.svelte`, `islands/ImportTools.svelte`, `pages/import.astro` | `TopBox.qml`, `AddPage.qml`, `BlockedNudge.qml`, `ImportPage.qml` |
+| Preview (a Popular link) | `pages/shell/preview/index.astro`, `islands/PreviewActions.svelte`, `src/preview.rs` | `PreviewPage.qml` |
 | Home, Shelf, Cookbook | `pages/index.astro`, `islands/HomeFeed.svelte`, `islands/ShelfPage.svelte`, `islands/CookbookPage.svelte`, `components/Bookshelf.svelte`, `components/OpenBook.svelte`, `components/CookbookSpine.svelte`, `components/BookColorPicker.svelte` | `HomePage.qml`, `ShelfPage.qml`, `CookbookPage.qml`, `Bookshelf.qml`, `Book*.qml` |
 | Recipes list | `islands/RecipesPage.svelte`, `pages/recipes/index.astro` | `RecipesPage.qml` |
 | Recipe | `islands/RecipePage.svelte`, `components/WeeChefCard.svelte`, `components/ShareSheet.svelte`, `components/ScaleControl.svelte`, `components/RecipeVideo.svelte` | `RecipePage.qml`, `ScaleControl.qml`, `WeeChefCard.qml`, `ShareSheet.qml` |
 | Cook, Prep, timers | `islands/CookPage.svelte`, `islands/PrepPage.svelte`, `components/PrepBowl.svelte`, `islands/TimerDock.svelte`, `lib/timers.svelte.ts` | `CookPage.qml`, `PrepPage.qml`, `PrepBowl.qml`, `TimerDock.qml` |
 | Editor, New recipe | `components/RecipeEditor.svelte`, `islands/EditPage.svelte`, `islands/NewRecipePage.svelte` | `EditPage.qml`, `RecipeEditor.qml` |
 | Suggestions | `islands/SuggestionsPage.svelte`, `components/TryNext.svelte`, `components/WeeChefCard.svelte` | `SuggestionsPage.qml` |
-| More, Connect, Connections | `pages/more.astro`, `islands/MoreSettings.svelte`, `pages/connect.astro`, `islands/ConnectorUrl.svelte`, `pages/more/connections.astro` | `MorePage.qml`, `ConnectPage.qml`, `ConnectionsPage.qml` |
+| More, Connect, Connections, Trash | `pages/more.astro`, `islands/MoreSettings.svelte`, `pages/connect.astro`, `islands/ConnectorUrl.svelte`, `pages/more/connections.astro`, `pages/more/trash.astro`, `islands/TrashPage.svelte` | `MorePage.qml`, `ConnectPage.qml`, `ConnectionsPage.qml`, `TrashPage.qml` |
 | Account, sign-in | `islands/AccountPage.svelte`, `components/AccountSection.svelte`, `islands/LoginForm.svelte`, `pages/{login,signup,setup,invite,reset-password,email-change}.astro` | `AccountPage.qml`, `LoginPage.qml` |
 
 Web-only by nature, and left out on purpose:
 - Passkeys, and starting a Google or Apple sign-in (both need a browser; linked accounts can
   still be listed and unlinked).
-- The browser extension and `/preview`.
+- The browser extension, and the preview's hand-over from it (`via=extension`). The preview
+  itself is here, for Popular links, through `POST /api/recipes/preview`.
+- The blocked-site nudge can't know whether the extension is installed: it always opens the
+  recipe in the browser (where the extension's toolbar button reads it) and links to where
+  to get the extension, instead of the web's installed / not installed / phone variants.
 - Printing.
 - The theme picker: the desktop follows Omarchy.

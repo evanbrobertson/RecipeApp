@@ -17,6 +17,8 @@ Item {
 
     property var connector: ({})
     property var shares: []
+    // Popular (the server's src/popular.rs): only on servers with several households
+    property var popular: null
     readonly property int offset: -new Date().getTimezoneOffset()
 
     // `/api/auth/status`, which the desktop keeps on the session
@@ -67,7 +69,23 @@ Item {
         })
     }
 
+    function setPopular(share) {
+        if (!page.popular)
+            return
+        var before = page.popular.optedOut
+        page.popular = { "enabled": page.popular.enabled, "optedOut": !share }
+        requests.call("setPopularOptOut", { "optedOut": !share }, function () {}, function (error) {
+            page.popular = { "enabled": page.popular.enabled, "optedOut": before }
+            ApplicationWindow.window.toast({ "title": "Couldn't change that", "description": error, "tone": "error" })
+        })
+    }
+
     Component.onCompleted: {
+        requests.call("popularSetting", {}, function (setting) {
+            page.popular = setting
+        }, function () {
+            page.popular = null
+        })
         requests.call("connector", {}, function (info) {
             page.connector = info || {}
         }, function () {})
@@ -186,6 +204,17 @@ Item {
                         MoreRow {
                             width: accountColumn.width
                             first: false
+                            iconName: "trash-2"
+                            title: "Trash"
+                            chevron: true
+                            text: "Deleted recipes, kept for 30 days"
+                            interactive: true
+                            onClicked: page.go("trash")
+                        }
+
+                        MoreRow {
+                            width: accountColumn.width
+                            first: false
                             iconName: "archive"
                             title: "Download a backup"
                             text: "Everything as one JSON file"
@@ -193,6 +222,81 @@ Item {
                             interactive: true
                             onClicked: folder.open()
                         }
+                    }
+                }
+            }
+
+            // Popular: whether this household's saved links count
+            ColumnLayout {
+                visible: !!(page.popular && page.popular.enabled)
+                Layout.fillWidth: true
+                spacing: 8
+
+                MoreHeading {
+                    text: "Popular"
+                    Layout.fillWidth: true
+                }
+
+                Card {
+                    id: popularCard
+                    implicitHeight: popularRow.implicitHeight + 20
+                    clip: true
+                    Layout.fillWidth: true
+
+                    readonly property bool on: !!(page.popular && !page.popular.optedOut)
+
+                    Accessible.role: Accessible.CheckBox
+                    Accessible.name: "Count our saved links"
+                    Accessible.checked: on
+                    Accessible.onPressAction: page.setPopular(!on)
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: Qt.rgba(Palette.tint.r, Palette.tint.g, Palette.tint.b, 0.55)
+                        visible: popularHover.hovered
+                    }
+
+                    RowLayout {
+                        id: popularRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 14
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Body {
+                                text: "Count our saved links"
+                                bold: true
+                                font.pixelSize: 16
+                                Layout.fillWidth: true
+                            }
+                            Body {
+                                text: "A link several households saved shows in Popular on the Add page. Only the link counts, never your copy of the recipe or who saved it."
+                                muted: true
+                                font.pixelSize: 14
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        CrumbSwitch {
+                            on: popularCard.on
+                            Layout.preferredWidth: 44
+                            Layout.preferredHeight: 26
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+
+                    HoverHandler {
+                        id: popularHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        onTapped: page.setPopular(page.popular.optedOut)
                     }
                 }
             }

@@ -560,7 +560,7 @@ Item {
                     Layout.topMargin: 8
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
-                    text: "Up to 50 MB each. In text files, put --- between recipes. Photos chosen together are read as the pages of one recipe (up to " + page.maxPhotos + ")."
+                    text: "Up to 25 MB each. In text files, put --- between recipes. Photos chosen together are read as the pages of one recipe (up to " + page.maxPhotos + ")."
                     wrapMode: Text.WordWrap
                     color: Palette.textMuted
                     font.family: Palette.fontSans

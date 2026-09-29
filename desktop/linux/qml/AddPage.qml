@@ -12,8 +12,25 @@ Item {
     property int routeId: 0
     property var params: ({})
 
+    // Popular (the server's src/popular.rs): links several other households saved that this
+    // one hasn't. Nothing shows when the server has no Popular or nothing is popular yet.
+    property var popular: []
+
     function go(name) {
         ApplicationWindow.window.go(name, {})
+    }
+
+    Requests {
+        id: requests
+    }
+
+    Component.onCompleted: {
+        requests.call("popular", {}, function (res) {
+            if (res && res.enabled)
+                page.popular = res.items.slice(0, 8)
+        }, function () {
+            // Popular is a nice-to-have: the Add page works the same without it
+        })
     }
 
     ScrollPage {
@@ -48,6 +65,54 @@ Item {
                     autofocus: true
                     Layout.topMargin: 20
                     Layout.fillWidth: true
+                }
+            }
+
+            ColumnLayout {
+                visible: page.popular.length > 0
+                Layout.fillWidth: true
+                spacing: 0
+
+                Heading {
+                    level: 2
+                    text: "Popular in Crumb"
+                    Layout.fillWidth: true
+                }
+
+                Body {
+                    text: "Saved by several other households."
+                    muted: true
+                    font.pixelSize: 14
+                    Layout.topMargin: 4
+                    Layout.bottomMargin: 14
+                    Layout.fillWidth: true
+                }
+
+                Card {
+                    Layout.fillWidth: true
+                    implicitHeight: popularColumn.implicitHeight
+                    clip: true
+
+                    Column {
+                        id: popularColumn
+                        width: parent.width
+
+                        Repeater {
+                            model: page.popular
+
+                            delegate: AddRow {
+                                required property var modelData
+                                required property int index
+                                width: popularColumn.width
+                                first: index === 0
+                                iconName: "flame"
+                                title: modelData.title
+                                text: modelData.host + " · in " + modelData.households + " boxes"
+                                chevron: true
+                                onClicked: page.ApplicationWindow.window.go("preview", { "url": modelData.url })
+                            }
+                        }
+                    }
                 }
             }
 

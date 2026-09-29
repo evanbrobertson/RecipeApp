@@ -4,7 +4,8 @@
 #   desktop/linux/tools/compare.sh <route> [out-dir] [WIDTHxHEIGHT]
 #
 # <route> is a desktop route: home, recipes, recipe:9, cook:9, prep:9, edit:9, new, shelf,
-# cookbook:2, suggestions, add, import, more, account, connect, connections, login.
+# cookbook:2, suggestions, add, import, more, account, connect, connections, trash,
+# login.
 # Writes <out-dir>/<route>-web.png and <route>-desktop.png. Needs a running Crumb server
 # (CRUMB_SERVER, default http://127.0.0.1:3100), chromium, and a built crumb-desktop.
 set -euo pipefail
@@ -27,7 +28,7 @@ case "$name" in
   new) path="/recipes/new" ;;
   shelf) path="/cookbooks" ;;
   cookbook) path="/cookbooks/$id" ;;
-  account | connections) path="/more/$name" ;;
+  account | connections | trash) path="/more/$name" ;;
   *) path="/$name" ;;
 esac
 

@@ -191,6 +191,24 @@ Item {
         })
     }
 
+    // Puts just-deleted recipes back, one at a time, then shows the list with them.
+    function restore(ids) {
+        var next = function (i) {
+            if (i === ids.length) {
+                ApplicationWindow.window.toast({ "title": ids.length === 1 ? "Put back" : "Put back " + ids.length + " recipes" })
+                page.load()
+                return
+            }
+            requests.call("restoreRecipe", { "id": ids[i] }, function () {
+                next(i + 1)
+            }, function (error) {
+                ApplicationWindow.window.toast({ "title": "Couldn't put them back", "description": error, "tone": "error" })
+                page.load()
+            })
+        }
+        next(0)
+    }
+
     function deleteSelected() {
         if (page.busy)
             return
@@ -199,7 +217,11 @@ Item {
         requests.call("bulkDelete", { "ids": ids }, function () {
             page.busy = false
             page.forgetViewed(ids)
-            ApplicationWindow.window.toast({ "title": "Deleted " + Core.plural(ids.length, "recipe"), "tone": "success" })
+            ApplicationWindow.window.toast({
+                "title": "Moved " + Core.plural(ids.length, "recipe") + " to the trash",
+                "tone": "success",
+                "action": { "label": "Undo", "onselect": function () { page.restore(ids) } }
+            })
             page.recipes = page.recipes.filter(function (r) {
                 return !page.isSelected(r.id)
             })
@@ -682,7 +704,8 @@ Item {
     Modal {
         id: deleteModal
         title: "Delete recipes?"
-        description: Core.plural(page.selectedCount, "recipe") + " will be permanently deleted."
+        description: Core.plural(page.selectedCount, "recipe") + " will go to the trash, where you can put "
+            + (page.selectedCount === 1 ? "it" : "them") + " back for 30 days."
         footer: [
             CrumbButton {
                 kind: "ghost"

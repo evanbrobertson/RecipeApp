@@ -4,7 +4,9 @@ import app.crumb.desktop 1.0
 
 // Api calls with callbacks, for one page:
 //   requests.call("recipe", {id: 7}, recipe => …, error => …, progressLine => …)
-// Answers arrive parsed (`JSON.parse`); a call with no error callback raises `failed`. When
+// Answers arrive parsed (`JSON.parse`). An error callback gets the message, then
+// `{code, site}`: the server's reason when it gives one (`site_blocked`, `site_terms`) and,
+// with `site_terms`, the listed site's name. A call with no error callback raises `failed`. When
 // the page goes, so do its pending answers.
 QtObject {
     id: requests
@@ -25,7 +27,7 @@ QtObject {
     property Connections _api: Connections {
         target: Api
 
-        function onReplied(id, ok, json, error) {
+        function onReplied(id, ok, json, error, reason) {
             var handler = requests.handlers[id]
             if (!handler)
                 return
@@ -35,7 +37,8 @@ QtObject {
                 if (handler.ok)
                     handler.ok(json.length ? JSON.parse(json) : null)
             } else if (handler.fail) {
-                handler.fail(error)
+                var why = reason ? JSON.parse(reason) : {}
+                handler.fail(error, { "code": why.code || "", "site": why.site || "" })
             } else {
                 requests.failed(error)
             }

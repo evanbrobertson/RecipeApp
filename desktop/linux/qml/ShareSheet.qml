@@ -273,25 +273,10 @@ Modal {
                             }
                         }
 
-                        Rectangle {
-                            readonly property bool on: !!(sheet.share && sheet.share.includeNotes)
+                        CrumbSwitch {
+                            on: !!(sheet.share && sheet.share.includeNotes)
                             Layout.preferredWidth: 44
                             Layout.preferredHeight: 26
-                            radius: 13
-                            color: on ? Palette.tile : Palette.line
-
-                            Rectangle {
-                                x: parent.on ? 21 : 3
-                                y: 3
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: Palette.paper
-
-                                Behavior on x {
-                                    NumberAnimation { duration: 150 }
-                                }
-                            }
                         }
                     }
                     HoverHandler {

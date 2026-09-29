@@ -256,6 +256,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "dateLabel"]
         fn date_label(self: &Core, ms: f64, offset_minutes: i32) -> QString;
+        /// "12 days left" / "Goes for good today": a trashed recipe's time left.
+        #[qinvokable]
+        #[cxx_name = "trashLeft"]
+        fn trash_left(self: &Core, purge_ms: f64, now_ms: f64) -> QString;
 
         // ─── Add box ───
         /// `{mode, summary}`: mode is auto, link, text or scratch.
@@ -480,6 +484,10 @@ impl qobject::Core {
     }
     pub fn date_label(&self, ms: f64, offset: i32) -> QString {
         q(home::date_label(ms as i64, offset))
+    }
+
+    pub fn trash_left(&self, purge_ms: f64, now_ms: f64) -> QString {
+        q(home::trash_left(purge_ms as i64, now_ms as i64))
     }
 
     pub fn detect(&self, text: QString) -> QString {

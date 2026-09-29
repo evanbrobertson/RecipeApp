@@ -55,6 +55,11 @@ Item {
     // The mode picked by hand ("" hands the choice back to detection)
     property string manual: ""
     property bool saving: false
+    // The link a site's bot check (or its terms) kept the server from reading: a nudge, not
+    // an error toast. `blockedWhy` is "bot" or "terms"; `blockedSite` the listed site's name.
+    property string blocked: ""
+    property string blockedWhy: "bot"
+    property string blockedSite: ""
     property int recipeCount: -1
     property var detected: ({ "mode": "auto", "summary": "" })
     property int tipIndex: -1
@@ -293,8 +298,17 @@ Item {
         })
     }
 
+    // From the nudge: the link is left behind and the field waits for the recipe's text.
+    function pasteInstead() {
+        blocked = ""
+        input = ""
+        manual = "text"
+        addField.forceActiveFocus()
+    }
+
     function importBody(body, what) {
         saving = true
+        blocked = ""
         progress = ""
         requests.call("import", body, function (res) {
             // Another Crumb's shared cookbook: every recipe in it, into a cookbook of that name
@@ -314,7 +328,14 @@ Item {
             else if (res.fromVideo)
                 toast({ "title": "Saved from the video", "tone": "success" })
             go("recipe", { "id": res.recipe.id })
-        }, function (err) {
+        }, function (err, info) {
+            if (body.url && (info.code === "site_blocked" || info.code === "site_terms")) {
+                box.blockedWhy = info.code === "site_terms" ? "terms" : "bot"
+                box.blockedSite = info.site || ""
+                box.blocked = body.url
+                box.saving = false
+                return
+            }
             fail("Couldn't " + what, err)
         }, function (line) {
             box.progress = line
@@ -1031,6 +1052,18 @@ Item {
                     }
                 }
             }
+        }
+
+        BlockedNudge {
+            visible: box.blocked !== ""
+            url: box.blocked
+            why: box.blockedWhy
+            name: box.blockedSite
+            dismissable: true
+            Layout.fillWidth: true
+            Layout.topMargin: 12
+            onPaste: box.pasteInstead()
+            onDismissed: box.blocked = ""
         }
     }
 

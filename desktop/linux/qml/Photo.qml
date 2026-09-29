@@ -13,6 +13,9 @@ Item {
     property int radius: 12
     // Only the top corners, for a card whose photo runs edge to edge.
     property bool topOnly: false
+    // The site's own photo, not the server's resized copy: a preview isn't saved, so it isn't
+    // in the resizer yet (as the web's preview page shows it).
+    property bool direct: false
     readonly property bool loaded: img.status === Image.Ready
     // Masks are shaders: the software scene graph (no GPU, or offscreen screenshots) shows
     // the photo square-cornered instead of not at all.
@@ -44,7 +47,7 @@ Item {
         fillMode: Image.PreserveAspectCrop
         sourceSize.width: Math.ceil(photo.width * Screen.devicePixelRatio)
         source: photo.image && photo.width > 0
-                ? (photo.image.indexOf("qrc:") === 0 ? photo.image
+                ? (photo.image.indexOf("qrc:") === 0 || photo.direct ? photo.image
                    : Api.photoUrl(photo.recipeId, Math.ceil(photo.width * Screen.devicePixelRatio), photo.image))
                 : ""
         layer.enabled: photo.shaders

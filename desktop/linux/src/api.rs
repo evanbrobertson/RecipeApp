@@ -206,6 +206,35 @@ pub async fn dispatch(
             .await
             .map(|()| Value::Null),
         "bulkDelete" => Ok(json!({ "deleted": client.bulk_delete(&ids(args, "ids")).await? })),
+        "preview" => to_json(client.preview(text(args, "url")?).await?),
+
+        // Trash
+        "trash" => to_json(client.trash().await?),
+        "restoreRecipe" => {
+            let (recipe, is_new) = client.restore_recipe(int(args, "id")?).await?;
+            let mut out = to_json(recipe)?;
+            out["isNew"] = json!(is_new);
+            Ok(out)
+        }
+        "purgeTrashed" => client
+            .purge_trashed(int(args, "id")?)
+            .await
+            .map(|()| Value::Null),
+        "emptyTrash" => Ok(json!({ "deleted": client.empty_trash().await? })),
+
+        // Popular
+        "popular" => to_json(client.popular().await?),
+        "popularSetting" => to_json(client.popular_setting().await?),
+        "setPopularOptOut" => {
+            let out = args
+                .get("optedOut")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| bad("missing optedOut"))?;
+            client
+                .set_popular_opt_out(out)
+                .await
+                .map(|()| json!({ "optedOut": out }))
+        }
         "viewed" => client.viewed(int(args, "id")?).await.map(|()| Value::Null),
         "cooked" => to_json(client.cooked(int(args, "id")?).await?),
         "cookStats" => to_json(client.cook_stats(int(args, "id")?).await?),
@@ -404,9 +433,18 @@ pub mod qobject {
         #[qproperty(i32, pending)]
         type Api = super::ApiRust;
 
-        /// A call finished: `json` is the answer when `ok`, else `error` says why.
+        /// A call finished: `json` is the answer when `ok`, else `error` says why and
+        /// `reason` is `{code, site}`: the server's machine-readable reason when it gives one
+        /// (`site_blocked`, `site_terms`), and with `site_terms` the listed site's name.
         #[qsignal]
-        fn replied(self: Pin<&mut Api>, id: i32, ok: bool, json: QString, error: QString);
+        fn replied(
+            self: Pin<&mut Api>,
+            id: i32,
+            ok: bool,
+            json: QString,
+            error: QString,
+            reason: QString,
+        );
 
         /// A running call's progress line (a cooking video in the server's queue).
         #[qsignal]
@@ -487,14 +525,16 @@ impl qobject::Api {
                 match result {
                     Ok(value) => {
                         let json = QString::from(&value.to_string());
-                        object.replied(id, true, json, QString::default());
+                        object.replied(id, true, json, QString::default(), QString::default());
                     }
                     Err(err) => {
                         let unauthorized = matches!(err, Error::Unauthorized);
                         let message = QString::from(&err.to_string());
+                        let reason = json!({ "code": err.code(), "site": err.site() });
+                        let reason = QString::from(&reason.to_string());
                         object
                             .as_mut()
-                            .replied(id, false, QString::default(), message);
+                            .replied(id, false, QString::default(), message, reason);
                         if unauthorized {
                             object.unauthorized();
                         }
@@ -607,6 +647,26 @@ mod tests {
         assert_eq!(status["mode"], "password");
         call(&client, "deleteRecipe", json!({"id": id})).await;
         assert_eq!(call(&client, "recipes", json!({})).await, json!([]));
+
+        // Deleted recipes wait in the trash and can be put back
+        let trash = call(&client, "trash", json!({})).await;
+        assert_eq!(trash[0]["title"], "Soup");
+        assert!(trash[0]["purgeAt"].is_string());
+        let back = call(&client, "restoreRecipe", json!({"id": id})).await;
+        assert_eq!(
+            (back["id"].as_i64(), back["isNew"].as_bool()),
+            (Some(id), Some(true))
+        );
+        call(&client, "bulkDelete", json!({"ids": [id]})).await;
+        assert_eq!(call(&client, "emptyTrash", json!({})).await["deleted"], 1);
+
+        // One household: Popular is off, and the setting still round-trips
+        assert_eq!(call(&client, "popular", json!({})).await["enabled"], false);
+        call(&client, "setPopularOptOut", json!({"optedOut": true})).await;
+        assert_eq!(
+            call(&client, "popularSetting", json!({})).await["optedOut"],
+            true
+        );
     }
 
     #[tokio::test]

@@ -210,7 +210,7 @@ Item {
     function deleteRecipe() {
         requests.call("deleteRecipe", {"id": recipeId}, function () {
             forgetViewed(recipeId)
-            toast({"title": "Recipe deleted"})
+            toast({"title": "Moved to the trash", "description": "Put it back from More › Trash"})
             window.back()
         }, function (error) {
             deleteModal.close()
@@ -334,7 +334,7 @@ Item {
     Modal {
         id: deleteModal
         title: "Delete this recipe?"
-        description: "This can't be undone."
+        description: "It goes to the trash, where you can put it back for 30 days."
         footer: [
             CrumbButton {
                 text: "Cancel"

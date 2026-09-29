@@ -50,7 +50,9 @@ ApplicationWindow {
             "more": "MorePage.qml",
             "account": "AccountPage.qml",
             "connect": "ConnectPage.qml",
-            "connections": "ConnectionsPage.qml"
+            "connections": "ConnectionsPage.qml",
+            "trash": "TrashPage.qml",
+            "preview": "PreviewPage.qml"
         })
     // The nav item each page belongs to (the web's `section`)
     readonly property var sections: ({
@@ -69,7 +71,9 @@ ApplicationWindow {
             "more": "more",
             "account": "more",
             "connect": "more",
-            "connections": "more"
+            "connections": "more",
+            "trash": "more",
+            "preview": "add"
         })
     // Pages with no nav rail (cook mode fills the window)
     readonly property var bare: ({ "cook": true })
@@ -111,7 +115,9 @@ ApplicationWindow {
         var params = {}
         if (parts.length > 1) {
             var id = parseInt(parts[1])
-            if (id > 0)
+            if (parts[0] === "preview")
+                params.url = parts.slice(1).join(":")
+            else if (id > 0)
                 params.id = id
             else
                 params.title = parts.slice(1).join(":")
