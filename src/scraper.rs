@@ -11,7 +11,8 @@
 //!    3. the page: Firefox, then Safari when blocked. The API starts only if the page hasn't
 //!    answered within [`HEDGE_AFTER`]; the first good recipe wins;
 //! 4. when both profiles were refused: the API if not yet asked, then the relays on other
-//!    networks (`crumb-relay`, see `crate::relay`) and the Internet Archive's copy together;
+//!    networks (`crumb-relay`, see `crate::relay`), and the Internet Archive's copy if no relay
+//!    has answered within [`RELAY_HEAD_START`] (at once if there are no relays);
 //!    when the page loaded but has no recipe: its platform's API;
 //! 5. headless Chromium when installed, the dearest, which also takes pages that need
 //!    JavaScript.
@@ -311,6 +312,11 @@ impl Steps {
 /// How long the page fetch has to answer before its platform's API is asked as well.
 pub const HEDGE_AFTER: Duration = Duration::from_millis(300);
 
+/// How long the relays have to answer before the Internet Archive's copy is asked as well. The
+/// archive may hold an old copy of the page, so a relay's live one is preferred when it comes
+/// in time; with no relays set up the archive is asked at once.
+pub const RELAY_HEAD_START: Duration = Duration::from_secs(2);
+
 /// What is known about the site before the first request: from site memory (see
 /// [`crate::sites`]), and from the link.
 #[derive(Clone, Debug, Default)]
@@ -527,7 +533,9 @@ enum BrowserMiss {
 ///    once by a burst of requests.
 /// 3. The page: Firefox, then Safari if blocked.
 /// 4. Both blocked: the platform's API (if not tried yet), then the relays and the Internet
-///    Archive at once (other networks, other hosts). Not blocked but no recipe (a page built
+///    Archive if no relay has answered within [`RELAY_HEAD_START`] or a relay came back
+///    empty-handed (other networks, other hosts; the archive's copy may be stale, so a relay's
+///    live page is given a head start). Not blocked but no recipe (a page built
 ///    by JavaScript): the API if the page is a platform's, else straight on.
 /// 5. Headless Chromium, the dearest; it and the videos never race.
 ///
@@ -686,11 +694,12 @@ where
                     }
                 }
             } else if steps.relay || steps.archive {
-                // Other networks and another host: no reason to make one wait for the other
+                // Other networks and another host. The archive's copy can be stale, so it starts
+                // only once the relays have had their head start (or have failed)
                 let relay = step_run(&call, url, Method::Relay, None);
                 let archive = || step_run(&call, url, Method::Archive, None);
                 let (first, second) = match (steps.relay, steps.archive) {
-                    (true, true) => hedge(relay, archive, Duration::ZERO).await,
+                    (true, true) => hedge(relay, archive, RELAY_HEAD_START).await,
                     (true, false) => (Some(relay.await), None),
                     _ => (None, Some(archive().await)),
                 };
@@ -2558,28 +2567,95 @@ mod tests {
         assert_eq!(ran.took, 5_000);
     }
 
+    fn blocked_then(rest: Vec<Reply>) -> Vec<Reply> {
+        let mut script = vec![
+            Reply(Method::Firefox, 10, status(403)),
+            Reply(Method::Safari, 10, status(403)),
+            Reply(Method::WordPress, 10, Fetched::Unreachable("no".into())),
+        ];
+        script.extend(rest);
+        script
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn the_relay_and_the_archive_are_asked_together_and_the_first_recipe_wins() {
+    async fn a_relay_that_answers_in_time_is_preferred_and_the_archive_is_never_asked() {
+        // The archive would have answered first, but its copy may be stale
         let ran = run_plan(
             all_steps(),
             Hint::default(),
             R,
-            vec![
-                Reply(Method::Firefox, 10, status(403)),
-                Reply(Method::Safari, 10, status(403)),
-                Reply(Method::WordPress, 10, Fetched::Unreachable("no".into())),
+            blocked_then(vec![
+                Reply(Method::Relay, 1_900, ok(GRAPH)),
+                Reply(Method::Archive, 10, ok(GRAPH)),
+            ]),
+        )
+        .await;
+        let won = ran.result.as_ref().unwrap();
+        assert_eq!(won.method, Method::Relay);
+        assert!(
+            !ran.methods().contains(&Method::Archive),
+            "{:?}",
+            ran.methods()
+        );
+        assert_eq!(ran.took, 30 + 1_900);
+        assert!(won.learned.blocks_server);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_relay_lets_the_archive_start_after_the_head_start() {
+        let ran = run_plan(
+            all_steps(),
+            Hint::default(),
+            R,
+            blocked_then(vec![
                 Reply(Method::Relay, 20_000, ok(GRAPH)),
                 Reply(Method::Archive, 1_500, ok(GRAPH)),
-            ],
+            ]),
         )
         .await;
         let won = ran.result.as_ref().unwrap();
         assert_eq!(won.method, Method::Archive);
-        // Same moment; the slow relay is dropped, not waited for
-        assert_eq!(ran.at(Method::Relay), ran.at(Method::Archive));
-        assert_eq!(ran.took, 30 + 1_500);
-        assert!(won.learned.blocks_server);
+        // The archive started when the head start ran out; the slow relay is dropped
+        assert_eq!(
+            ran.at(Method::Archive),
+            ran.at(Method::Relay) + RELAY_HEAD_START.as_millis() as u64
+        );
+        assert_eq!(ran.took, 30 + 2_000 + 1_500);
         assert_eq!(won.learned.winning_method.as_deref(), Some("wayback"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_relay_that_fails_fast_starts_the_archive_at_once() {
+        let ran = run_plan(
+            all_steps(),
+            Hint::default(),
+            R,
+            blocked_then(vec![
+                Reply(Method::Relay, 100, Fetched::Unreachable("down".into())),
+                Reply(Method::Archive, 200, ok(GRAPH)),
+            ]),
+        )
+        .await;
+        assert_eq!(ran.result.as_ref().unwrap().method, Method::Archive);
+        assert_eq!(ran.at(Method::Archive), ran.at(Method::Relay) + 100);
+        assert_eq!(ran.took, 30 + 100 + 200);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn with_no_relays_the_archive_starts_at_once() {
+        let ran = run_plan(
+            Steps {
+                relay: false,
+                ..all_steps()
+            },
+            Hint::default(),
+            R,
+            blocked_then(vec![Reply(Method::Archive, 200, ok(GRAPH))]),
+        )
+        .await;
+        assert_eq!(ran.result.as_ref().unwrap().method, Method::Archive);
+        assert!(!ran.methods().contains(&Method::Relay));
+        assert_eq!(ran.took, 30 + 200);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2880,6 +2956,33 @@ mod tests {
         assert!(hint.skip_page);
         // A day on, the page fetch is tried again
         assert!(!Hint::from_facts(&facts, 1_000 + 86_400).skip_page);
+    }
+
+    #[tokio::test]
+    async fn scrape_page_refuses_a_listed_site_before_any_step_or_memory() {
+        let state = crate::AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            crate::config::Config::default(),
+            crate::browser::Browser::disabled(),
+        );
+        for url in [
+            "https://www.allrecipes.com/recipe/1/x/",
+            "http://m.seriouseats.com/x",
+        ] {
+            let err = scrape_page(&state, url).await.unwrap_err();
+            assert_eq!(err.code, Some(crate::site_terms::SITE_TERMS), "{url}");
+            assert!(err.site.is_some(), "{url}");
+        }
+        // Nothing was even remembered about the host
+        assert!(
+            state
+                .sites
+                .get("allrecipes.com", crate::sites::now_secs())
+                .is_none()
+        );
+        // An unlisted private link still gets the address guard's answer
+        let err = scrape_page(&state, "http://127.0.0.1/x").await.unwrap_err();
+        assert_eq!(err.code, None);
     }
 
     #[test]
