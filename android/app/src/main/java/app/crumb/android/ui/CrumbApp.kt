@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -32,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -205,7 +210,10 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
             bottomBar = { if (showTabs) TabBar(nav) },
         ) { padding ->
             Box(Modifier.fillMaxSize()) {
-            NavHost(nav, startDestination = HomeRoute, modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+            // The tab bar's height is already taken off the screen here, so the keyboard's padding
+            // (`imePadding` in a screen) must only count what rises above it, not the tab bar twice
+            val tabBar = PaddingValues(bottom = padding.calculateBottomPadding())
+            NavHost(nav, startDestination = HomeRoute, modifier = Modifier.padding(tabBar).consumeWindowInsets(tabBar)) {
                 composable<HomeRoute> { HomeScreen() }
                 composable<RecipesRoute> { backStack -> RecipesScreen(initialQuery = backStack.toRoute<RecipesRoute>().query) }
                 composable<ShelfRoute> {
@@ -309,26 +317,31 @@ private fun TabBar(nav: NavHostController) {
             Column(
                 Modifier
                     .weight(1f)
-                    .height(52.dp)
+                    .heightIn(min = 52.dp)
                     .clip(ControlShape)
                     .selectable(active, role = Role.Tab) { nav.switchTab(tab.route) }
                     .testTag("tab-${tab.label.lowercase()}"),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Box {
+                // Fixed height, so a badge never pushes its tab's label below the others'
+                Box(Modifier.height(22.dp)) {
                     Icon(tab.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
                     if (badge != null) {
                         ReviewBadge(badge, Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-4).dp))
                     }
                 }
                 Spacer(Modifier.height(4.dp))
+                // Large font scales grow the labels only so far, or they outgrow their fifth of the bar
+                val scale = LocalDensity.current.fontScale
                 Text(
                     tab.label,
                     color = tint,
-                    fontSize = 13.sp,
+                    fontSize = (13f / scale * minOf(scale, 1.15f)).sp,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                     maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
