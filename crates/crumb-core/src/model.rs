@@ -184,6 +184,16 @@ pub struct RecipeFields {
     pub video: Option<String>,
 }
 
+/// The most a recipe may hold (see [`RecipeFields::validate`]). Generous for a real recipe;
+/// they exist so scraped or imported content can't store a huge one.
+pub const MAX_SECTIONS: usize = 50;
+pub const MAX_ITEMS: usize = 500;
+pub const MAX_ITEM_CHARS: usize = 2_000;
+pub const MAX_SECTION_NAME_CHARS: usize = 200;
+pub const MAX_TEXT_BYTES: usize = 50_000;
+pub const MAX_URL_BYTES: usize = 4_000;
+pub const MAX_RECIPE_BYTES: usize = 200_000;
+
 /// A partial update: `None` = leave alone, `Some(None)` = clear.
 #[derive(Debug, Clone, Default)]
 pub struct RecipePatch {
@@ -422,9 +432,82 @@ impl RecipeFields {
         })
     }
 
+    /// Size limits that keep a scraped page, an import or a pasted text from storing a recipe
+    /// no cook wrote: item counts, line lengths and the text as a whole. An embedded photo
+    /// (`image`) has its own limit and isn't counted.
+    fn check_size(&self) -> ValidationResult<()> {
+        let too_big = |what: &str, limit: &str| {
+            Err(ValidationError(format!("{what}: Too big ({limit} max)")))
+        };
+        let mut bytes = self.title.len();
+        for (what, sections) in [
+            ("ingredients", &self.ingredients),
+            ("instructions", &self.instructions),
+        ] {
+            if sections.len() > MAX_SECTIONS {
+                return too_big(what, &format!("{MAX_SECTIONS} sections"));
+            }
+            let mut items = 0;
+            for section in sections {
+                items += section.items.len();
+                bytes += section.name.as_deref().map_or(0, str::len);
+                if section
+                    .name
+                    .as_deref()
+                    .is_some_and(|n| n.chars().count() > MAX_SECTION_NAME_CHARS)
+                {
+                    return too_big(
+                        what,
+                        &format!("{MAX_SECTION_NAME_CHARS} characters in a section name"),
+                    );
+                }
+                for item in &section.items {
+                    bytes += item.len();
+                    if item.chars().count() > MAX_ITEM_CHARS {
+                        return too_big(what, &format!("{MAX_ITEM_CHARS} characters in a line"));
+                    }
+                }
+            }
+            if items > MAX_ITEMS {
+                return too_big(what, &format!("{MAX_ITEMS} lines"));
+            }
+        }
+        for (what, value) in [
+            ("description", &self.description),
+            ("notes", &self.notes),
+            ("author", &self.author),
+            ("prepTime", &self.prep_time),
+            ("cookTime", &self.cook_time),
+            ("totalTime", &self.total_time),
+            ("freezeTime", &self.freeze_time),
+            ("recipeYield", &self.recipe_yield),
+            ("recipeCategory", &self.recipe_category),
+            ("recipeCuisine", &self.recipe_cuisine),
+        ] {
+            let len = value.as_deref().map_or(0, str::len);
+            if len > MAX_TEXT_BYTES {
+                return too_big(what, &format!("{MAX_TEXT_BYTES} bytes"));
+            }
+            bytes += len;
+        }
+        if self.url.as_deref().is_some_and(|u| u.len() > MAX_URL_BYTES)
+            || self
+                .video
+                .as_deref()
+                .is_some_and(|u| u.len() > MAX_URL_BYTES)
+        {
+            return too_big("url", &format!("{MAX_URL_BYTES} bytes"));
+        }
+        if bytes > MAX_RECIPE_BYTES {
+            return too_big("recipe", &format!("{} KB of text", MAX_RECIPE_BYTES / 1024));
+        }
+        Ok(())
+    }
+
     /// Re-applies the schema rules to fields built in code (scraper, parsers, Wee Chef).
     pub fn validate(mut self) -> ValidationResult<Self> {
         self.title = title(&Value::String(self.title))?;
+        self.check_size()?;
         let trim = |v: Option<String>| v.map(|s| s.trim().to_string());
         self.description = trim(self.description);
         self.author = trim(self.author);
@@ -737,6 +820,57 @@ mod tests {
         assert_eq!(iso(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(iso(1_700_000_000), "2023-11-14T22:13:20.000Z");
         assert_eq!(iso(1_700_000_000_000), "2023-11-14T22:13:20.000Z");
+    }
+
+    #[test]
+    fn recipes_have_size_limits() {
+        let base = || RecipeFields {
+            title: "Soup".into(),
+            ..RecipeFields::default()
+        };
+        let lines = |n: usize, len: usize| vec![Section::unnamed(vec!["x".repeat(len); n])];
+        assert!(base().validate().is_ok());
+        let mut ok = base();
+        ok.ingredients = lines(MAX_ITEMS, 100);
+        ok.instructions = lines(50, MAX_ITEM_CHARS);
+        assert!(ok.validate().is_ok());
+
+        let mut many = base();
+        many.ingredients = lines(MAX_ITEMS + 1, 1);
+        assert!(
+            many.validate()
+                .unwrap_err()
+                .0
+                .starts_with("ingredients: Too big")
+        );
+        let mut sections = base();
+        sections.instructions = (0..=MAX_SECTIONS)
+            .map(|_| Section::unnamed(vec!["Stir".into()]))
+            .collect();
+        assert!(sections.validate().is_err());
+        let mut long = base();
+        long.instructions = lines(1, MAX_ITEM_CHARS + 1);
+        assert!(long.validate().is_err());
+        let mut named = base();
+        named.ingredients = vec![Section {
+            name: Some("n".repeat(MAX_SECTION_NAME_CHARS + 1)),
+            items: vec!["x".into()],
+        }];
+        assert!(named.validate().is_err());
+        let mut notes = base();
+        notes.notes = Some("n".repeat(MAX_TEXT_BYTES + 1));
+        assert!(notes.validate().is_err());
+        // Each part is fine but the whole is more than a recipe
+        let mut whole = base();
+        whole.ingredients = lines(MAX_ITEMS, MAX_ITEM_CHARS / 2);
+        whole.instructions = lines(MAX_ITEMS, MAX_ITEM_CHARS / 2);
+        assert!(
+            whole
+                .validate()
+                .unwrap_err()
+                .0
+                .starts_with("recipe: Too big")
+        );
     }
 
     #[test]
