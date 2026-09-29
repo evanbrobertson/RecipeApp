@@ -22,6 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -324,12 +328,6 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
         style = CrumbText.bodySmall,
         color = colors.inkMuted,
     )
-    if (form == SignInForm.SignUp || form == SignInForm.SetUp) {
-        Field("Your name", name, { name = it }, "name", KeyboardType.Text, ImeAction.Next)
-    }
-    if (form != SignInForm.Password) {
-        Field("Email", email, { email = it }, "email", KeyboardType.Email, if (form == SignInForm.Forgot) ImeAction.Go else ImeAction.Next)
-    }
     val submit: () -> Unit = {
         if (!state.busy) when (form) {
             SignInForm.Password -> vm.signIn(password)
@@ -338,6 +336,21 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
             SignInForm.SetUp -> vm.setUp(name, email, password, appPassword)
             SignInForm.Forgot -> vm.forgot(email)
         }
+    }
+    // The form's first field takes focus as it appears, as the web's autofocus does, so the
+    // keyboard is connected before anyone types. A field focused by the tap that also starts
+    // typing gets its first two characters swapped (the IME resets the caret as it connects),
+    // which signs in with the wrong password.
+    val first = remember(form) { FocusRequester() }
+    LaunchedEffect(form) { first.requestFocus() }
+    if (form == SignInForm.SignUp || form == SignInForm.SetUp) {
+        Field("Your name", name, { name = it }, "name", KeyboardType.Text, ImeAction.Next, focus = first)
+    }
+    if (form != SignInForm.Password) {
+        Field(
+            "Email", email, { email = it }, "email", KeyboardType.Email, if (form == SignInForm.Forgot) ImeAction.Go else ImeAction.Next,
+            onGo = submit, focus = first.takeIf { form == SignInForm.SignIn || form == SignInForm.Forgot },
+        )
     }
     if (form != SignInForm.Forgot) {
         Field(
@@ -349,6 +362,7 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
             if (form == SignInForm.SetUp && status?.setupNeedsAppPassword == true) ImeAction.Next else ImeAction.Go,
             secret = true,
             onGo = submit,
+            focus = first.takeIf { form == SignInForm.Password },
         )
         if (form == SignInForm.SignUp || form == SignInForm.SetUp) {
             Text("At least ${AccountForms.MIN_PASSWORD} characters.", style = CrumbText.hint, color = colors.inkMuted)
@@ -392,6 +406,7 @@ private fun Field(
     ime: ImeAction,
     secret: Boolean = false,
     onGo: () -> Unit = {},
+    focus: FocusRequester? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -401,6 +416,6 @@ private fun Field(
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = type, imeAction = ime, autoCorrectEnabled = false),
         keyboardActions = KeyboardActions(onGo = { onGo() }),
-        modifier = Modifier.fillMaxWidth().testTag(tag),
+        modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier).testTag(tag),
     )
 }
