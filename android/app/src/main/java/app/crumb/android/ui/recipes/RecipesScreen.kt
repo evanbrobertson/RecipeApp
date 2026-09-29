@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -152,6 +153,7 @@ class RecipesViewModel(
     private var applied = query.value.trim()
     private var timer: Job? = null
     private var loadJob: Job? = null
+    private var firstResumeSeen = false
 
     init {
         load(showSpinner = true)
@@ -169,7 +171,7 @@ class RecipesViewModel(
     }
 
     /** Load (or reload, for pull-to-refresh) the current query and the cookbook list. */
-    fun load(showSpinner: Boolean = false) {
+    fun load(showSpinner: Boolean = false, quiet: Boolean = false) {
         if (showSpinner) _state.update { it.copy(loading = true, error = null) }
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -190,11 +192,25 @@ class RecipesViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // A quiet reload (on resume) keeps the list on screen if the server can't be reached
+                if (quiet && !_state.value.loading && _state.value.error == null) return@launch
                 _state.update {
                     it.copy(loading = false, error = e.friendlyMessage(), signedOut = (e as? ApiException)?.isSignedOut == true)
                 }
             }
         }
+    }
+
+    /**
+     * The screen came back (from an import, a recipe that was deleted or put back, ...): reload
+     * without a spinner so the scroll position stays. The first resume is the initial load.
+     */
+    fun resumed() {
+        if (!firstResumeSeen) {
+            firstResumeSeen = true
+            return
+        }
+        load(quiet = true)
     }
 
     /** Drop the deleted ids from the list after a bulk delete. */
@@ -254,6 +270,11 @@ fun RecipesScreen(initialQuery: String? = null) {
 
     LaunchedEffect(state.signedOut) {
         if (state.signedOut) nav.signedOut()
+    }
+
+    LifecycleResumeEffect(Unit) {
+        vm.resumed()
+        onPauseOrDispose {}
     }
 
     val q = query.trim()
@@ -525,17 +546,22 @@ private fun SelectToolbar(
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                Btn(if (allSelected) "Clear" else "Select all", onToggleAll, style = BtnStyle.Ghost)
-            }
-            Text("$selectedCount selected", style = CrumbText.label, color = c.ink)
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Btn("Cookbook", onCookbook, style = BtnStyle.Soft, icon = Lucide.BookPlus, enabled = selectedCount > 0)
-                    DeleteIconButton(onDelete, enabled = selectedCount > 0)
-                }
-            }
+            Btn(if (allSelected) "Clear" else "Select all", onToggleAll, style = BtnStyle.Ghost, padding = 12.dp)
+            // The buttons keep their own width (the web's justify-between), so a 360dp phone
+            // squeezes the count, never the Delete button
+            Text(
+                "$selectedCount selected",
+                style = CrumbText.label,
+                color = c.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            Btn("Cookbook", onCookbook, style = BtnStyle.Soft, icon = Lucide.BookPlus, enabled = selectedCount > 0, padding = 14.dp)
+            DeleteIconButton(onDelete, enabled = selectedCount > 0)
         }
     }
 }
