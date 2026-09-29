@@ -6623,6 +6623,31 @@ async fn fake_auth() -> (String, FakeAuth) {
 }
 
 #[tokio::test]
+async fn hosted_status_answers_200_while_the_auth_service_is_down() {
+    // A port nothing listens on: the connection is refused
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", l.local_addr().unwrap())
+    };
+    let t = TestApp::with_config(|c| {
+        c.auth_mode = crumb::config::AuthMode::Hosted;
+        c.auth_service_url = Some(dead);
+        c.auth_internal_secret = Some("shh".into());
+    });
+    let req = Request::builder()
+        .uri("/api/auth/status")
+        .header(header::COOKIE, "crumb.session_token=ann")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let s: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(s["mode"], "hosted");
+    assert_eq!(s["signedIn"], false);
+    assert_eq!(s["authUnavailable"], true);
+}
+
+#[tokio::test]
 async fn hosted_asks_better_auth_who_is_signed_in() {
     let (url, fake) = fake_auth().await;
     let t = TestApp::with_config(|c| {
