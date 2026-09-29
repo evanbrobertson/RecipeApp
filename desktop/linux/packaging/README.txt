@@ -7,7 +7,7 @@ server (the same one the web app uses) and keeps your login in the system keyrin
 Requirements
 ------------
 
-  * Qt 6.5 or newer (qt6-base, qt6-declarative, qt6-wayland)
+  * Qt 6.5 or newer (qt6-base, qt6-declarative, qt6-svg, qt6-imageformats, qt6-wayland)
   * A Crumb server to sign in to
 
 Install
@@ -25,7 +25,8 @@ Uninstall
 
   ./install.sh --uninstall
 
-Settings live under ~/.config/crumb and the saved session lives in your system keyring;
-uninstalling leaves both in place.
+Settings live under ~/.config/crumb, recently viewed recipes and kitchen timers under
+~/.local/state/crumb-desktop, and the saved session in your system keyring; uninstalling
+leaves all three in place.
 
 Crumb is MIT licensed; see LICENSE.

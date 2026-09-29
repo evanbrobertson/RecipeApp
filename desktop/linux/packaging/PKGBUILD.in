@@ -10,9 +10,10 @@ pkgdesc="Crumb's native Linux desktop app: Qt6/QML over cxx-qt"
 arch=('x86_64')
 url="https://github.com/evanbrobertson/RecipeApp"
 license=('MIT')
-depends=('qt6-base' 'qt6-declarative' 'qt6-wayland')
+depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-imageformats' 'qt6-wayland')
 optdepends=('libsecret: read the saved session from the system keyring'
-            'gnome-keyring: read the saved session from the system keyring')
+            'gnome-keyring: read the saved session from the system keyring'
+            'pipewire: the kitchen timer chime (pw-play)')
 source=("crumb-desktop-linux-x86_64-@VERSION@.tar.gz::https://github.com/evanbrobertson/RecipeApp/releases/download/v@VERSION@/crumb-desktop-linux-x86_64-@VERSION@.tar.gz")
 sha256sums=('@SHA256@')
 

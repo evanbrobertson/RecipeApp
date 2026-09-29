@@ -276,7 +276,7 @@ jobs:
       TAG: ${{ needs.promote.outputs.tag }}
     steps:
       # github-cli is not in the Arch image; the server steps use their own pinned images
-      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-wayland rust clang pkgconf git github-cli
+      - run: pacman -Syu --noconfirm --needed base-devel qt6-base qt6-declarative qt6-svg qt6-wayland rust clang pkgconf git github-cli
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
