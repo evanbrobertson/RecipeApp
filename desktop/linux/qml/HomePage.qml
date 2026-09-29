@@ -18,6 +18,8 @@ Item {
     property var cookbooks: []
     property bool loading: true
     property var opened: null
+    // "What should I cook next?" opens in place, and stays open across visits
+    property bool nextOpen: JSON.parse(Store.read("crumb:home:next-open", "false")) === true
     // Recently viewed: {id, title, image, at, steps}
     property var recent: []
 
@@ -308,7 +310,10 @@ Item {
 
                                 HomeRow {
                                     label: "What should I cook next?"
-                                    onClicked: ApplicationWindow.window.go("suggestions", {})
+                                    onClicked: {
+                                        page.nextOpen = !page.nextOpen
+                                        Store.write("crumb:home:next-open", JSON.stringify(page.nextOpen))
+                                    }
 
                                     HomeWell {
                                         iconName: "layout-grid"
@@ -338,10 +343,24 @@ Item {
                                         name: "chevron-right"
                                         size: 20
                                         color: Palette.textMuted
+                                        rotation: page.nextOpen ? 90 : 0
+
+                                        Behavior on rotation {
+                                            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+
+                    Loader {
+                        active: page.nextOpen
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: item ? item.implicitHeight : 0
+                        Accessible.name: "Four ideas to choose from"
+
+                        sourceComponent: TryNext {}
                     }
 
                     ColumnLayout {
