@@ -1,3 +1,4 @@
+import type { PageReading } from "./page"
 import type { CaptionSource, VideoRead, VideoReading } from "./youtube"
 
 /** What the content script asks the background for (it can't open tabs itself). */
@@ -16,16 +17,35 @@ export interface ReadVideo {
   type: "readVideo"
 }
 
+/** What the background asks any page's content script: the recipe on it (see page.ts). */
+export interface ReadPage {
+  type: "readPage"
+}
+
 /**
- * A video being read for the Crumb tab opened for it: `reading` until the YouTube tab answers,
- * then `read` (with the video) or `failed`.
+ * A page or video being read for the Crumb tab opened for it: `reading` until the page's tab
+ * answers, then `read` (with what was read) or `failed`. `kind` says which of `video` and
+ * `page` to look at.
  */
 export interface Waiting {
   crumb: string
   url: string
+  kind: "video" | "page"
   status: "reading" | "read" | "failed"
   video: VideoRead | null
   captions: CaptionSource
+  page: PageReading | null
+}
+
+/**
+ * What reaches the Crumb preview page (web/src/islands/PreviewActions.svelte) by
+ * `window.postMessage`: the recipe as read from the page, or `page: null` when there was none
+ * (then Crumb reads the link itself).
+ */
+export interface PageForCrumb {
+  type: "crumb:page"
+  url: string
+  page: PageReading | null
 }
 
 /**

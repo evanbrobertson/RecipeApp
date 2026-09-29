@@ -25,6 +25,12 @@ test("previewUrl encodes the whole page address", () => {
   )
 })
 
+test("previewUrl says the recipe is on its way when the extension read it", () => {
+  expect(previewUrl("https://c.example", "https://site.example/soup", true)).toBe(
+    "https://c.example/preview?url=https%3A%2F%2Fsite.example%2Fsoup&via=extension",
+  )
+})
+
 test("readable: http(s) pages other than the Crumb", () => {
   const crumb = "https://c.example"
   expect(readable("https://site.example/soup", crumb)).toBe(true)

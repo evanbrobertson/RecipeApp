@@ -14,12 +14,25 @@ Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).
   happens in the page; nothing is sent anywhere.
 - **Asking** (`src/toast.ts`): a small card in a closed shadow root, so the page's styles can't
   touch it. "Not on this site" stops it asking there; the settings page lists those sites.
-- **Reading** (`src/background.ts`): opens `{your Crumb}/preview?url={the page}` in a tab beside
-  the page. That is the only thing the extension ever sends, and only to your Crumb. The toolbar
-  button does the same for any page, recipe or not.
+- **Reading** (`src/background.ts`, `src/page.ts`): when you say yes, or click the toolbar
+  button (on any page, recipe or not), the extension reads the recipe from the page in your
+  browser and opens `{your Crumb}/preview?url={the page}&via=extension` in a tab beside it. Many
+  recipe sites turn Crumb's server away with a bot check but not your browser, which is already
+  past it; this is how those recipes get in. What it reads is only the recipe: the page's
+  `application/ld+json` blocks that hold a schema.org `Recipe` or, if none does, the recipe
+  card's HTML (WP Recipe Maker, Tasty Recipes, Mediavine Create, Zip Recipes, WPZOOM or Recipe
+  microdata, with scripts, forms and every attribute the parser doesn't use removed), plus the
+  page's `og:image` and `og:title`, up to 512 KB (a bigger recipe isn't sent, and Crumb reads the
+  link itself). It sends **the link plus the recipe it found on the page, and only to your
+  Crumb**. It never reads or sends cookies, storage, sign-ins or the rest of the page.
+- **Handing it over**: like a YouTube video's words, it waits in session storage for that one
+  tab; the content script on your Crumb's tab posts it to the page (`window.postMessage`, same
+  origin), and the page sends it to your Crumb with the signed-in session. The extension never
+  makes a request of its own, so it needs no host permissions and holds no credentials. If nothing
+  could be read, the preview reads the link as before.
 - **The preview** is the server's (`src/preview.rs`): a "Reading…" page at once, then the
   recipe, or why it couldn't be read. A link already in your box opens that recipe instead.
-  **Add to my Crumb** saves it through the usual import, reusing the page the preview read.
+  **Add to my Crumb** saves it through the usual import, reusing what the preview showed.
 - **YouTube videos** (`src/youtube.ts`): YouTube often turns Crumb's server away ("Sign in to
   confirm you're not a bot"), so on a YouTube video the extension reads the video's page in your
   browser: its title, description and the words of its captions (the caption track, else the
@@ -38,8 +51,9 @@ Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).
 
 Permissions: `storage` (your Crumb's address and settings, synced with your browser profile),
 `activeTab` (the page's address when you click the toolbar button) and `scripting` (on that click,
-reading a YouTube tab that was open before the extension was installed or updated). The content script runs on
-all http(s) pages because noticing recipes as they open is the point.
+reading a page or YouTube tab that was open before the extension was installed or updated). No
+host permissions. The content script runs on all http(s) pages because noticing recipes as they
+open is the point; it only looks, and reads the recipe out of the page only when you click.
 
 ## Develop
 

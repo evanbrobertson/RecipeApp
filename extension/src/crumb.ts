@@ -30,9 +30,13 @@ export function crumbOrigin(raw: string): string | null {
   }
 }
 
-/** The Crumb page that reads `page` and offers to add it (src/preview.rs). */
-export function previewUrl(crumb: string, page: string): string {
-  return `${crumb}/preview?url=${encodeURIComponent(page)}`
+/**
+ * The Crumb page that reads `page` and offers to add it (src/preview.rs). With `handover`,
+ * `via=extension` tells it the recipe as this browser read it is on its way (it waits for
+ * that before asking the site itself).
+ */
+export function previewUrl(crumb: string, page: string, handover = false): string {
+  return `${crumb}/preview?url=${encodeURIComponent(page)}${handover ? "&via=extension" : ""}`
 }
 
 /**

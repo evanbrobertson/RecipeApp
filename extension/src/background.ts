@@ -4,34 +4,39 @@
  * closed, or the site muted); Crumb says so when there's no recipe on it.
  *
  * A YouTube video goes to Crumb's Add page instead, with what this browser read of it (see
- * youtube.ts): held in session storage for that one tab until its content script takes it.
+ * youtube.ts). A recipe page goes to Crumb's preview with the recipe this browser read from it
+ * (see page.ts), because the site may turn Crumb's server away but not the cook. Either way it's
+ * held in session storage for that one tab until the Crumb page's content script takes it.
  */
 import { addVideoUrl, crumbOrigin, load, previewUrl, readable, save } from "./crumb"
-import type { Message, ReadVideo, Waiting } from "./messages"
+import type { Message, ReadPage, ReadVideo, Waiting } from "./messages"
+import type { PageReading } from "./page"
 import { videoId, type VideoReading } from "./youtube"
 
 const waitingKey = (tabId: number) => `video:${tabId}`
 
-async function askTab(tabId: number): Promise<VideoReading | null> {
-  const ask: ReadVideo = { type: "readVideo" }
-  return ((await chrome.tabs.sendMessage(tabId, ask)) as VideoReading | null) ?? null
+async function askTab<T>(tabId: number, ask: ReadVideo | ReadPage): Promise<T | null> {
+  return ((await chrome.tabs.sendMessage(tabId, ask)) as T | null) ?? null
 }
 
 /**
- * Asks a YouTube tab's content script to read its video; null if it can't. A tab opened
- * before the extension was installed or updated has no live content script, so it's added
- * (the toolbar click grants that tab) and asked again.
+ * Asks a tab's content script to read what's on it (a YouTube video, or a recipe); null if
+ * it can't. A tab opened before the extension was installed or updated has no live content
+ * script, so it's added (the toolbar click grants that tab) and asked again.
  */
-async function readInTab(tab: chrome.tabs.Tab | undefined): Promise<VideoReading | null> {
+async function readInTab<T>(
+  tab: chrome.tabs.Tab | undefined,
+  ask: ReadVideo | ReadPage,
+): Promise<T | null> {
   if (tab?.id === undefined) return null
   try {
-    return await askTab(tab.id)
+    return await askTab<T>(tab.id, ask)
   } catch {
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
-      return await askTab(tab.id)
+      return await askTab<T>(tab.id, ask)
     } catch (err) {
-      console.info("[Crumb] couldn't read the video in its tab", err)
+      console.info("[Crumb] couldn't read the page in its tab", err)
       return null
     }
   }
@@ -47,20 +52,47 @@ async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: Vid
     const tab = await chrome.tabs.create({ url: addVideoUrl(crumb, url!), ...where })
     if (tab.id === undefined) return
     const key = waitingKey(tab.id)
-    const reading: Waiting = { crumb, url: url!, status: "reading", video: null, captions: "none" }
+    const reading: Waiting = {
+      crumb,
+      url: url!,
+      kind: "video",
+      status: "reading",
+      video: null,
+      captions: "none",
+      page: null,
+    }
     await chrome.storage.session.set({ [key]: reading })
-    const got = video ?? (await readInTab(from))
+    const got = video ?? (await readInTab<VideoReading>(from, { type: "readVideo" }))
     const done: Waiting = got
       ? { ...reading, status: "read", video: got.video, captions: got.captions }
       : { ...reading, status: "failed" }
     await chrome.storage.session.set({ [key]: done })
     return
   }
-  await chrome.tabs.create({ url: previewUrl(crumb, url!), ...where })
+  // A recipe page: the recipe as this browser reads it goes to Crumb with the link, since the
+  // site may turn Crumb's server away but not the cook. Nothing else of the page is read.
+  const tab = await chrome.tabs.create({ url: previewUrl(crumb, url!, true), ...where })
+  if (tab.id === undefined) return
+  const key = waitingKey(tab.id)
+  const reading: Waiting = {
+    crumb,
+    url: url!,
+    kind: "page",
+    status: "reading",
+    video: null,
+    captions: "none",
+    page: null,
+  }
+  await chrome.storage.session.set({ [key]: reading })
+  const got = await readInTab<PageReading>(from, { type: "readPage" })
+  const done: Waiting = got
+    ? { ...reading, status: "read", page: got }
+    : { ...reading, status: "failed" }
+  await chrome.storage.session.set({ [key]: done })
 }
 
 /**
- * Hands the Crumb tab opened for a video what was read of it, once it's read (or failed).
+ * Hands the Crumb tab opened for a video or a recipe what was read of it, once it's read (or failed).
  * Status `reading` means ask again; null means there's nothing for this tab.
  */
 async function takeVideo(sender: chrome.runtime.MessageSender): Promise<Waiting | null> {
