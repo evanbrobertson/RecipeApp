@@ -32,7 +32,10 @@ runs:
       shell: bash
       run: |
         sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-        yes | "$sdkmanager" --licenses > /dev/null
-        "$sdkmanager" "platforms;android-37.0" "build-tools;36.1.0" "ndk;28.2.13676358" > /dev/null
+        # `yes` dies of SIGPIPE once the licences are accepted, which pipefail would count
+        (yes || true) | "$sdkmanager" --licenses > /dev/null || true
+        "$sdkmanager" --install "platforms;android-37.0" "build-tools;36.1.0" "ndk;28.2.13676358" \
+          | grep -v '^\[' || true
+        test -d "$ANDROID_HOME/ndk/28.2.13676358" && test -d "$ANDROID_HOME/platforms/android-37.0"
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
         cargo install cargo-ndk --version 4.1.2 --locked
