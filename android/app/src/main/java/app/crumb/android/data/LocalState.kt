@@ -63,6 +63,13 @@ data class Viewed(
     val steps: Int? = null,
 )
 
+/**
+ * Where the floating video player was left, in dp on screen (the web's `crumb:video-window`):
+ * its left and top edge and its width; the height follows from the picture's shape.
+ */
+@Serializable
+data class VideoWin(val x: Float, val y: Float, val w: Float)
+
 private val Context.localData: DataStore<Preferences> by preferencesDataStore(name = "local")
 
 /** Recently viewed recipes and small UI preferences, kept on this phone only. */
@@ -77,12 +84,28 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
     /** Surprise me's recent picks this session (crumb:random:seen), newest first, up to 40. */
     private val randomSeen = ArrayDeque<Long>()
 
+    /** The floating player's place and size, one for wide videos and one for tall ones. */
+    private val windows = mutableMapOf<Boolean, VideoWin>()
+
+    fun videoWindow(tall: Boolean): VideoWin? = windows[tall]
+
+    fun setVideoWindow(tall: Boolean, win: VideoWin) {
+        windows[tall] = win
+        val json = CrumbJson.encodeToString(VideoWin.serializer(), win)
+        scope.launch { context.localData.edit { it[windowKey(tall)] = json } }
+    }
+
     suspend fun load() {
         val prefs = context.localData.data.first()
         recent.value = prefs[RECENT]?.let {
             runCatching { CrumbJson.decodeFromString(ListSerializer(Viewed.serializer()), it) }.getOrNull()
         }.orEmpty()
         nextOpen.value = prefs[NEXT_OPEN] ?: false
+        for (tall in listOf(false, true)) {
+            prefs[windowKey(tall)]?.let {
+                runCatching { CrumbJson.decodeFromString(VideoWin.serializer(), it) }.getOrNull()
+            }?.let { windows[tall] = it }
+        }
     }
 
     /** Most recent first, six at most, like rememberViewed() in storage.ts. */
@@ -116,6 +139,8 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
         val json = CrumbJson.encodeToString(ListSerializer(Viewed.serializer()), recent.value)
         scope.launch { context.localData.edit { it[RECENT] = json } }
     }
+
+    private fun windowKey(tall: Boolean) = stringPreferencesKey(if (tall) "video_window_tall" else "video_window")
 
     private companion object {
         val RECENT = stringPreferencesKey("recent")
