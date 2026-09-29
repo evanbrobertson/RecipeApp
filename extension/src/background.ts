@@ -3,10 +3,11 @@
  * current page in Crumb whether or not it looked like a recipe (the prompt may have been
  * closed, or the site muted); Crumb says so when there's no recipe on it.
  *
- * A YouTube video goes to Crumb's Add page instead, with what this browser read of it (see
- * youtube.ts). A recipe page goes to Crumb's preview with the recipe this browser read from it
- * (see page.ts), because the site may turn Crumb's server away but not the cook. Either way it's
- * held in session storage for that one tab until the Crumb page's content script takes it.
+ * A YouTube video goes to Crumb's Add page in a new tab, with what this browser read of it (see
+ * youtube.ts). A recipe page is replaced by Crumb's preview in the same tab, with the recipe this
+ * browser read from it (see page.ts), because the site may turn Crumb's server away but not the
+ * cook. Either way it's held in session storage for that one tab until the Crumb page's content
+ * script takes it.
  */
 import { addVideoUrl, crumbOrigin, load, mayOfferItself, previewUrl, readable, save } from "./crumb"
 import type { Message, ReadPage, ReadVideo, Waiting } from "./messages"
@@ -70,10 +71,9 @@ async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: Vid
     return
   }
   // A recipe page: the recipe as this browser reads it goes to Crumb with the link, since the
-  // site may turn Crumb's server away but not the cook. Nothing else of the page is read.
-  const tab = await chrome.tabs.create({ url: previewUrl(crumb, url!, true), ...where })
-  if (tab.id === undefined) return
-  const key = waitingKey(tab.id)
+  // site may turn Crumb's server away but not the cook. Nothing else of the page is read. It's
+  // read first (it's already in the page), then the preview replaces the recipe in its own tab,
+  // so the cook isn't left with one tab per step.
   const reading: Waiting = {
     crumb,
     url: url!,
@@ -83,12 +83,13 @@ async function read(url: string | undefined, from?: chrome.tabs.Tab, video?: Vid
     captions: "none",
     page: null,
   }
-  await chrome.storage.session.set({ [key]: reading })
   const got = await readInTab<PageReading>(from, { type: "readPage" })
   const done: Waiting = got
     ? { ...reading, status: "read", page: got }
     : { ...reading, status: "failed" }
-  await chrome.storage.session.set({ [key]: done })
+  if (from?.id === undefined) return
+  await chrome.storage.session.set({ [waitingKey(from.id)]: done })
+  await chrome.tabs.update(from.id, { url: previewUrl(crumb, url!, true) })
 }
 
 /**

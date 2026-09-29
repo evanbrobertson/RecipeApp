@@ -371,6 +371,20 @@ async fn bulk_deletes_recipes() {
 }
 
 #[tokio::test]
+async fn popular_is_off_with_one_household_and_can_be_opted_out_of() {
+    let server = Server::start(None).await;
+    let client = Client::new(&server.origin).unwrap();
+    let popular = client.popular().await.unwrap();
+    assert!(!popular.enabled);
+    assert!(popular.items.is_empty());
+
+    assert!(!client.popular_setting().await.unwrap().opted_out);
+    client.set_popular_opt_out(true).await.unwrap();
+    assert!(client.popular_setting().await.unwrap().opted_out);
+    assert!(client.popular().await.unwrap().opted_out);
+}
+
+#[tokio::test]
 async fn a_cook_can_be_undone() {
     let server = Server::start(None).await;
     let id = create(&server.origin, json!({"title": "Pancakes"})).await["id"]

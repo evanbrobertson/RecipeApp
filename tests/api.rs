@@ -1590,6 +1590,8 @@ async fn sized_images_are_behind_the_login() {
 
 #[tokio::test]
 async fn sized_images_fetch_remote_photos_and_remember_failures() {
+    /// An AVIF file's header, as far as anything here reads it
+    const AVIF: &[u8] = b"\0\0\0\x1cftypavif\0\0\0\0avifmif1miaf";
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     let hits = Arc::new(AtomicUsize::new(0));
@@ -1601,6 +1603,25 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
             axum::routing::get(move || {
                 let png = png.clone();
                 async move { ([(header::CONTENT_TYPE, "image/png")], png) }
+            }),
+        )
+        // An image CDN that sends AVIF whatever is asked, naming the original, or not
+        .route(
+            "/cdn/photo.jpg",
+            axum::routing::get(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "image/avif"),
+                        (header::LINK, "</photo.png>; rel=\"canonical\""),
+                    ],
+                    AVIF.to_vec(),
+                )
+            }),
+        )
+        .route(
+            "/cdn/unnamed.jpg",
+            axum::routing::get(|| async {
+                ([(header::CONTENT_TYPE, "image/avif")], AVIF.to_vec())
             }),
         )
         .route(
@@ -1626,6 +1647,20 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
     assert_eq!(webp_size(&body), (320, 213));
+
+    // AVIF can't be resized here: the original the CDN names is, else the browser gets the link
+    set_image(&t, id, &format!("http://{addr}/cdn/photo.jpg"));
+    let (status, headers, body) = send_raw(&t, get(&format!("/img/{id}/320"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
+    assert_eq!(webp_size(&body), (320, 213));
+    set_image(&t, id, &format!("http://{addr}/cdn/unnamed.jpg"));
+    let (status, headers, _) = send_raw(&t, get(&format!("/img/{id}/320"))).await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("http://{addr}/cdn/unnamed.jpg").as_str()
+    );
 
     set_image(&t, id, &format!("http://{addr}/broken.jpg"));
     for _ in 0..3 {
@@ -6620,6 +6655,31 @@ async fn fake_auth() -> (String, FakeAuth) {
         .route("/api/auth/{*rest}", any(better_auth))
         .with_state(fake.clone());
     (serve(routes).await, fake)
+}
+
+#[tokio::test]
+async fn hosted_status_answers_200_while_the_auth_service_is_down() {
+    // A port nothing listens on: the connection is refused
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", l.local_addr().unwrap())
+    };
+    let t = TestApp::with_config(|c| {
+        c.auth_mode = crumb::config::AuthMode::Hosted;
+        c.auth_service_url = Some(dead);
+        c.auth_internal_secret = Some("shh".into());
+    });
+    let req = Request::builder()
+        .uri("/api/auth/status")
+        .header(header::COOKIE, "crumb.session_token=ann")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let s: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(s["mode"], "hosted");
+    assert_eq!(s["signedIn"], false);
+    assert_eq!(s["authUnavailable"], true);
 }
 
 #[tokio::test]

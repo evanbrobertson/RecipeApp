@@ -283,3 +283,36 @@ pub enum Preview {
     /// this reading instead of fetching the page again.
     Ready { recipe: Box<PreviewRecipe> },
 }
+
+/// `GET /api/popular` (`api::popular`): links several other households saved that this one
+/// hasn't. `enabled` is false on a server with one household, or with `POPULAR=off`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Popular {
+    pub enabled: bool,
+    /// Whether this household's saved links are left out of the count.
+    pub opted_out: bool,
+    /// How many households must have saved a link before it shows.
+    pub min_households: u32,
+    pub items: Vec<PopularLink>,
+}
+
+/// One popular link (`popular::Link`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopularLink {
+    pub url: String,
+    /// The link's host, without `www.`.
+    pub host: String,
+    pub title: String,
+    /// How many households saved it.
+    pub households: u32,
+}
+
+/// `GET /api/popular/opt-out`: the setting on More, without counting anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopularSetting {
+    pub enabled: bool,
+    pub opted_out: bool,
+}

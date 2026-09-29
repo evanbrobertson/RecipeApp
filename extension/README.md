@@ -1,7 +1,7 @@
 # Crumb browser extension
 
 Open a recipe anywhere on the web and the extension asks **"Read this recipe in Crumb?"**. Say
-yes and your Crumb opens it in a new tab: read and tidied as an import would be, in the same
+yes and your Crumb opens it in the same tab: read and tidied as an import would be, in the same
 layout as a shared recipe, with **Add to my Crumb**. Nothing is saved until you press it.
 
 Chrome, Edge (and other Chromium browsers) and Firefox 140+ (Manifest V3).

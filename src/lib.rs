@@ -286,14 +286,31 @@ pub fn app(state: AppState) -> Router {
         ))
         // Share tokens never reach a span (see telemetry::redact_path)
         .layer(
-            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
-                tracing::debug_span!(
-                    "request",
-                    method = %req.method(),
-                    uri = %telemetry::redact_path(req.uri().path()),
-                    version = ?req.version(),
-                )
-            }),
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &axum::http::Request<_>| {
+                    tracing::debug_span!(
+                        "request",
+                        method = %req.method(),
+                        uri = %telemetry::redact_path(req.uri().path()),
+                        version = ?req.version(),
+                    )
+                })
+                .on_failure(
+                    |failure: tower_http::classify::ServerErrorsFailureClass,
+                     latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        // A 503 is a dependency we already warned about (the auth service,
+                        // a full video queue) and the caller can retry: a breadcrumb, not
+                        // an error event per request. Every other 5xx stays an error.
+                        use tower_http::classify::ServerErrorsFailureClass::StatusCode;
+                        if matches!(failure, StatusCode(s) if s == axum::http::StatusCode::SERVICE_UNAVAILABLE)
+                        {
+                            tracing::warn!(classification = %failure, latency = ?latency, "response unavailable");
+                        } else {
+                            tracing::error!(classification = %failure, latency = ?latency, "response failed");
+                        }
+                    },
+                ),
         )
         // Outermost: request transactions and the browser's Sentry hint (no-op without SENTRY_DSN)
         .layer(axum::middleware::from_fn(telemetry::middleware))
