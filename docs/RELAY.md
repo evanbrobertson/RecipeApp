@@ -120,7 +120,7 @@ On the Crumb server (Railway variables):
 | `SCRAPE_RELAY_TOKEN` | The token |
 | `SCRAPE_RELAY_PROXY` | Only if the server reaches Tailscale through a proxy (below) |
 
-The server tries the relays in turn, starting from a different one each time, each with the Firefox and then the Safari fingerprint, and stops at the first that gives a recipe. All relays together get 30 seconds. A relay that can't be reached, answers 401 or otherwise breaks is left alone for five minutes; one that answers "busy" (429) is only skipped for that import. The server logs `[relay] <site>: <relay name> worked` when one helps.
+The server tries the relays in turn, starting from a different one each time, each with the Firefox and then the Safari fingerprint, and stops at the first that gives a recipe. All relays together get 30 seconds. The Internet Archive's copy of the page is asked as well only if no relay has answered within 2 seconds (or at once when no relays are set up), because an archived copy can be older than what a relay sees. A relay that can't be reached, answers 401 or otherwise breaks is left alone for five minutes; one that answers "busy" (429) is only skipped for that import. The server logs `[relay] <site>: <relay name> worked` when one helps.
 
 ## The server reaching your tailnet
 

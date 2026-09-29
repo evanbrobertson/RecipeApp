@@ -128,6 +128,14 @@ fn scrape_error(err: AppError) -> Value {
              on it, or to paste the recipe text so you can use import_recipe_from_text.",
         );
     }
+    if err.code == Some(crate::site_terms::SITE_TERMS) {
+        return tool_error(
+            "This site's terms of service forbid automated fetching, so Crumb won't fetch it from \
+             the server. Ask the user to open the page in their own browser and use the Crumb \
+             browser extension on it, or to paste the recipe text so you can use \
+             import_recipe_from_text.",
+        );
+    }
     tool_error(err.message)
 }
 

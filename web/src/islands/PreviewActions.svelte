@@ -27,8 +27,10 @@
       host?: string
       title?: string
       message?: string
-      /** Why it failed, when the server says: `site_blocked` is a bot check. */
+      /** Why it failed, when the server says: `site_blocked` is a bot check, `site_terms` the site's terms. */
       code?: string
+      /** With `site_terms`: the listed site's name. */
+      site?: string
     }
   }
 
@@ -114,6 +116,8 @@
     <button type="button" class="btn btn-primary btn-xl w-full sm:w-auto" onclick={read}>
       <BookOpen /> Read it in Crumb
     </button>
+  {:else if step === "failed" && preview?.code === "site_terms"}
+    <BlockedNudge {url} why="terms" name={preview.site} />
   {:else if step === "failed" && preview?.code === "site_blocked"}
     <BlockedNudge {url} />
     <button type="button" class="btn btn-ghost" onclick={read}><RotateCw /> Try again</button>

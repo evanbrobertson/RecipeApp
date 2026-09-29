@@ -78,6 +78,9 @@ impl TestApp {
 
         let mut config = Config {
             web_dist: dist.path().to_path_buf(),
+            // The tests serve their recipe sites from 127.0.0.1; the ones about the guard
+            // switch this off
+            scrape_allow_private: true,
             ..Config::default()
         };
         configure(&mut config);
@@ -3885,6 +3888,119 @@ async fn saving_another_crumbs_share_imports_its_export() {
     assert_eq!(again["isNew"], false);
     let (_, list) = b.json("GET", "/api/recipes", None).await;
     assert_eq!(list.as_array().unwrap().len(), 3);
+}
+
+/// A server that counts the connections it gets, and says which paths were asked for.
+async fn counting_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let app = axum::Router::new().fallback(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async { "<html><title>Inside</title></html>" }
+    });
+    (serve(app).await, hits)
+}
+
+#[tokio::test]
+async fn links_into_the_servers_own_network_are_refused_before_any_request() {
+    // Off in every other test; on for this one, as it is in production
+    let t = TestApp::with_config(|c| c.scrape_allow_private = false);
+    let (local, hits) = counting_server().await;
+    let port = local.rsplit(':').next().unwrap().to_string();
+    for url in [
+        local.clone(),
+        format!("{local}/recipe"),
+        format!("http://localhost:{port}/recipe"),
+        "http://169.254.169.254/latest/meta-data/".to_string(),
+        "http://10.0.0.7:8080/admin".to_string(),
+        "http://192.168.1.1/".to_string(),
+        "http://[::1]:3000/api/recipes".to_string(),
+        "http://100.100.100.100/".to_string(),
+        "http://0.0.0.0:3000/".to_string(),
+    ] {
+        let (status, err) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {err}");
+        assert_eq!(
+            err["message"], "That link points somewhere private.",
+            "{url}"
+        );
+        // The preview page scrapes too, and shows that as its failure
+        let (_, _, page) = t.send(get(&format!("/preview?url={url}&go=1"))).await;
+        assert!(!page.contains("Inside"), "{url}");
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // An ordinary bad link is still just a bad link
+    let (_, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": "nope"})))
+        .await;
+    assert_eq!(err["message"], "Please enter a valid URL");
+}
+
+#[tokio::test]
+async fn a_photo_link_into_the_servers_own_network_is_never_fetched() {
+    let (local, hits) = counting_server().await;
+    let private = TestApp::with_config(|c| c.scrape_allow_private = false);
+    assert!(
+        crumb::images::fetch_to_embed(&private.state, &format!("{local}/p.jpg"))
+            .await
+            .is_none()
+    );
+    assert!(crumb::images::photo_is_dead(&private.state, &format!("{local}/p.jpg"), None).await);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // Where it is allowed (these tests), the server is asked
+    let open = TestApp::new(None);
+    let _ = crumb::images::fetch_to_embed(&open.state, &format!("{local}/p.jpg")).await;
+    assert!(hits.load(std::sync::atomic::Ordering::SeqCst) > 0);
+}
+
+#[tokio::test]
+async fn an_import_is_remembered_per_site_and_forgotten_after_two_misses() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let page = r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org",
+        "@type":"Recipe","name":"Memory Pie","recipeIngredient":["1 pie"],
+        "recipeInstructions":["Eat it."]}</script></head></html>"#;
+    let origin = serve(
+        axum::Router::new()
+            .route("/pie", route(move || async move { Html(page) }))
+            .route(
+                "/nothing",
+                route(|| async { Html("<p>no recipe here</p>") }),
+            ),
+    )
+    .await;
+    let t = TestApp::new(None);
+    let now = crumb::sites::now_secs();
+    assert!(t.state.sites.get("127.0.0.1", now).is_none());
+
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let facts = t.state.sites.get("127.0.0.1", now).expect("remembered");
+    assert_eq!(facts.winning_method.as_deref(), Some("wreq-firefox"));
+    assert!(!facts.blocks_server);
+    assert_eq!(facts.failures, 0);
+    // Only how the site was read: nothing of the recipe
+    assert!(!format!("{facts:?}").contains("Memory Pie"));
+
+    for _ in 0..2 {
+        let (status, _) = t
+            .json(
+                "POST",
+                "/api/recipes/import",
+                Some(json!({"url": format!("{origin}/nothing")})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(t.state.sites.get("127.0.0.1", now).is_none());
 }
 
 /// Serves `routes` on a real local port; returns its origin (`http://127.0.0.1:port`).
@@ -8051,4 +8167,88 @@ async fn a_preview_shows_the_recipe_the_extension_read() {
         .await;
     assert_eq!(status, StatusCode::OK, "{res}");
     assert_eq!(res["title"], "Apple Pie");
+}
+
+#[tokio::test]
+async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
+    let t = TestApp::new(None);
+    let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
+
+    // Import: 422 with the code, a polite message naming the site, and nothing saved
+    let (status, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+    assert_eq!(err["code"], "site_terms");
+    assert_eq!(err["site"], "Allrecipes");
+    assert_eq!(err["statusCode"], 422);
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Allrecipes's terms don't allow automated copying"),
+        "{err}"
+    );
+    assert!(err["message"].as_str().unwrap().contains("extension"));
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Claude is told the terms forbid it, and what to ask the user instead
+    let (msg, is_error) = mcp_call(&t, "import_recipe_from_url", json!({"url": url})).await;
+    assert!(is_error, "{msg}");
+    assert!(
+        msg.contains("terms of service forbid automated fetching"),
+        "{msg}"
+    );
+    assert!(msg.contains("browser extension") && msg.contains("import_recipe_from_text"));
+
+    // The preview fails with the code, without waiting to be asked twice
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    for extra in ["", "&go=1"] {
+        let (status, _, html) = t
+            .send(preview_req(
+                &format!("/preview?url={q}{extra}"),
+                Some("same-origin"),
+            ))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{extra}");
+        let data = page_data(&html);
+        assert_eq!(data["preview"]["state"], "failed");
+        assert_eq!(data["preview"]["code"], "site_terms");
+        assert_eq!(data["preview"]["site"], "Allrecipes");
+        assert_eq!(data["preview"]["host"], "allrecipes.com");
+    }
+
+    // What the cook's own browser read (the extension) is still taken
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+    let (status, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page_data(&html)["preview"]["state"], "ready");
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Apple Pie");
+
+    // Refreshing it from its source would fetch it, so that's refused too
+    let (msg, is_error) =
+        mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
+    assert!(is_error, "{msg}");
+    assert!(msg.contains("terms of service forbid"), "{msg}");
 }

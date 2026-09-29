@@ -13,7 +13,7 @@ export interface ToastAction {
 export interface ToastOptions {
   title: string
   detail?: string
-  /** A sentence of explanation under the detail. */
+  /** A short line under the detail, wrapped rather than cut off. */
   note?: string
   actions: ToastAction[]
   /** Gone after this long unless the pointer or focus is on it. */

@@ -6,10 +6,15 @@
    * extension's toolbar button there (it reads the recipe and hands it to Crumb), else says
    * where to get it; on a phone, which has no extension to use, pasting
    * the recipe leads.
+   *
+   * `why="terms"` is the same nudge for a site whose terms of service ask for no automated
+   * copying (`site_terms`): Crumb never asked the site at all, so it says whose terms and
+   * points at the same way out.
    */
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste"
   import ExternalLink from "@lucide/svelte/icons/external-link"
   import Puzzle from "@lucide/svelte/icons/puzzle"
+  import ScrollText from "@lucide/svelte/icons/scroll-text"
   import ShieldCheck from "@lucide/svelte/icons/shield-check"
   import X from "@lucide/svelte/icons/x"
   import { extensionInstalled, extensionPossible, extensionUrl } from "../lib/extension"
@@ -21,8 +26,21 @@
     onpaste?: () => void
     pasteHref?: string
     ondismiss?: () => void
+    /** `bot`: the site's bot check turned Crumb away. `terms`: its terms ask us not to fetch. */
+    why?: "bot" | "terms"
+    /** With `terms`: the site's name as the server knows it ("Allrecipes"); else its host is said. */
+    name?: string
   }
-  let { url, onpaste, pasteHref = "/add", ondismiss }: Props = $props()
+  let { url, onpaste, pasteHref = "/add", ondismiss, why = "bot", name }: Props = $props()
+  const terms = $derived(why === "terms")
+  const site = $derived.by(() => {
+    if (name) return name
+    try {
+      return new URL(url).hostname.replace(/^www\./, "")
+    } catch {
+      return "This site"
+    }
+  })
 
   // The extension marks the page a moment after it loads, so this can flip while it's shown
   let installed = $state(extensionInstalled())
@@ -46,11 +64,31 @@
   aria-live="polite"
 >
   <div class="flex items-start gap-3">
-    <span class="well" aria-hidden="true"><ShieldCheck /></span>
+    <span class="well" aria-hidden="true">
+      {#if terms}<ScrollText />{:else}<ShieldCheck />{/if}
+    </span>
     <div class="min-w-0 flex-1 pr-8">
-      <h2 class="text-[17px] leading-snug font-bold">This site wants a human</h2>
+      <h2 class="text-[17px] leading-snug font-bold">
+        {terms ? "Their terms ask us not to" : "This site wants a human"}
+      </h2>
       <p class="text-ink-muted mt-1 text-[15px]">
-        {#if !possible}
+        {#if terms}
+          {#if !possible}
+            {site}'s terms don't allow automated copying, so Crumb didn't fetch it. Paste the
+            recipe text instead. On a computer, the Crumb extension can read it from your own
+            browser.
+          {:else if opened}
+            Opened in a new tab. Click Crumb in your browser's toolbar there, and the extension
+            reads the recipe from that page and opens it in Crumb, ready to add.
+          {:else if installed}
+            {site}'s terms don't allow automated copying, so Crumb didn't fetch it. Open it on
+            their site, then click Crumb in your toolbar: the extension reads the recipe from your
+            own browser.
+          {:else}
+            {site}'s terms don't allow automated copying, so Crumb didn't fetch it. The Crumb
+            extension can read it from your own browser instead.
+          {/if}
+        {:else if !possible}
           It asked for a human check, so Crumb couldn't read it from here. Paste the recipe text
           instead. On a computer, the Crumb extension can read pages like this from your browser.
         {:else if opened}

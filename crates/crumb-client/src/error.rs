@@ -15,6 +15,8 @@ pub enum Error {
         message: String,
         /// The server's machine-readable reason, when it gives one (`"site_blocked"`).
         code: Option<String>,
+        /// With `"site_terms"`: the listed site's name ("Allrecipes").
+        site: Option<String>,
     },
     /// The request never reached the server, or the connection failed.
     Network(String),
@@ -29,6 +31,14 @@ impl Error {
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::Api { code, .. } => code.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// With `"site_terms"`, the name of the site whose terms forbid automated fetching.
+    pub fn site(&self) -> Option<&str> {
+        match self {
+            Self::Api { site, .. } => site.as_deref(),
             _ => None,
         }
     }

@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["net", "time"] }
+tokio = { version = "1", features = ["net", "time", "io-util", "rt"] }
 tracing = "0.1"
 url = "2"
 wreq = { workspace = true }

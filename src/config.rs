@@ -160,6 +160,15 @@ pub struct Config {
     pub open_signup: bool,
     /// With accounts, where `accounts.db` is (next to the database). None = in memory.
     pub accounts_db: Option<PathBuf>,
+    /// Where `sites.db` is (next to the database): what worked the last time a recipe was
+    /// read from each host, and when Wee Chef last looked at its terms (see `src/sites.rs`,
+    /// `site_terms`). None = in memory.
+    pub sites_db: Option<PathBuf>,
+    /// `SCRAPE_SITE_MEMORY=off`: don't remember (or use) how each site was read last time.
+    pub scrape_site_memory: bool,
+    /// Whether a link to a private address may be fetched. Off, always, outside the tests:
+    /// they serve recipes from `127.0.0.1`.
+    pub scrape_allow_private: bool,
     /// Hosted: the auth service's internal URL (`AUTH_SERVICE_URL`), e.g.
     /// `http://crumb-auth.railway.internal:3100`.
     pub auth_service_url: Option<String>,
@@ -220,6 +229,14 @@ pub struct Config {
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
+    /// `TERMS_CHECK=off` turns Wee Chef's terms-of-service check off.
+    pub terms_check: bool,
+    /// `TERMS_ISSUES_TOKEN`: a GitHub token that may write issues, for the check's suggestions.
+    pub terms_issues_token: Option<String>,
+    /// `TERMS_ISSUES_REPO`: the repository (`owner/name`) those issues go to.
+    pub terms_issues_repo: String,
+    /// GitHub's API. Not an env var: tests point it at a stub.
+    pub github_api: String,
     pub host: String,
     pub port: u16,
 }
@@ -230,6 +247,9 @@ impl Default for Config {
             auth_mode: AuthMode::Password,
             open_signup: false,
             accounts_db: None,
+            sites_db: None,
+            scrape_site_memory: true,
+            scrape_allow_private: false,
             auth_service_url: None,
             auth_internal_secret: None,
             hosted_home_owner: None,
@@ -259,6 +279,10 @@ impl Default for Config {
             scrape_relay_token: None,
             scrape_relay_proxy: None,
             households_dir: None,
+            terms_check: true,
+            terms_issues_token: None,
+            terms_issues_repo: "evanbrobertson/RecipeApp".into(),
+            github_api: "https://api.github.com".into(),
             host: "0.0.0.0".into(),
             port: 3000,
         }
@@ -378,6 +402,9 @@ impl Config {
             accounts_db: Some(crate::accounts::accounts_db_path(
                 &crate::db::database_path(),
             )),
+            sites_db: Some(crate::sites::sites_db_path(&crate::db::database_path())),
+            scrape_site_memory: !switched_off("SCRAPE_SITE_MEMORY"),
+            scrape_allow_private: false,
             auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
             auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),
             hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),
@@ -404,6 +431,10 @@ impl Config {
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),
+            terms_check: !switched_off("TERMS_CHECK"),
+            terms_issues_token: env(&["TERMS_ISSUES_TOKEN"]),
+            terms_issues_repo: env(&["TERMS_ISSUES_REPO"]).unwrap_or(d.terms_issues_repo),
+            github_api: d.github_api,
             host: env(&["HOST"]).unwrap_or(d.host),
             port: env(&["PORT"])
                 .and_then(|p| p.parse().ok())

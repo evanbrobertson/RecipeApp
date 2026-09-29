@@ -155,6 +155,13 @@ async fn page(
     if let Some(scraped) = peek(&state, &url) {
         return ready(&state, &url, &scraped);
     }
+    // A site whose terms forbid automated fetching isn't fetched; the extension's handover
+    // (`via=extension`) is kept above and below, so it still works
+    if params.via.as_deref() != Some("extension")
+        && let Some(refusal) = crate::site_terms::check(&url)
+    {
+        return failed(&state, &url, &refusal.error());
+    }
     if !trusted(&headers) {
         return waiting(&state, &url, "ask");
     }
@@ -167,6 +174,7 @@ async fn page(
     if params.go.is_none() {
         return waiting(&state, &url, "loading");
     }
+    // (`scrape_page` refuses a listed site too; this is the same answer, earlier.)
     match crate::scraper::scrape_page(&state, &url).await {
         // Another Crumb's shared cookbook: nothing to read here, but it saves whole
         Ok(scraped) if scraped.recipe.title.trim().is_empty() => add_page(&url),
@@ -261,6 +269,9 @@ fn failed(state: &AppState, url: &str, err: &AppError) -> Response {
     if let Some(code) = err.code {
         data["preview"]["code"] = code.into();
     }
+    if let Some(site) = &err.site {
+        data["preview"]["site"] = site.as_str().into();
+    }
     let title = "Couldn't read that recipe";
     html(state, status, |t| {
         let mut page = share::start_page(t, title, "", &data);
@@ -342,6 +353,7 @@ mod tests {
         let scraped = Scraped {
             recipe: crate::model::RecipeFields::default(),
             crumb: None,
+            api: None,
         };
         keep(&other, "https://other.test/mine", &scraped);
         for i in 0..MAX_KEPT * 2 {

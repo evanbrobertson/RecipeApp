@@ -336,6 +336,7 @@ async fn creates_patches_and_deletes_a_recipe() {
             status: 400,
             message,
             code: None,
+            site: None,
         }) => assert!(!message.is_empty()),
         other => panic!("expected an Api 400, got {other:?}"),
     }
@@ -1265,4 +1266,19 @@ async fn hosted_sign_in_methods_and_unlink() {
     // Nothing linked for Apple: nothing to do
     accounts.unlink(Provider::Apple).await.unwrap();
     assert_eq!(seen(&log, "POST /api/auth/unlink-account").len(), 1);
+}
+
+#[tokio::test]
+async fn a_listed_site_error_carries_its_name() {
+    let server = Server::start(None).await;
+    let client = Client::new(&server.origin).unwrap();
+
+    let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
+    let err = client
+        .import(ImportInput::Url(url.into()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Some("site_terms"));
+    assert_eq!(err.site(), Some("Allrecipes"));
+    assert!(matches!(err, Error::Api { status: 422, .. }));
 }

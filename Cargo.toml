@@ -44,6 +44,7 @@ serde_urlencoded = "0.7"
 sha2 = "0.10"
 subtle = "2"
 tempfile = "3"
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "process", "time", "signal", "sync", "io-util"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 tower = { version = "0.5", features = ["util"] }
@@ -58,6 +59,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
+# Paused time, for the hedging tests
+tokio = { version = "1", features = ["test-util"] }
 # Captures what would be sent to Sentry, for the telemetry tests
 sentry = { version = "0.49", default-features = false, features = ["test"] }
 

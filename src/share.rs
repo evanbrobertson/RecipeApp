@@ -1715,6 +1715,7 @@ static EXPORT_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     });
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
+        .dns_resolver(std::sync::Arc::new(crate::scraper::PublicResolver))
         .redirect(policy)
         .build()
         .expect("HTTP client")

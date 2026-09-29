@@ -399,6 +399,12 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     let tools = &state.config.video;
     // The cook's browser already read the page: the site isn't asked again (it may refuse)
     let from_browser = take_from_browser(state, url);
+    if from_browser.is_none() {
+        // Not a private address, whatever yt-dlp or the page fallback would be sent to
+        let parsed =
+            url::Url::parse(url).map_err(|_| AppError::bad_request("Please enter a valid URL"))?;
+        crate::scraper::check_public(state, &parsed).await?;
+    }
     let hint = if from_browser.is_none() && is_youtube(url) {
         YOUTUBE_HINT
     } else {
@@ -938,7 +944,7 @@ pub fn pick_frames(stills: Vec<Vec<u8>>, max: usize) -> Vec<Photo> {
 /// video's cover, else a still from the end, where the dish is usually shown.
 async fn photo(state: &AppState, meta: &VideoMeta, frames: &[Photo]) -> Option<String> {
     if let Some(thumbnail) = &meta.thumbnail
-        && let Some(kept) = crate::images::fetch_to_embed(&state.http, thumbnail).await
+        && let Some(kept) = crate::images::fetch_to_embed(state, thumbnail).await
     {
         return Some(kept);
     }

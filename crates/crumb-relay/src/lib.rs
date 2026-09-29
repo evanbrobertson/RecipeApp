@@ -153,7 +153,7 @@ async fn fetch(State(relay): State<Arc<Relay>>, headers: HeaderMap, body: Bytes)
     let fetched = (relay.fetcher)(request.profile, request.url).await;
     let ms = started.elapsed().as_millis();
     match fetched {
-        Ok(Fetched::Page { status, html }) => {
+        Ok(Fetched::Page { status, html, .. }) => {
             tracing::info!("{host}: {} {status} in {ms} ms", request.profile.label());
             Json(FetchReply {
                 status,
@@ -224,6 +224,7 @@ mod tests {
         Ok(Fetched::Page {
             status,
             html: html.into(),
+            link: None,
         })
     }
 

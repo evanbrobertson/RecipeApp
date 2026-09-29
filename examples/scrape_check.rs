@@ -19,15 +19,21 @@ async fn main() {
                 let at = Instant::now();
                 let fetched = match method {
                     Method::Browser => match browser.fetch(&url).await {
-                        Ok(html) => Fetched::Page { status: 200, html },
+                        Ok(html) => Fetched::Page {
+                            status: 200,
+                            html,
+                            link: None,
+                        },
                         Err(err) => Fetched::Unreachable(err),
                     },
-                    Method::WordPress => fallbacks::fetch_wordpress(&url).await,
+                    Method::WordPress => fallbacks::fetch_wordpress(&url, None).await,
                     Method::Archive => fallbacks::fetch_archive(&url).await,
                     wreq => fetch_wreq(wreq, &url).await,
                 };
                 let what = match &fetched {
-                    Fetched::Page { status, html } => format!("{status} ({} bytes)", html.len()),
+                    Fetched::Page { status, html, .. } => {
+                        format!("{status} ({} bytes)", html.len())
+                    }
                     Fetched::Unreachable(e) => format!("error: {e}"),
                     Fetched::Recipe(_) => "recipe".into(),
                 };

@@ -6,6 +6,8 @@ export class ApiError extends Error {
     readonly status: number,
     /** The server's machine-readable reason, when it gives one (`"site_blocked"`). */
     readonly code?: string,
+    /** With `site_terms`: the listed site's name ("Allrecipes"). */
+    readonly site?: string,
   ) {
     super(message)
   }
@@ -41,11 +43,17 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   const type = res.headers.get("content-type") ?? ""
   const data = type.includes("json") ? await res.json().catch(() => null) : await res.text()
   if (!res.ok) {
-    const err = data as { message?: string; statusMessage?: string; code?: string } | null
+    const err = data as {
+      message?: string
+      statusMessage?: string
+      code?: string
+      site?: string
+    } | null
     throw new ApiError(
       err?.message || err?.statusMessage || res.statusText || "Error",
       res.status,
       typeof err?.code === "string" ? err.code : undefined,
+      typeof err?.site === "string" ? err.site : undefined,
     )
   }
   return data as T
@@ -54,6 +62,11 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
 /** A recipe site's bot check turned the server away; the extension can still read the page. */
 export function isSiteBlocked(e: unknown): boolean {
   return e instanceof ApiError && e.code === "site_blocked"
+}
+
+/** The site's terms of service forbid automated fetching; the extension can still read the page. */
+export function isSiteTerms(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "site_terms"
 }
 
 /** A readable message from anything thrown by api(). */

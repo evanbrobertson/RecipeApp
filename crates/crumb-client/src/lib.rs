@@ -101,6 +101,7 @@ pub const JOB_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 struct ErrorBody {
     message: Option<String>,
     code: Option<String>,
+    site: Option<String>,
 }
 
 /// The `{id, title, isNew}` body the import route echoes back. A shared-cookbook link
@@ -296,6 +297,7 @@ impl Client {
                                 .filter(|m| !m.is_empty())
                                 .unwrap_or_else(|| "Couldn't read that video".into()),
                             code: None,
+                            site: None,
                         });
                     }
                     status => progress(&crumb_core::add::job_progress(status, job.position)),
@@ -320,6 +322,7 @@ impl Client {
                 status: 200,
                 message: "That shared cookbook had no new recipes to save.".into(),
                 code: None,
+                site: None,
             });
         }
         Ok(Imported {
@@ -393,6 +396,7 @@ impl Client {
         let body = res.text().await.unwrap_or_default();
         let parsed = serde_json::from_str::<ErrorBody>(&body).ok();
         let code = parsed.as_ref().and_then(|body| body.code.clone());
+        let site = parsed.as_ref().and_then(|body| body.site.clone());
         let message = parsed
             .and_then(|body| body.message)
             .filter(|message| !message.is_empty())
@@ -401,6 +405,7 @@ impl Client {
             status,
             message,
             code,
+            site,
         }
     }
 

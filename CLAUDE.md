@@ -21,9 +21,15 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
-  HTML/microdata fallback. If both profiles were blocked: the site's WordPress API (`src/scraper/fallbacks.rs`), then
-  `crumb-relay`s on other networks over Tailscale (`src/relay.rs`, `SCRAPE_RELAYS`), then the Internet Archive's copy.
-  Headless Chromium over CDP comes last, for sites that still block or need JavaScript
+  HTML/microdata fallback. Order per link (`scraper::scrape_plan`): site memory (`src/sites.rs`, `sites.db`: what worked on
+  the host) → a recognised platform's API (WordPress: `src/scraper/platforms.rs`, `fallbacks.rs`) hedged with the page
+  (Firefox, Safari if blocked; the API starts if the page hasn't answered in 300 ms, first recipe wins) → if both profiles
+  were blocked: the API, then `crumb-relay`s over Tailscale (`src/relay.rs`, `SCRAPE_RELAYS`), with the Internet Archive's
+  copy joining only if no relay answered within `RELAY_HEAD_START` (2 s; at once when there are no relays), since an
+  archived copy can be stale → headless Chromium over CDP last, for sites that still block or need JavaScript. Never several requests
+  at one site at once bar that hedge; Chromium and videos never race. Every fetch of a link a cook supplies refuses private
+  addresses and listed sites (`crumb_fetch::guard`, redirects and DNS too, and the terms-check and image `reqwest` clients; Chromium goes through `crumb_fetch::proxy`); the relay client is
+  the one exception (Tailscale)
 - **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
@@ -60,7 +66,7 @@ crates/
   crumb-core/     # Pure logic shared by the server and every client; the server re-exports it (crumb::model, ...)
   crumb-client/   # Typed API client, tested against the real router
   crumb-ffi/      # UniFFI bindings (uniffi.toml: Kotlin package app.crumb.core, Swift module CrumbCore)
-  crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard; the server re-exports it in scraper.rs
+  crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard (guard.rs) and Chromium's guarded proxy (proxy.rs); the server re-exports it in scraper.rs
   crumb-relay/    # Relay binary (axum): POST /fetch behind a bearer token, rate limits; Dockerfile, systemd unit
 src/
   main.rs         # Boot: config, DB, browser, listen
@@ -80,6 +86,9 @@ src/
   preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
+  sites.rs        # sites.db, the one server-wide file of facts about hosts: site memory (`site_facts`: platform, API root, winning method, blocks_server) and Wee Chef's terms checks (`terms_checks`); `Config.sites_db`, `AppState.sites`
+  site_terms.rs   # Sites whose terms forbid automated fetching: the list (`data/site-terms.toml`), `check`/`guard`/`photo_is_listed`, and Wee Chef's Flagger
+  scraper/platforms.rs # Platform detection (WordPress Link header / head links), WPRM/Mediavine/Tasty ids and card markup
   scraper/page.rs # A recipe the extension read in the cook's browser (`page`): capped, parsed, never fetched
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
@@ -132,7 +141,24 @@ web/src/
   Account, household, connected apps and data settings live on `/more/account` (`AccountPage.svelte`), not More.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`,
   plus a `code` only when a client can act on it (`site_blocked`: a recipe site's bot check turned the server away, so the web
-  nudges toward the extension instead of showing an error).
+  nudges toward the extension instead of showing an error; `site_terms`: the site's terms forbid automated fetching, and
+  the error also carries `site`, the listed site's display name, e.g. "Allrecipes", which BlockedNudge and the preview's
+  failed state show and `crumb-client` exposes as `Error::site()`).
+- **`sites.db`:** one file beside the home database, opened once by `sites::Sites` (never a second opener or a second
+  config path). Only facts about public hosts: how a host was read (`site_facts`, `SCRAPE_SITE_MEMORY=off` stops
+  it) and when Wee Chef last read its terms (`terms_checks`). Never a recipe, a household or a link's path.
+- **Sites whose terms forbid automated fetching:** `data/site-terms.toml` (reviewed by a person, compiled into the
+  server and the extension) lists hosts the server never fetches. `scraper::scrape_page` calls `site_terms::guard` first,
+  before any network use or site memory, and is the one guarantee that no scrape of a listed host (page, API, relay,
+  archive, browser) goes out: import, refresh, preview and MCP all come through it, and they answer 422 `site_terms`.
+  Callers add checks only for a different answer (the preview fails before it asks; a video is queued, not scraped). A
+  `page` from the extension never reaches `scrape_page` and is still taken. A redirect from another site, or a page
+  Chromium follows, can't reach a listed host either: `AppState::new` installs `site_terms::host_is_listed` as
+  `crumb_fetch::guard::set_veto`, which every guard check and Chromium's proxy ask. Photos on a listed host, or on an entry's
+  `image_hosts` (CDNs), are never downloaded either: `/img` redirects the browser to the original (307) and
+  `photo_is_dead` / `fetch_to_embed` skip them (`site_terms::photo_is_listed`). Wee Chef
+  suggests more in the background (`site_terms::Flagger`, `tos-suggestion` GitHub issues, `data/site-terms-ignore.toml`
+  for hosts a person cleared); a person edits the list, Wee Chef never does. Robots.txt is ignored on purpose.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.

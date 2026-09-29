@@ -100,7 +100,7 @@
   import X from "@lucide/svelte/icons/x"
   import { onMount, tick } from "svelte"
   import BlockedNudge from "../components/BlockedNudge.svelte"
-  import { api, errorMessage, isSiteBlocked } from "../lib/api"
+  import { api, ApiError, errorMessage, isSiteBlocked, isSiteTerms } from "../lib/api"
   import { autosize } from "../lib/autosize"
   import { bookImportedTitle } from "../lib/format"
   import { importRecipe } from "../lib/importLink"
@@ -143,6 +143,10 @@
   let saving = $state(false)
   /** The link a site's bot check kept the server from reading: a nudge, not an error toast. */
   let blocked = $state<string | null>(null)
+  /** Why `blocked`: the site's bot check, or its terms of service. */
+  let blockedWhy = $state<"bot" | "terms">("bot")
+  /** The listed site's name, for the `terms` nudge. */
+  let blockedSite = $state<string | undefined>(undefined)
   let count = $state<number | null>(null)
   let detected = $state<Detected>({ mode: "auto", summary: "" })
   let tipIndex = $state(-1)
@@ -459,7 +463,11 @@
       else if (res.fromVideo) flash({ title: "Saved from the video", tone: "success" })
       location.href = `/recipes/${res.id}`
     } catch (err) {
-      if ("url" in body && isSiteBlocked(err)) blocked = body.url
+      if ("url" in body && (isSiteBlocked(err) || isSiteTerms(err))) {
+        blockedWhy = isSiteTerms(err) ? "terms" : "bot"
+        blockedSite = err instanceof ApiError ? err.site : undefined
+        blocked = body.url
+      }
       else toast({ title: `Couldn't ${what}`, description: errorMessage(err), tone: "error" })
       saving = false
     }
@@ -768,7 +776,7 @@
 
     {#if blocked}
       <div class="mt-3">
-        <BlockedNudge url={blocked} onpaste={pasteInstead} ondismiss={() => (blocked = null)} />
+        <BlockedNudge url={blocked} why={blockedWhy} name={blockedSite} onpaste={pasteInstead} ondismiss={() => (blocked = null)} />
       </div>
     {/if}
 

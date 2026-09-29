@@ -128,6 +128,27 @@ A flag also goes away when you change or remove the line.
 
 "Check all" only flags lines. It also does the small clean-up, which you can undo. The clean-up changes an old category into a Crumb category, or removes it if it is not like one. Then Wee Chef can select a category. It does not check recipes that you wrote yourself or that Claude saved. The More page shows the progress.
 
+### Sites whose terms forbid automated fetching
+
+Crumb fetches one page for you, when you ask, so it does not follow `robots.txt`. It does respect a site whose terms of service say in words that automated fetching or scraping is not allowed. Those sites are in `data/site-terms.toml`. A person reads the terms and adds each entry: the site's name and hosts (a host also covers its subdomains), the short clause, a link to the terms and the date it was checked. The first entries are the People Inc brands (Allrecipes, Serious Eats, Simply Recipes, Food & Wine, EatingWell, Martha Stewart, Better Homes & Gardens, Real Simple, Southern Living, MyRecipes and The Spruce Eats). A clause that also forbids copying by hand does not count as a reason to list a site.
+
+For a listed site the server fetches nothing: no page, no API, no relay, no archive copy and no browser. Every scrape goes through one check first, so import, refresh, preview and the Claude connector all get the same answer: `422` with `code: "site_terms"` and `site`, the site's name (for example "Allrecipes"). The Add page, the preview and the Claude connector tell you to open the recipe on the site and use the Crumb extension. The extension reads the page in your own browser, so a recipe that it hands over is still saved. On a listed site, the extension says that it reads the page because the site's terms do not allow Crumb's server to fetch it. The extension carries the same list, built in from the same file. It does not make any request to know it.
+
+The server does not download the listed site's photos either. In your recipe box such a photo is shown from the site itself: Crumb sends your browser to the original instead of resizing and caching it, and it does not check or copy the photo when you save a recipe. An entry can also list `image_hosts`, the image CDNs that serve the site's photos and nobody else's, and they are treated the same way.
+
+**How Wee Chef finds more sites.** When you import a recipe from a host that is not in `data/site-terms.toml` or `data/site-terms-ignore.toml`, and Crumb has not checked that host in the last 90 days, Wee Chef looks at the site's terms in the background. The import never waits for it, and one check runs at a time. This needs a Wee Chef key and `TERMS_ISSUES_TOKEN`, and `TERMS_CHECK=off` turns it off.
+
+1. Crumb finds the terms page from a footer link on the site's home page (a link named "Terms of Service", "Terms of Use", "Terms" or "Legal"), or else at `/terms-of-service`, `/terms-of-use` or `/terms`. It makes at most three plain requests to the site, never through a relay.
+2. Wee Chef reads up to 60 KB of the text and answers if the terms explicitly ban automated access, scraping, robots or data mining. A general "personal, non-commercial use" or a copyright notice does not count. The terms text is untrusted, so Crumb ignores any instruction in it. It believes a ban only when Wee Chef is confident and its quote is really in the text.
+3. If so, Crumb opens a GitHub issue in `TERMS_ISSUES_REPO` with the label `tos-suggestion` and the title `Terms: {host} may forbid automated fetching`. The issue has the quote, the terms link, the confidence and a TOML entry ready to paste. It has no recipe content. Crumb looks at all issues with that label, open and closed, first, so a host gets one issue ever.
+
+**How to review an issue.** Open the terms link and read the clause.
+
+- If the terms do ban automated access, paste the entry into `data/site-terms.toml`, correct the name, and merge. The next release stops fetching the site. The extension also gets a new release from that change.
+- If they do not, paste the `[[ignore]]` entry from the issue into `data/site-terms-ignore.toml` with a reason. Crumb stops checking that host and its subdomains.
+
+Then close the issue. Crumb keeps its own record of checks in the `terms_checks` table of `sites.db`, the same file that holds site memory, next to the database.
+
 ### Recipe page
 
 The recipe page shows the photo, the title, the author, the source link and the description. It also shows the times (Prep, Cook, Extra and Total), the servings and your cook history.
@@ -394,9 +415,13 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `CRUMB_RUN_AS_ROOT` | No         | Docker only: `1` skips the entrypoint's drop to the unprivileged `crumb` user |
 | `SCRAPE_WORDPRESS`  | No         | Set to `off` to stop blocked WordPress recipe sites being read through their REST API |
 | `SCRAPE_ARCHIVE`    | No         | Set to `off` to stop blocked recipe sites being read from the Internet Archive's copy |
+| `SCRAPE_SITE_MEMORY` | No        | Set to `off` to stop remembering how each recipe site was last read (`sites.db` beside the database: host, platform, API address, what worked; kept a week, no recipe content). The terms-check record in the same file is not affected |
 | `SCRAPE_RELAYS`     | No         | Comma-separated base URLs of `crumb-relay`s (see [docs/RELAY.md](docs/RELAY.md)), asked for a page when both of the server's own fetches were blocked |
 | `SCRAPE_RELAY_TOKEN` | With relays | The token the relays were started with (their `RELAY_TOKEN`); without it relays are off |
 | `SCRAPE_RELAY_PROXY` | No        | A proxy (e.g. `socks5h://host:1055`) to reach the relays through, for Tailscale in userspace mode |
+| `TERMS_ISSUES_TOKEN` | No        | A fine-grained GitHub token with Issues (read and write) on `TERMS_ISSUES_REPO`. With a Wee Chef key it turns on the terms check (see [Sites whose terms forbid automated fetching](#sites-whose-terms-forbid-automated-fetching)) |
+| `TERMS_ISSUES_REPO` | No         | Where the terms check opens its `tos-suggestion` issues, default `evanbrobertson/RecipeApp` |
+| `TERMS_CHECK`       | No         | `off` turns the terms check off, even with the token set. Listed sites are still never fetched |
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |
