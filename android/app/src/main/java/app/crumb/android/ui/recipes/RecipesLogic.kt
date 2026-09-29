@@ -3,12 +3,13 @@ package app.crumb.android.ui.recipes
 import app.crumb.android.data.Durations
 import app.crumb.android.data.RecipeSummary
 import app.crumb.core.kicker
+import app.crumb.core.plural
 
 // Pure logic for the recipes list, ported from web/src/islands/RecipesPage.svelte and
 // web/src/lib/categories.ts. RecipesLogicTest pins the strings and the selection rules.
 
 /** "1 recipe" / "2 recipes". */
-fun recipeCountLabel(count: Int): String = "$count recipe" + if (count == 1) "" else "s"
+fun recipeCountLabel(count: Int): String = plural(count.toUInt(), "recipe")
 
 /** The "Delete recipes?" body. */
 fun deleteDescription(count: Int): String = "${recipeCountLabel(count)} will be permanently deleted."

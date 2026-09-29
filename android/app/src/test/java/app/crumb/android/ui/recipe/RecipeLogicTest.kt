@@ -1,6 +1,7 @@
 package app.crumb.android.ui.recipe
 
 import app.crumb.android.data.Flag
+import app.crumb.android.data.RecipeChecks
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -28,14 +29,6 @@ class RecipeLogicTest {
     }
 
     @Test
-    fun plural() {
-        assertEquals("1 line", plural(1, "line"))
-        assertEquals("2 lines", plural(2, "line"))
-        assertEquals("1 thing", plural(1, "thing"))
-        assertEquals("3 things", plural(3, "thing"))
-    }
-
-    @Test
     fun fixTextMatchesEachFix() {
         assertEquals("Made “Sauce:” a section heading", fixText(flag(fix = "heading", text = "Sauce:")))
         assertEquals("Removed “Share this”", fixText(flag(fix = "removed", text = "Share this")))
@@ -58,11 +51,7 @@ class RecipeLogicTest {
     }
 
     @Test
-    fun nutritionLabelsAndValues() {
-        assertEquals("Calories", nutritionLabel("calories"))
-        assertEquals("Saturated fat", nutritionLabel("saturatedFatContent"))
-        assertEquals("Sugar", nutritionLabel("sugarContent"))
-        assertEquals("fiber", nutritionLabel("fiber"))
+    fun nutritionValuesPrintPlainly() {
         assertEquals("1g", nutritionValue(JsonPrimitive("1g")))
         assertEquals("12", nutritionValue(JsonPrimitive(12)))
         assertNull(nutritionValue(null))
@@ -78,6 +67,19 @@ class RecipeLogicTest {
         )
         assertEquals(2, newlyFixedCount(flags, setOf(1L)))
         assertEquals(5, newlyFixedCount(flags, emptySet()))
+    }
+
+    @Test
+    fun checkToastCountsThisChecksFixesAndSkipsThePhoto() {
+        val flags = listOf(
+            Flag(1, "recipe", state = "fixed", kind = "tidy", detail = buildJsonObject { put("fix", "tidy"); put("count", 3) }),
+            Flag(2, "instructions", state = "review", kind = "fragment"),
+            Flag(3, "image", state = "review", kind = "dead_photo"),
+        )
+        val toast = checkToast(RecipeChecks("done", flags = flags), emptySet())
+        assertEquals("Wee Chef tidied 3 things", toast.title)
+        assertEquals("1 line might need a look", toast.description)
+        assertEquals("Wee Chef found nothing to change", checkToast(RecipeChecks("done", flags = flags.drop(2)), emptySet()).title)
     }
 
     private fun flag(

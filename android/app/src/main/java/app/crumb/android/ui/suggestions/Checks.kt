@@ -3,6 +3,8 @@ package app.crumb.android.ui.suggestions
 import app.crumb.android.data.ChecksStatus
 import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.Staple
+import app.crumb.core.FieldCount
+import app.crumb.core.reviewSummary
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,23 +32,9 @@ fun checksStatusText(status: ChecksStatus, run: Int? = null): String =
         run?.takeIf { it >= 0 }?.toUInt(),
     )
 
-/** How each counted field reads in a summary, singular then plural (web `NAMES`). */
-private val FieldNames = mapOf(
-    "ingredients" to ("ingredient" to "ingredients"),
-    "instructions" to ("step" to "steps"),
-    "notes" to ("note" to "notes"),
-    "totalTime" to ("time" to "times"),
-    "image" to ("broken photo link" to "broken photo links"),
-)
-
-/** "2 steps · 1 ingredient" (web `summary`), the field with the most flags first. */
+/** "2 steps · 1 ingredient", the field with the most flags first (crumb-core `reviewSummary`). */
 fun summary(fields: Map<String, Int>): String =
-    fields.entries
-        .sortedByDescending { it.value }
-        .joinToString(" · ") { (field, n) ->
-            val (one, many) = FieldNames[field] ?: ("thing" to "things")
-            "$n ${if (n == 1) one else many}"
-        }
+    reviewSummary(fields.map { (field, n) -> FieldCount(field, n.toUInt()) })
 
 /** A staple's name as the tip shows it: "olive oil" → "Olive oil". */
 fun capitalise(name: String): String = name.replaceFirstChar { it.uppercaseChar() }

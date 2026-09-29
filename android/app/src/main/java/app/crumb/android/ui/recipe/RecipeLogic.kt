@@ -4,6 +4,9 @@ import app.crumb.android.data.Flag
 import app.crumb.android.data.RecipeChecks
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import app.crumb.core.CheckToast
+import app.crumb.core.checkDoneToast
+import app.crumb.core.fixWeight
 import java.time.Instant
 
 // Wording and arithmetic for the recipe page (web/src/lib/history.ts and lib/checks.ts), mostly
@@ -19,9 +22,6 @@ fun cookedLine(stats: CookStats?, nowMs: Long = System.currentTimeMillis()): Str
     return app.crumb.core.cookedLine(stats.count.toUInt(), at, nowMs)
 }
 
-/** "1 line" / "2 lines" (web `plural`, lib/checks.ts). */
-fun plural(n: Int, one: String, many: String = "${one}s"): String = "$n ${if (n == 1) one else many}"
-
 /** What Wee Chef did to a line on import (web `fixText`). */
 fun fixText(flag: Flag): String {
     val detail = flag.detail as? JsonObject
@@ -34,41 +34,31 @@ fun fixedFlags(checks: RecipeChecks?): List<Flag> = checks?.flags?.filter { it.s
 /** The recipe's review flags, in check order. */
 fun reviewFlags(checks: RecipeChecks?): List<Flag> = checks?.flags?.filter { it.state == "review" }.orEmpty()
 
-/** "Wee Chef tidied 2 things". */
-fun tidiedTitle(count: Int): String = "Wee Chef tidied ${plural(count, "thing")}"
+/** "Wee Chef tidied 2 things" (crumb-core `tidiedTitle`). */
+fun tidiedTitle(count: Int): String = app.crumb.core.tidiedTitle(count.toUInt())
 
-/** "3 lines might need a look". */
-fun mightNeedALook(count: Int): String = "${plural(count, "line")} might need a look"
+/** "3 lines might need a look" (crumb-core `lookTitle`). */
+fun mightNeedALook(count: Int): String = app.crumb.core.lookTitle(count.toUInt())
 
 /**
  * The fixes this check made that weren't there before: each flag counts once, except a "tidy"
- * flag which counts the small things it cleaned up.
+ * flag which counts the small things it cleaned up (crumb-core `fixWeight`).
  */
 fun newlyFixedCount(flags: List<Flag>, before: Set<Long>): Int =
     flags.filter { it.state == "fixed" && it.id !in before }
         .sumOf { flag ->
-            val detail = flag.detail as? JsonObject
-            if (detail.str("fix") == "tidy") detail.int("count") ?: 1 else 1
+            val detail = (flag.detail as? JsonObject) ?: JsonObject(emptyMap())
+            runCatching { fixWeight(detail.toString()).toInt() }.getOrDefault(1)
         }
 
-/** The web's nutritionLabels map (lib/recipe.ts:207-220). */
-private val NutritionLabels = mapOf(
-    "calories" to "Calories",
-    "fatContent" to "Fat",
-    "saturatedFatContent" to "Saturated fat",
-    "unsaturatedFatContent" to "Unsaturated fat",
-    "transFatContent" to "Trans fat",
-    "carbohydrateContent" to "Carbs",
-    "sugarContent" to "Sugar",
-    "fiberContent" to "Fiber",
-    "proteinContent" to "Protein",
-    "cholesterolContent" to "Cholesterol",
-    "sodiumContent" to "Sodium",
-    "servingSize" to "Serving size",
-)
-
-/** A nutrition key as a label: the map's name, else the key with a trailing "Content" cut. */
-fun nutritionLabel(key: String): String = NutritionLabels[key] ?: key.replace(Regex("Content$"), "")
+/**
+ * The toast when a check someone asked for is done. As the web, only this check's fixes count,
+ * and the photo's flag isn't a line to look at.
+ */
+fun checkToast(checks: RecipeChecks, fixedBefore: Set<Long>): CheckToast {
+    val review = checks.flags.count { it.state == "review" && it.field != "image" }
+    return checkDoneToast(checks.status, newlyFixedCount(checks.flags, fixedBefore).toUInt(), review.toUInt())
+}
 
 /** A nutrition value: the raw string, a number printed plainly, or null when empty. */
 fun nutritionValue(value: kotlinx.serialization.json.JsonElement?): String? {
@@ -78,6 +68,3 @@ fun nutritionValue(value: kotlinx.serialization.json.JsonElement?): String? {
 
 private fun JsonObject?.str(key: String): String? =
     (this?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
-
-private fun JsonObject?.int(key: String): Int? =
-    (this?.get(key) as? JsonPrimitive)?.content?.toIntOrNull()

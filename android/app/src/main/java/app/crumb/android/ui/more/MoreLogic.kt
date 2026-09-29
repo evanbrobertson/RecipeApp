@@ -4,6 +4,7 @@ import app.crumb.android.data.SharedLink
 import app.crumb.android.ui.theme.SunClock
 import app.crumb.android.ui.theme.SunLocation
 import app.crumb.android.ui.theme.SunTimes
+import app.crumb.core.dateLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -12,7 +13,6 @@ import java.util.Locale
 // The More page's wording that isn't already shared Rust logic (web/src/islands/MoreSettings.svelte).
 
 private val Clock = DateTimeFormatter.ofPattern("h:mm a")
-private val Day = DateTimeFormatter.ofPattern("d MMM yyyy")
 
 /** "7:12 pm" — the web's `toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})`. */
 fun formatSunTime(ms: Long, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String =
@@ -30,19 +30,21 @@ fun sunLine(now: Long, loc: SunLocation, zone: ZoneId = ZoneId.systemDefault(), 
     }
 
 /**
- * "Recipe shared 26 Sep 2026 · last opened 26 Sep 2026" (web `shareMeta`), or "… · not
+ * "Recipe · shared Sep 26, 2026 · last opened Sep 27, 2026" (web `shareMeta`), or "… · not
  * opened yet" for a link nobody has used.
  */
-fun shareMeta(link: SharedLink, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String {
+fun shareMeta(link: SharedLink, zone: ZoneId = ZoneId.systemDefault()): String {
     val kind = if (link.kind == "cookbook") "Cookbook" else "Recipe"
-    val parts = mutableListOf(kind, "shared ${formatDay(link.createdAt, zone, locale)}")
-    parts += if (link.lastOpenedAt != null) "last opened ${formatDay(link.lastOpenedAt, zone, locale)}" else "not opened yet"
+    val parts = mutableListOf(kind, "shared ${formatDay(link.createdAt, zone)}")
+    parts += if (link.lastOpenedAt != null) "last opened ${formatDay(link.lastOpenedAt, zone)}" else "not opened yet"
     return parts.joinToString(" · ")
 }
 
-private fun formatDay(iso: String?, zone: ZoneId, locale: Locale): String {
+/** A date as crumb-core prints one ("Sep 26, 2026"), in the viewer's zone. */
+private fun formatDay(iso: String?, zone: ZoneId): String {
     if (iso == null) return ""
     return runCatching {
-        Instant.parse(iso).atZone(zone).format(Day.withLocale(locale))
+        val at = Instant.parse(iso)
+        dateLabel(at.toEpochMilli(), zone.rules.getOffset(at).totalSeconds / 60)
     }.getOrDefault("")
 }

@@ -58,7 +58,7 @@ fun WeeChefCard(
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Lucide.ChefHat, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
                 Text(
-                    "Wee Chef tidied ${plural(fixed.size, "thing")}",
+                    tidiedTitle(fixed.size),
                     color = c.ink,
                     fontFamily = NunitoSans,
                     fontSize = 15.sp,
@@ -93,7 +93,7 @@ fun WeeChefCard(
                     Icon(Lucide.ChefHat, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
                 }
                 Text(
-                    "${plural(review.size, "line")} might need a look",
+                    mightNeedALook(review.size),
                     color = c.ink,
                     fontFamily = NunitoSans,
                     fontSize = 15.sp,

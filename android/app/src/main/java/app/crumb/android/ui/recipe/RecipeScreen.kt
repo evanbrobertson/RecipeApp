@@ -97,6 +97,7 @@ import app.crumb.android.ui.theme.DmSerif
 import app.crumb.android.ui.theme.NunitoSans
 import app.crumb.core.hostOf
 import app.crumb.core.kicker
+import app.crumb.core.nutritionLabel
 import app.crumb.core.scaleIngredient
 import app.crumb.core.webLink
 import com.composables.icons.lucide.Check
@@ -331,15 +332,8 @@ class RecipePageViewModel(
                 if (checks.status == "pending") continue
                 if (asked) {
                     asked = false
-                    val review = checks.flags.count { it.state == "review" }
-                    val fixed = newlyFixedCount(checks.flags, fixedBefore)
-                    when {
-                        checks.status == "failed" -> Toaster.show("Wee Chef couldn't check this recipe", tone = ToastTone.Error)
-                        fixed > 0 && review > 0 -> Toaster.show(tidiedTitle(fixed), mightNeedALook(review))
-                        fixed > 0 -> Toaster.show(tidiedTitle(fixed))
-                        review > 0 -> Toaster.show(mightNeedALook(review))
-                        else -> Toaster.show("Wee Chef found nothing to change")
-                    }
+                    val toast = checkToast(checks, fixedBefore)
+                    Toaster.show(toast.title, toast.description, if (checks.status == "failed") ToastTone.Error else ToastTone.Default)
                 }
                 return@launch
             }

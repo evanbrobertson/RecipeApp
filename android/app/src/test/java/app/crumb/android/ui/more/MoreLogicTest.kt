@@ -43,9 +43,9 @@ class MoreLogicTest {
             createdAt = "2026-09-26T16:26:43.000Z",
             lastOpenedAt = "2026-09-27T09:00:00.000Z",
         )
-        assertEquals("Recipe · shared 26 Sep 2026 · last opened 27 Sep 2026", shareMeta(opened, utc, us))
+        assertEquals("Recipe · shared Sep 26, 2026 · last opened Sep 27, 2026", shareMeta(opened, utc))
 
         val never = opened.copy(kind = "cookbook", lastOpenedAt = null)
-        assertEquals("Cookbook · shared 26 Sep 2026 · not opened yet", shareMeta(never, utc, us))
+        assertEquals("Cookbook · shared Sep 26, 2026 · not opened yet", shareMeta(never, utc))
     }
 }
