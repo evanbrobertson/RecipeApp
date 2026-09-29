@@ -147,3 +147,16 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
         val NEXT_OPEN = booleanPreferencesKey("home_next_open")
     }
 }
+
+/** The cooking video the server is still reading, kept in DataStore so a closed app can ask after it. */
+class LocalPendingJobs(private val context: Context) : PendingJobStore {
+    override suspend fun load(): PendingJob? = PendingJob.decode(context.localData.data.first()[PENDING_JOB])
+
+    override suspend fun save(job: PendingJob?) {
+        context.localData.edit { if (job == null) it.remove(PENDING_JOB) else it[PENDING_JOB] = job.encode() }
+    }
+
+    private companion object {
+        val PENDING_JOB = stringPreferencesKey("pending_video_job")
+    }
+}

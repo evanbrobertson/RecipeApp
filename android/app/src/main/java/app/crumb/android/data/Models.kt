@@ -325,3 +325,9 @@ data class ConnectorInfo(
     val browserScraping: Boolean = false,
     val weeChefChecks: Boolean = false,
 )
+
+/** What `POST /api/recipes/import` answered for a link: a saved recipe, or a cooking video's job. */
+sealed interface ImportStart {
+    data class Done(val result: ImportResult) : ImportStart
+    data class Queued(val job: ImportJob) : ImportStart
+}

@@ -10,6 +10,9 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -32,9 +35,19 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** A request that reached the server and was refused. [message] is written for people. */
-class ApiException(val status: Int, override val message: String) : Exception(message) {
+class ApiException(
+    val status: Int,
+    override val message: String,
+    /** The server's machine-readable reason, when it gives one (`site_terms`, `site_blocked`). */
+    val code: String? = null,
+    /** With `site_terms`: the listed site's name. */
+    val site: String? = null,
+) : Exception(message) {
     val isSignedOut get() = status == 401
 }
+
+/** A video import's job is gone from the server (it was restarted, or the job aged out). */
+class JobGoneException : Exception("That video import is no longer running")
 
 /** The request never got an answer: no network, wrong address, server down. */
 class OfflineException(cause: Throwable) : IOException(cause.message, cause)
@@ -117,31 +130,91 @@ class CrumbApi(
      * with the job's own status and message. A dropped connection between polls doesn't lose the
      * job (it keeps running on the server), so a few misses are waited out.
      */
-    suspend fun importUrl(link: String, progress: (String) -> Unit = {}): ImportResult {
+    suspend fun importUrl(link: String, progress: (String) -> Unit = {}): ImportResult =
+        when (val started = startImport(link)) {
+            is ImportStart.Done -> started.result
+            is ImportStart.Queued -> watchJob(started.job.jobId!!, started.job, progress)
+        }
+
+    /** `POST /api/recipes/import` for a link, without waiting for a cooking video's job. */
+    suspend fun startImport(link: String): ImportStart {
         val body = withContext(Dispatchers.Default) {
             post("api/recipes/import", buildJsonObject { put("url", link) }.toString()).use { it.body.string() }
         }
         val started = CrumbJson.decodeFromString(ImportJob.serializer(), body)
-        val jobId = started.jobId ?: return CrumbJson.decodeFromString(ImportResult.serializer(), body)
-        var job = started
+        return if (started.jobId != null) ImportStart.Queued(started)
+        else ImportStart.Done(CrumbJson.decodeFromString(ImportResult.serializer(), body))
+    }
+
+    /** `GET /api/import/jobs/{id}`; a job the server no longer has is a [JobGoneException]. */
+    suspend fun jobStatus(jobId: String): ImportJob =
+        try {
+            get(url("api/import/jobs/${URLEncoder.encode(jobId, "UTF-8")}"), ImportJob.serializer())
+        } catch (e: ApiException) {
+            if (e.status == 404) throw JobGoneException() else throw e
+        }
+
+    /**
+     * Polls a video's job until it is saved (or fails), from its [first] answer or, for a job
+     * picked up again after the app was away, from the server's. Gives up with the
+     * [OfflineException] after [MAX_POLL_MISSES] polls in a row that can't connect; the job itself
+     * keeps running on the server.
+     */
+    suspend fun watchJob(jobId: String, first: ImportJob? = null, progress: (String) -> Unit = {}): ImportResult {
+        var job = first
         var missed = 0
         while (true) {
-            when (job.status) {
-                "done" -> {
-                    val r = job.recipe ?: throw ApiException(422, "Couldn't read that video")
-                    return ImportResult(r.id, r.title, r.isNew, fromVideo = true)
+            val current = job
+            if (current != null) {
+                when (current.status) {
+                    "done" -> {
+                        val r = current.recipe ?: throw ApiException(422, "Couldn't read that video")
+                        return ImportResult(r.id, r.title, r.isNew, fromVideo = true)
+                    }
+                    "failed" -> throw ApiException(current.statusCode ?: 422, current.message ?: "Couldn't read that video")
                 }
-                "failed" -> throw ApiException(job.statusCode ?: 422, job.message ?: "Couldn't read that video")
+                progress(app.crumb.core.jobProgress(current.status, current.position?.toUInt()))
             }
-            progress(app.crumb.core.jobProgress(job.status, job.position?.toUInt()))
-            delay(POLL_MS)
+            if (current != null || missed > 0) delay(POLL_MS)
             job = try {
-                get(url("api/import/jobs/${URLEncoder.encode(jobId, "UTF-8")}"), ImportJob.serializer()).also { missed = 0 }
+                jobStatus(jobId).also { missed = 0 }
             } catch (e: OfflineException) {
                 if (++missed > MAX_POLL_MISSES) throw e
-                job
+                current
             }
         }
+    }
+
+    /** `POST /api/recipes/preview`: a link read and shown before it's saved. */
+    suspend fun preview(link: String): Preview {
+        val body = withContext(Dispatchers.Default) {
+            post("api/recipes/preview", buildJsonObject { put("url", link) }.toString()).use { it.body.string() }
+        }
+        return parsePreview(body)
+    }
+
+    /**
+     * `GET /api/popular`: links several other households saved that this one hasn't. Empty when
+     * the server has no Popular (one household, password mode, `POPULAR=off`).
+     */
+    suspend fun popular(): List<PopularLink> =
+        try {
+            get(url("api/popular"), Popular.serializer()).links()
+        } catch (e: ApiException) {
+            if (e.status == 404) emptyList() else throw e
+        }
+
+    /** `GET /api/popular/opt-out`: null when the server has no Popular. */
+    suspend fun popularSetting(): PopularSetting? =
+        try {
+            get(url("api/popular/opt-out"), PopularSetting.serializer()).takeIf { it.enabled }
+        } catch (e: ApiException) {
+            if (e.status == 404) null else throw e
+        }
+
+    /** `POST /api/popular/opt-out`: whether this household's saved links stay out of Popular. */
+    suspend fun setPopularOptOut(optedOut: Boolean) {
+        post("api/popular/opt-out", buildJsonObject { put("optedOut", optedOut) }.toString()).close()
     }
 
     suspend fun importText(text: String): ImportResult =
@@ -409,7 +482,7 @@ class CrumbApi(
         }
         if (!response.isSuccessful) {
             val text = response.use { runCatching { it.body.string() }.getOrDefault("") }
-            throw ApiException(response.code, errorMessage(response.code, text))
+            throw ApiException(response.code, errorMessage(response.code, text), errorField(text, "code"), errorField(text, "site"))
         }
         return response
     }
@@ -421,7 +494,7 @@ class CrumbApi(
         const val POLL_MS = 2000L
 
         /** Polls in a row that may fail to connect (about three minutes) before the wait is given up. */
-        private const val MAX_POLL_MISSES = 90
+        const val MAX_POLL_MISSES = 90
         private val JSON = "application/json".toMediaType()
         private val JPEG = "image/jpeg".toMediaType()
         private val OCTET = "application/octet-stream".toMediaType()
@@ -439,6 +512,10 @@ class CrumbApi(
         fun serverUrl(input: String): HttpUrl? = app.crumb.core.serverUrl(input)?.toHttpUrlOrNull()
     }
 }
+
+/** A string field of an error body (`{message, code, site}`), if there is one. */
+internal fun errorField(body: String, name: String): String? =
+    runCatching { CrumbJson.parseToJsonElement(body).jsonObject[name]?.jsonPrimitive?.contentOrNull }.getOrNull()
 
 private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
     enqueue(object : Callback {

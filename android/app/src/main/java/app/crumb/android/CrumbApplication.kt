@@ -6,6 +6,7 @@ import app.crumb.android.data.AccountApi
 import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.appUserAgent
 import app.crumb.android.data.Importer
+import app.crumb.android.data.LocalPendingJobs
 import app.crumb.android.data.LocalStore
 import app.crumb.android.data.PhotoImport
 import app.crumb.android.timers.KitchenTimers
@@ -13,6 +14,7 @@ import app.crumb.android.data.RecipeCache
 import app.crumb.android.data.RecipeRepository
 import app.crumb.android.data.SessionCookies
 import app.crumb.android.data.SessionStore
+import app.crumb.android.data.VideoJobs
 import app.crumb.android.ui.theme.ThemeStore
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -51,7 +53,8 @@ class AppContainer(app: Application, scope: CoroutineScope) {
     val api = CrumbApi(http) { session.current }
     val accounts = AccountApi(api)
     val recipes = RecipeRepository(api, cache)
-    val importer = Importer(api, PhotoImport(app, api), app.contentResolver)
+    val videoJobs = VideoJobs(api, LocalPendingJobs(app), scope)
+    val importer = Importer(api, PhotoImport(app, api), app.contentResolver, videoJobs)
 
     /** Photos come from the signed-in server, so they carry the session cookie too. */
     val photoHttp: OkHttpClient = http.newBuilder()
@@ -69,6 +72,7 @@ class AppContainer(app: Application, scope: CoroutineScope) {
         .build()
 
     suspend fun signOut() {
+        videoJobs.clear()
         api.logout()
         cache.clear()
         session.signOut()
@@ -87,6 +91,7 @@ class CrumbApplication : Application(), SingletonImageLoader.Factory {
         container = AppContainer(this, scope)
         scope.launch { container.local.load() }
         scope.launch { container.timers.load() }
+        scope.launch { container.videoJobs.load() }
         KitchenTimers.createChannels(this)
         scope.launch {
             container.session.load()

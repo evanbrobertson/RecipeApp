@@ -34,10 +34,19 @@ class Importer(
     private val api: CrumbApi,
     private val photos: PhotoImport,
     private val resolver: ContentResolver,
+    private val videoJobs: VideoJobs,
 ) {
     /** A link; [progress] gets "Queued (2nd)…"-style lines while a cooking video waits its turn. */
-    suspend fun link(url: String, progress: (String) -> Unit = {}): ImportOutcome =
-        outcome(api.importUrl(url.trim(), progress))
+    suspend fun link(url: String, progress: (String) -> Unit = {}): ImportOutcome {
+        val link = url.trim()
+        return outcome(
+            when (val started = api.startImport(link)) {
+                is ImportStart.Done -> started.result
+                // Kept watching after the screen is left, and after the app is
+                is ImportStart.Queued -> videoJobs.track(link, started.job, progress)
+            },
+        )
+    }
 
     suspend fun text(text: String): ImportOutcome = outcome(api.importText(text))
 
