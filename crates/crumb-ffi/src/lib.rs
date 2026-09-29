@@ -229,6 +229,13 @@ pub fn is_share_link(url: String) -> bool {
     source::is_share_link(&url)
 }
 
+/// Whether a link is a cooking video an import watches (TikTok, an Instagram reel, a YouTube
+/// video or Short): the server answers its import with a job to poll.
+#[uniffi::export]
+pub fn is_video_url(url: String) -> bool {
+    source::is_video_url(&url)
+}
+
 /// How a recipe page plays its video (see `crumb_core::embed::VideoEmbed`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct VideoEmbed {
