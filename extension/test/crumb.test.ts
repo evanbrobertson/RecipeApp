@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { crumbOrigin, normalize, previewUrl, readable, siteOf } from "../src/crumb"
+import { crumbOrigin, mayOfferItself, normalize, previewUrl, readable, siteOf } from "../src/crumb"
 
 describe("crumbOrigin", () => {
   test("a bare host is https", () => {
@@ -49,5 +49,16 @@ test("normalize fills defaults and cleans what was stored", () => {
     crumb: "",
     prompt: true,
     muted: [],
+  })
+})
+
+describe("mayOfferItself", () => {
+  test("https, or a local http Crumb; not plain http elsewhere", () => {
+    expect(mayOfferItself("https://crumb.example.com")).toBe(true)
+    expect(mayOfferItself("http://localhost:3000")).toBe(true)
+    expect(mayOfferItself("http://127.0.0.1:3000")).toBe(true)
+    expect(mayOfferItself("http://crumb.example.com")).toBe(false)
+    expect(mayOfferItself("file:///x")).toBe(false)
+    expect(mayOfferItself("nope")).toBe(false)
   })
 })
