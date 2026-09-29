@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -91,6 +93,10 @@ fun RecipeEditor(
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+        // At the top: the Suggestions page brings the cook here for it
+        photoFlag(flags, draft.image)?.let { flag ->
+            PhotoFlagBanner(flag, onRemove = { draft = draft.copy(image = "") }, onDismiss = onDismissFlag)
+        }
         Card(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
             EditorLabel("Title", required = true)
             CrumbInput(
@@ -183,6 +189,15 @@ fun RecipeEditor(
                 VSpace(16.dp)
                 EditorLabel("Image link")
                 CrumbInput(draft.image, { draft = draft.copy(image = it) }, placeholder = "https://…")
+                VSpace(16.dp)
+                EditorLabel("Video link")
+                CrumbInput(draft.video, { draft = draft.copy(video = it) }, placeholder = "https://youtu.be/…")
+                Text(
+                    "YouTube, Vimeo, TikTok and Instagram play on the page",
+                    style = CrumbText.hint,
+                    color = c.inkMuted,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
         }
 
@@ -374,6 +389,40 @@ private fun SectionEditor(
                         }
                 }
             }
+        }
+    }
+}
+
+/** A photo link the site refuses: why, and "Remove photo" or "Keep as is" (RecipeEditor.svelte's photoFlag). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PhotoFlagBanner(flag: Flag, onRemove: () -> Unit, onDismiss: ((Flag) -> Unit)?) {
+    val c = Crumb.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(ControlShape)
+            .background(c.tint)
+            .padding(start = 12.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
+    ) {
+        Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+            Icon(Lucide.ChefHat, null, tint = c.primary, modifier = Modifier.padding(top = 2.dp).size(16.dp))
+            HSpace(8.dp)
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(reviewText(flag.kind) + ".") }
+                    append(" Remove it, or paste a new one under Image link.")
+                },
+                style = CrumbText.bodySmall,
+                color = c.ink,
+            )
+        }
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+        ) {
+            Btn("Remove photo", onRemove, style = BtnStyle.Outline, padding = 14.dp)
+            if (onDismiss != null) Btn("Keep as is", { onDismiss(flag) }, style = BtnStyle.Ghost, padding = 14.dp)
         }
     }
 }

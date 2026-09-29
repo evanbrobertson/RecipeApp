@@ -699,6 +699,7 @@ suspend fun showOutcome(outcome: app.crumb.android.data.ImportOutcome, nav: Crum
             nav.edit(outcome.id)
         } else {
             if (!outcome.isNew) Toaster.show("Already in your recipes")
+            else if (outcome.droppedPhoto) Toaster.show("Saved without its photo", "The site's photo link doesn't work. You can add one in Edit.")
             nav.recipe(outcome.id)
         }
         is app.crumb.android.data.ImportOutcome.Book -> {

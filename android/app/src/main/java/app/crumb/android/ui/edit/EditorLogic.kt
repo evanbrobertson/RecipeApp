@@ -27,6 +27,7 @@ data class RecipeDraft(
     val recipeCuisine: String = "",
     val url: String = "",
     val image: String = "",
+    val video: String = "",
     val notes: String = "",
     val nutrition: String = "",
     val ingredients: List<DraftSection> = listOf(DraftSection()),
@@ -73,6 +74,7 @@ fun RecipeDraft.toFields(): RecipeFields {
         description = nullableField(description),
         url = nullableField(url),
         image = nullableField(image),
+        video = nullableField(video),
         author = nullableField(author),
         prepTime = nullableField(prepTime),
         cookTime = nullableField(cookTime),
@@ -102,6 +104,7 @@ fun recipeDraft(recipe: Recipe): RecipeDraft = RecipeDraft(
     recipeCuisine = recipe.recipeCuisine.orEmpty(),
     url = recipe.url.orEmpty(),
     image = recipe.image.orEmpty(),
+    video = recipe.video.orEmpty(),
     notes = recipe.notes.orEmpty(),
     nutrition = nutritionText(recipe.nutrition),
     ingredients = draftSections(recipe.ingredients),
@@ -192,3 +195,10 @@ fun fixFor(kind: String, index: Int, flag: Flag, draft: RecipeDraft): EditorFix?
         else -> null
     }
 }
+
+/**
+ * The review flag on a photo link the site refuses, while the draft still has that link
+ * (web `photoFlag`): editing the link away clears it.
+ */
+fun photoFlag(flags: List<Flag>, image: String): Flag? =
+    flags.find { it.field == "image" && it.state == "review" && it.itemText == image }

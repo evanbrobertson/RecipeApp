@@ -6,7 +6,7 @@ import android.net.Uri
 /** What an import produced; the screen picks the toast and where to go. */
 sealed interface ImportOutcome {
     /** One recipe; [onDevice] when the phone read photos itself (worth checking the amounts). */
-    data class Saved(val id: Long, val title: String, val isNew: Boolean, val onDevice: Boolean = false) : ImportOutcome
+    data class Saved(val id: Long, val title: String, val isNew: Boolean, val onDevice: Boolean = false, val droppedPhoto: Boolean = false) : ImportOutcome
 
     /** A shared cookbook link from another Crumb. */
     data class Book(val cookbook: ImportedCookbook) : ImportOutcome
@@ -42,7 +42,7 @@ class Importer(
         ImportOutcome.Files(api.importFiles(uris.map { Incoming.upload(resolver, it) }))
 
     private fun outcome(r: ImportResult): ImportOutcome =
-        r.cookbook?.let { ImportOutcome.Book(it) } ?: ImportOutcome.Saved(r.id, r.title, r.isNew)
+        r.cookbook?.let { ImportOutcome.Book(it) } ?: ImportOutcome.Saved(r.id, r.title, r.isNew, droppedPhoto = r.droppedPhoto)
 
     companion object {
         private val URL = Regex("""https?://\S+""", RegexOption.IGNORE_CASE)

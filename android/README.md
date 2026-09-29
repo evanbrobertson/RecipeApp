@@ -1,6 +1,6 @@
 # Crumb for Android
 
-A native Android app for Crumb (issue #9): Kotlin and Jetpack Compose, no WebView. It is a
+A native Android app for Crumb (issue #9): Kotlin and Jetpack Compose, with one WebView (below). It is a
 client for your own Crumb server. Scraping, Wee Chef and the recipe database stay on the
 server; the phone keeps a copy of what it has shown so recipes open without a connection.
 
@@ -27,6 +27,15 @@ cd android
 Set `JAVA_HOME` and `ANDROID_HOME` (or `sdk.dir` in `local.properties`) first; the NDK is
 found under the SDK, or set `ANDROID_NDK_HOME`. Every build cross-compiles the core for
 arm64-v8a, armeabi-v7a and x86_64; add `-PcrumbAbis=arm64-v8a` for a quicker loop on a phone.
+
+### The one WebView
+
+Everything is native except the recipe video player. YouTube, Vimeo, TikTok, Instagram and the
+like only offer web players, so a recipe's video plays in a `WebView` holding the site's embed
+(`ui/recipe/RecipeVideo.kt`); nothing loads from the site until the cook taps Play, and a video
+file the recipe links straight to plays in Media3 ExoPlayer instead. The one player is kept alive
+as it moves between the page and its floating window, and is destroyed when the cook stops it or
+leaves the recipe. Pages it tries to open go to the browser.
 
 ### crumb-core
 
