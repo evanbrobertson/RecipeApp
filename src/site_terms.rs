@@ -146,14 +146,18 @@ pub fn check(url: &str) -> Option<Refusal> {
 /// or on an image host listed for the site (`image_hosts`). Ask before any photo fetch. (A
 /// cook's browser may load it: the photo's link stays as it is.)
 pub fn photo_is_listed(url: &str) -> bool {
-    let Some(host) = host_of(url) else {
-        return false;
-    };
+    host_of(url).is_some_and(|host| host_is_listed(&host))
+}
+
+/// Whether `host` is one of a listed site's hosts or image hosts (or a subdomain). Also the
+/// veto of the server's fetching clients (`crumb_fetch::guard::set_veto`), so a redirect from
+/// another site, or a page Chromium follows a link to, can't reach one either.
+pub fn host_is_listed(host: &str) -> bool {
     entries().iter().any(|e| {
         e.hosts
             .iter()
             .chain(&e.image_hosts)
-            .any(|h| host_matches(&host, h))
+            .any(|h| host_matches(host, h))
     })
 }
 
@@ -357,7 +361,15 @@ async fn run(job: Job) {
 /// One check, start to finish: find the terms, ask Wee Chef, open an issue if it's warranted.
 /// Also the terms page's address, for the record.
 pub async fn look(state: &AppState, host: &str, origin: &str) -> (Outcome, Option<String>) {
-    let Some((terms_url, text)) = find_terms(&state.http, origin).await else {
+    // The terms page's links come from the site, so the fetches connect only to public
+    // addresses, redirects included (tests on localhost turn that off, as for scraping)
+    let http = if state.config.scrape_allow_private {
+        &state.http
+    } else {
+        crate::images::guarded_http()
+    };
+    let public_only = !state.config.scrape_allow_private;
+    let Some((terms_url, text)) = find_terms(http, origin, public_only).await else {
         return (Outcome::NoTerms, None);
     };
     let Some(model) = state.config.llm.as_ref().map(|l| l.model.clone()) else {
@@ -445,7 +457,17 @@ fn verdict(reply: &Value, text: &str) -> Verdict {
 
 // ---- Finding and reading the terms ----
 
-async fn fetch_html(http: &reqwest::Client, url: &str) -> Option<(url::Url, String)> {
+async fn fetch_html(
+    http: &reqwest::Client,
+    url: &str,
+    public_only: bool,
+) -> Option<(url::Url, String)> {
+    // The client refuses private addresses that a name or a redirect leads to; an address
+    // written in the link itself is checked here
+    if public_only {
+        let parsed = url::Url::parse(url).ok()?;
+        crumb_fetch::check_resolved(&parsed).await.ok()?;
+    }
     let mut res = http
         .get(url)
         .header(reqwest::header::USER_AGENT, AGENT)
@@ -564,10 +586,14 @@ fn page_text(html: &str) -> String {
 
 /// The site's terms page and its text. At most [`MAX_REQUESTS`] plain requests, never through a
 /// relay: the home page (for a footer link), then the link found, else the usual addresses.
-async fn find_terms(http: &reqwest::Client, origin: &str) -> Option<(String, String)> {
+async fn find_terms(
+    http: &reqwest::Client,
+    origin: &str,
+    public_only: bool,
+) -> Option<(String, String)> {
     let base = url::Url::parse(origin).ok()?;
     let mut candidates: Vec<url::Url> = Vec::new();
-    if let Some((home_url, html)) = fetch_html(http, &format!("{origin}/")).await {
+    if let Some((home_url, html)) = fetch_html(http, &format!("{origin}/"), public_only).await {
         candidates.extend(terms_links(&html, &home_url).into_iter().take(1));
     }
     for path in ["/terms-of-service", "/terms-of-use", "/terms"] {
@@ -578,7 +604,7 @@ async fn find_terms(http: &reqwest::Client, origin: &str) -> Option<(String, Str
         }
     }
     for candidate in candidates.into_iter().take(MAX_REQUESTS - 1) {
-        if let Some((url, html)) = fetch_html(http, candidate.as_str()).await {
+        if let Some((url, html)) = fetch_html(http, candidate.as_str(), public_only).await {
             let text = page_text(&html);
             if text.len() >= 500 {
                 return Some((url.to_string(), text));
@@ -784,6 +810,25 @@ mod tests {
         );
         assert!(guard("https://example.com/x").is_ok());
         assert!(guard("https://bhg.com/x").is_err());
+    }
+
+    #[test]
+    fn the_servers_fetching_clients_veto_listed_hosts_so_redirects_cannot_reach_them() {
+        // Starting the app installs the veto in crumb-fetch (redirect hops, Chromium's proxy)
+        let _state = AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            Config::default(),
+            Browser::disabled(),
+        );
+        for url in [
+            "https://www.allrecipes.com/recipe/1/",
+            "http://m.seriouseats.com/x",
+        ] {
+            let url = url::Url::parse(url).unwrap();
+            assert!(crumb_fetch::check_target(&url).is_err(), "{url}");
+        }
+        let elsewhere = url::Url::parse("https://food.example/x").unwrap();
+        assert!(crumb_fetch::check_target(&elsewhere).is_ok());
     }
 
     #[test]
@@ -1028,6 +1073,7 @@ checked = "2026-01-01""#,
         llm.base_url = base.to_string();
         let config = Config {
             llm: Some(llm),
+            scrape_allow_private: true,
             terms_issues_token: token.then(|| "gh-token".to_string()),
             terms_issues_repo: "o/r".into(),
             github_api: format!("{base}/gh"),
@@ -1148,6 +1194,23 @@ checked = "2026-01-01""#,
         assert!(terms_url.is_none());
         let s = shared.lock().unwrap();
         assert!(s.site_hits.len() <= MAX_REQUESTS, "{:?}", s.site_hits);
+        assert!(s.llm_bodies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_terms_check_never_reaches_a_private_address() {
+        let shared = stub(terms_page(BAN), reply(true, BAN, "high"));
+        let base = serve(&shared).await;
+        let mut private = state(&base, true);
+        private.config = std::sync::Arc::new(Config {
+            scrape_allow_private: false,
+            ..(*private.config).clone()
+        });
+        let (outcome, terms_url) = look(&private, "localhost", &base).await;
+        assert_eq!(outcome, Outcome::NoTerms);
+        assert!(terms_url.is_none());
+        let s = shared.lock().unwrap();
+        assert!(s.site_hits.is_empty(), "{:?}", s.site_hits);
         assert!(s.llm_bodies.is_empty());
     }
 

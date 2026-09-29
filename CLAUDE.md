@@ -28,7 +28,7 @@ in a clean UI. Also a remote MCP connector for Claude.
   copy joining only if no relay answered within `RELAY_HEAD_START` (2 s; at once when there are no relays), since an
   archived copy can be stale → headless Chromium over CDP last, for sites that still block or need JavaScript. Never several requests
   at one site at once bar that hedge; Chromium and videos never race. Every fetch of a link a cook supplies refuses private
-  addresses (`crumb_fetch::guard`, redirects and DNS too; Chromium goes through `crumb_fetch::proxy`); the relay client is
+  addresses and listed sites (`crumb_fetch::guard`, redirects and DNS too, and the terms-check and image `reqwest` clients; Chromium goes through `crumb_fetch::proxy`); the relay client is
   the one exception (Tailscale)
 - **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
@@ -152,7 +152,9 @@ web/src/
   before any network use or site memory, and is the one guarantee that no scrape of a listed host (page, API, relay,
   archive, browser) goes out: import, refresh, preview and MCP all come through it, and they answer 422 `site_terms`.
   Callers add checks only for a different answer (the preview fails before it asks; a video is queued, not scraped). A
-  `page` from the extension never reaches `scrape_page` and is still taken. Photos on a listed host, or on an entry's
+  `page` from the extension never reaches `scrape_page` and is still taken. A redirect from another site, or a page
+  Chromium follows, can't reach a listed host either: `AppState::new` installs `site_terms::host_is_listed` as
+  `crumb_fetch::guard::set_veto`, which every guard check and Chromium's proxy ask. Photos on a listed host, or on an entry's
   `image_hosts` (CDNs), are never downloaded either: `/img` redirects the browser to the original (307) and
   `photo_is_dead` / `fetch_to_embed` skip them (`site_terms::photo_is_listed`). Wee Chef
   suggests more in the background (`site_terms::Flagger`, `tos-suggestion` GitHub issues, `data/site-terms-ignore.toml`

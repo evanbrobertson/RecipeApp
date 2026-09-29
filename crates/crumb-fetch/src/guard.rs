@@ -51,6 +51,23 @@ impl fmt::Display for Forbidden {
 
 impl std::error::Error for Forbidden {}
 
+static VETO: std::sync::OnceLock<fn(&str) -> bool> = std::sync::OnceLock::new();
+
+/// Sets which hosts may not be fetched at all, whatever they resolve to: the server gives the
+/// sites whose terms forbid automated fetching. It is asked of every hop of a redirect, of every
+/// link checked here and of everything Chromium asks the [`crate::proxy`] for, so a link on
+/// another site can't lead a fetch there. The function gets the host in lower case, without a
+/// trailing dot. Set once; `crumb-relay` never sets it.
+pub fn set_veto(veto: fn(&str) -> bool) {
+    let _ = VETO.set(veto);
+}
+
+/// Whether the veto (if any) refuses `host`.
+pub(crate) fn vetoed(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    VETO.get().is_some_and(|veto| veto(&host))
+}
+
 fn forbidden<T>(why: &str) -> Result<T, Forbidden> {
     Err(Forbidden(why.into()))
 }
@@ -147,6 +164,9 @@ fn check(url: &Url, ports: bool) -> Result<(), Forbidden> {
             if name.is_empty() || name == "localhost" || name.ends_with(".localhost") {
                 return forbidden("That host isn't public.");
             }
+            if vetoed(&name) {
+                return forbidden("That site's terms don't allow automated fetching.");
+            }
             Ok(())
         }
         Some(_) => Ok(()),
@@ -203,6 +223,9 @@ pub(crate) async fn public_targets(
     }
     let name = host.trim_end_matches('.').to_ascii_lowercase();
     if !allow_private && (name == "localhost" || name.ends_with(".localhost")) {
+        return Err(TargetError::Forbidden);
+    }
+    if vetoed(&name) {
         return Err(TargetError::Forbidden);
     }
     let resolved = if allow_private {
@@ -344,6 +367,35 @@ mod tests {
 
     fn public(ip: &str) -> bool {
         is_public_ip(ip.parse().unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_vetoed_host_is_refused_by_every_check_before_any_lookup() {
+        // (set once for the whole test binary, so it only names hosts nothing else uses)
+        set_veto(|host| host == "vetoed.test" || host.ends_with(".vetoed.test"));
+        for url in [
+            "https://vetoed.test/x",
+            "http://WWW.Vetoed.Test./x",
+            "https://a.b.vetoed.test/",
+        ] {
+            let url = Url::parse(url).unwrap();
+            assert!(check_url(&url).is_err(), "{url}");
+            assert!(check_target(&url).is_err(), "{url}");
+            assert!(check_resolved(&url).await.is_err(), "{url}");
+        }
+        assert!(check_url(&Url::parse("https://notvetoed.test/x").unwrap()).is_ok());
+        // The proxy Chromium goes through asks the same
+        assert!(matches!(
+            public_targets("vetoed.test", 443, true).await,
+            Err(TargetError::Forbidden)
+        ));
+        assert!(matches!(
+            public_targets("www.vetoed.test", 443, true).await,
+            Err(TargetError::Forbidden)
+        ));
+        // ...and so does a redirect hop
+        let refused = fetch_public(Profile::Firefox, "https://vetoed.test/x").await;
+        assert!(refused.is_err());
     }
 
     #[test]

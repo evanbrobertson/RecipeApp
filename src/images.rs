@@ -488,7 +488,7 @@ pub async fn serve_photo(
 /// The `reqwest` client of the image fallback for links the cook supplied: it connects only to
 /// public addresses, whether the link names one or a redirect does (the wreq clients do the
 /// same, see `crumb_fetch::guard`).
-fn guarded_http() -> &'static reqwest::Client {
+pub(crate) fn guarded_http() -> &'static reqwest::Client {
     static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))

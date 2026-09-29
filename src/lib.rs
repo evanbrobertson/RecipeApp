@@ -92,6 +92,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(db: db::Db, config: config::Config, mut browser: browser::Browser) -> Self {
+        // Nothing the server fetches, redirects and Chromium's requests included, may reach a
+        // site whose terms forbid automated fetching (see `site_terms`)
+        crumb_fetch::guard::set_veto(site_terms::host_is_listed);
         let video_jobs = Arc::new(video_jobs::VideoJobs::new(video_jobs::Limits::from_config(
             &config,
         )));
