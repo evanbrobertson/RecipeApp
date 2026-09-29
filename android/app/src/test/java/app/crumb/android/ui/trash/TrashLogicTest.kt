@@ -47,4 +47,12 @@ class TrashLogicTest {
         assertEquals("Put back 2 recipes", putBackTitle(2))
         assertEquals("1 recipe will be deleted for good. This can't be undone.", emptyTrashDescription(1))
     }
+
+    @Test
+    fun actionsGoBelowTheTitleWhenTheRowIsNarrow() {
+        assertEquals(false, actionsBeside(350f, 1f))
+        assertEquals(false, actionsBeside(450f, 1.3f))
+        assertEquals(true, actionsBeside(600f, 1f))
+        assertEquals(true, actionsBeside(720f, 1.3f))
+    }
 }

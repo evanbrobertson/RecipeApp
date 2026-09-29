@@ -2,6 +2,7 @@ package app.crumb.android.ui.trash
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +45,7 @@ import app.crumb.android.ui.components.CardShape
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbModal
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.ListCard
 import app.crumb.android.ui.components.RecipePhoto
 import app.crumb.android.ui.components.Skeleton
@@ -169,7 +172,7 @@ fun TrashScreen() {
         Column {
             VSpace(8.dp)
             BackLink { nav.back() }
-            Text("Trash", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.padding(top = 4.dp))
+            PageTitle("Trash", c.ink, modifier = Modifier.padding(top = 4.dp))
             Text(
                 "Deleted recipes stay here for 30 days, with their cookbooks and cook log, then go for good.",
                 style = CrumbText.body,
@@ -228,20 +231,7 @@ fun TrashScreen() {
 @Composable
 private fun TrashRow(item: Trashed, photoUrl: String?, enabled: Boolean, onRestore: () -> Unit, onPurge: () -> Unit) {
     val c = Crumb.colors
-    Row(
-        Modifier.fillMaxWidth().padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        RecipePhoto(photoUrl, item.image, Modifier.size(56.dp), placeholderId = item.id)
-        // Small buttons keep their width, so the title gets what's left (two lines) and the
-        // days left stay on one
-        Column(Modifier.weight(1f)) {
-            Text(item.title, style = CrumbText.rowTitle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            daysLeftLabel(item.purgeAt, System.currentTimeMillis())?.let {
-                Text(it, style = CrumbText.bodySmall, color = c.inkMuted, maxLines = 1)
-            }
-        }
+    val actions = @Composable {
         Btn("Put back", onRestore, style = BtnStyle.Soft, size = BtnSize.Sm, padding = 12.dp, icon = Lucide.RotateCcw, enabled = enabled)
         Btn(
             null,
@@ -252,6 +242,28 @@ private fun TrashRow(item: Trashed, photoUrl: String?, enabled: Boolean, onResto
             contentDescription = "Delete ${item.title} for good",
             enabled = enabled,
         )
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // The buttons are sized to their content; when the row can't hold them beside a readable
+        // title they drop under it
+        val beside = actionsBeside(maxWidth.value, LocalDensity.current.fontScale)
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            RecipePhoto(photoUrl, item.image, Modifier.size(56.dp), placeholderId = item.id)
+            Column(Modifier.weight(1f)) {
+                Text(item.title, style = CrumbText.rowTitle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                daysLeftLabel(item.purgeAt, System.currentTimeMillis())?.let {
+                    Text(it, style = CrumbText.bodySmall, color = c.inkMuted, maxLines = 1)
+                }
+                if (!beside) {
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }
+                }
+            }
+            if (beside) actions()
+        }
     }
 }
 

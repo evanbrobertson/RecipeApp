@@ -33,3 +33,15 @@ fun restoredToast(restored: Restored, title: String): Pair<String, String> =
 
 /** The trash list without [id]. */
 fun List<Trashed>.without(id: Long): List<Trashed> = filter { it.id != id }
+
+/**
+ * Whether a trash row of [widthDp] has room for its buttons beside the title (the web's
+ * one-line row): the photo, the gaps, the padding and the two buttons (which grow with
+ * [fontScale]) leave the title at least [MIN_TITLE_DP]. Otherwise they sit under the title.
+ */
+fun actionsBeside(widthDp: Float, fontScale: Float): Boolean =
+    widthDp - ROW_CHROME_DP - ACTIONS_DP * fontScale >= MIN_TITLE_DP
+
+private const val ROW_CHROME_DP = 24f + 56f + 14f
+private const val ACTIONS_DP = 170f
+private const val MIN_TITLE_DP = 160f
