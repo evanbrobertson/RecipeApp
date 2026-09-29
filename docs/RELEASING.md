@@ -25,12 +25,12 @@ Promote ──► retag sha-abc1234 as :stable and :3.1.0, tag v3.1.0 + GitHub R
 
 | File | Trigger | What it does |
 | --- | --- | --- |
-| `.github/workflows/checks.yml` | called by the others | `cargo fmt --check`, clippy `-D warnings`, `cargo test`; web `bun install --frozen-lockfile`, `astro check`, oxlint, build; `site/` build when `site/package.json` exists |
+| `.github/workflows/checks.yml` | called by the others | `cargo fmt --check`, clippy `-D warnings`, `cargo test`; web `bun install --frozen-lockfile`, `astro check`, oxlint, build; `site/` build when `site/package.json` exists. The Linux desktop app's clippy and smoke test run in an `archlinux:latest` container, because cxx-qt needs Qt 6.5+ |
 | `.github/workflows/pr.yml` | pull request to `master` | The checks, plus a Docker build (no push) only when `Dockerfile`, `.dockerignore`, `Cargo.toml`/`Cargo.lock`, `web/package.json`/`web/bun.lock` or `web/astro.config.mjs` change. A release build of the server (fat LTO, one codegen unit) takes several minutes, and code-only changes are already covered by the checks and by the master build, so most PRs skip it |
-| `.github/workflows/main.yml` | push to `master` (not docs-only) | Checks and image build in parallel; after both pass, `:main` moves to the new image, Sentry gets the release and a `dev` deploy, and Railway dev redeploys |
+| `.github/workflows/main.yml` | push to `master` (not docs-only) | Checks and image build in parallel; after both pass, `:main` moves to the new image, Sentry gets the release and a `dev` deploy, and Railway dev redeploys. Separately, a release build of the desktop executable is uploaded as a `crumb-desktop-linux-<version>` workflow artifact (30 days); it does not block the deploy |
 | `.github/workflows/extension.yml` | push to `master` changing `extension/` | Releases the browser extension: see [Browser extension](#browser-extension) |
 | `.github/workflows/relay.yml` | push to `master` changing `crates/crumb-relay/`, `crates/crumb-fetch/` or the workflow; a `relay-v*` tag; manual | Releases the relay: see [Relay](#relay) |
-| `.github/workflows/promote.yml` | manual (Actions → Promote → Run workflow) | Input `channel` (`stable` or `beta`) and optional `sha` (default: latest `master`). A commit without an image (a docs-only push) falls back to its newest ancestor with one, and the commit's checks must have passed. Retags, tags, releases, deploys |
+| `.github/workflows/promote.yml` | manual (Actions → Promote → Run workflow) | Input `channel` (`stable` or `beta`) and optional `sha` (default: latest `master`). A commit without an image (a docs-only push) falls back to its newest ancestor with one, and the commit's checks must have passed. Retags, tags, releases, deploys; then attaches the desktop tarball, its `.sha256` and an AUR `PKGBUILD` to the release |
 
 `pr.yml` also builds the relay for ARM64 and builds its image (no push), each only when `crates/crumb-relay/`, `crates/crumb-fetch/`, `Cargo.toml`/`Cargo.lock` or the relay workflows change (the ARM build also when `scripts/relay/` does). The relay crates are workspace members, so fmt, clippy and the tests for them already run in the shared checks on every PR and master push.
 
@@ -53,6 +53,14 @@ The `-main.<run>` version is the build's identity everywhere: it is the image la
 **Rollback:** run Promote with the `sha` of an older commit that already has a stable tag. The tag and release are reused, and `:stable` and Railway move back to that image. A commit older than the newest stable tag that was never released is refused.
 
 **Beta** exists as a channel (tag `vX.Y.Z-beta.N`, a GitHub pre-release, image tag `:beta`, branch `release/beta`). It deploys only once a `beta` GitHub environment with a `RAILWAY_TOKEN` exists; until then it only tags.
+
+## Desktop (Linux)
+
+The native Qt6/QML desktop app (`desktop/linux`, binary `crumb-desktop`) shares the server's version stream: a desktop change merged to `master` bumps the same `vX.Y.Z`, so there is one release per version, not one per artifact.
+
+- **Dev builds.** Every master push builds `crumb-desktop` in release mode and uploads `crumb-desktop-linux-x86_64-<version>.tar.gz` plus its `.sha256` as the `crumb-desktop-linux-<version>` workflow artifact (30 days). It is a separate job from the server image and never blocks or changes the dev deploy. This needs Qt 6.5+, so it runs in an `archlinux:latest` container (`build-tarball.sh` assembles the tarball from the already-built binary).
+- **Promote.** After the image is retagged and the GitHub Release made, a `desktop-release` job builds the same commit, renders the AUR `PKGBUILD` from `PKGBUILD.in`, and uploads the tarball, its `.sha256` and the `PKGBUILD` to the release. It runs for both `stable` and `beta`, after the server promotion, so a failure there never rolls it back.
+- **Tarball layout.** `crumb-desktop/{crumb-desktop, crumb-desktop.desktop, crumb-desktop.png, install.sh, README.txt, LICENSE}`. `install.sh` installs per user under `~/.local` (and supports `--uninstall`); the PKGBUILD is the AUR `crumb-desktop-bin` package for a system install.
 
 ## Secrets and variables
 

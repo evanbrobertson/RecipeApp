@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/crumb-core", "crates/crumb-client", "crates/crumb-ffi", "crates/crumb-fetch", "crates/crumb-relay", "crates/crumb-work"]
+members = ["crates/crumb-core", "crates/crumb-client", "crates/crumb-ffi", "crates/crumb-fetch", "crates/crumb-relay", "crates/crumb-work", "desktop/linux"]
 resolver = "3"
 
 [workspace.dependencies]
