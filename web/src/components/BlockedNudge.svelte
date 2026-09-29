@@ -2,8 +2,9 @@
   /**
    * Shown instead of an error when a recipe site's bot check turned Crumb's server away
    * (`site_blocked`): the browser extension reads the page from the cook's own browser, which
-   * is already past the check. The main action opens the page for the extension if it's
-   * installed, else says where to get it; on a phone, which has no extension to use, pasting
+   * is already past the check. The main action opens the page so the cook can click the
+   * extension's toolbar button there (it reads the recipe and hands it to Crumb), else says
+   * where to get it; on a phone, which has no extension to use, pasting
    * the recipe leads.
    */
   import ClipboardPaste from "@lucide/svelte/icons/clipboard-paste"
@@ -53,8 +54,12 @@
           It asked for a human check, so Crumb couldn't read it from here. Paste the recipe text
           instead. On a computer, the Crumb extension can read pages like this from your browser.
         {:else if opened}
-          Opened in a new tab. Click Crumb in your browser's toolbar there, and the recipe comes
-          back here, ready to add.
+          Opened in a new tab. Click Crumb in your browser's toolbar there, and the extension
+          reads the recipe from that page and opens it in Crumb, ready to add.
+        {:else if installed}
+          It asked for a human check, so Crumb couldn't read it from here. Open the recipe, then
+          click Crumb in your toolbar: the extension reads it from your browser, which is already
+          past the check.
         {:else}
           It asked for a human check, so Crumb couldn't read it from here. The Crumb extension can
           read it from your browser, which is already past the check.
