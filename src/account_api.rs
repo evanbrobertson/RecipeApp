@@ -6,7 +6,7 @@
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
 use serde_json::{Value, json};
@@ -86,7 +86,25 @@ async fn status(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
         })));
     };
     if let Some(hosted) = &state.hosted {
-        let who = hosted.who(accounts, &headers).await?;
+        let who = match hosted.who(accounts, &headers).await {
+            Ok(who) => who,
+            // The auth service is down, cold or slow. The login page still has to load, so
+            // answer 200 with a flag it can act on rather than a 503 that reads as a server
+            // fault (and used to be reported as one on every visit)
+            Err(e) if e.status == StatusCode::SERVICE_UNAVAILABLE => {
+                return Ok(Json(json!({
+                    "mode": "hosted",
+                    "setupNeeded": false,
+                    "signupOpen": true,
+                    "signedIn": false,
+                    "authUnavailable": true,
+                    "providers": [],
+                    "user": null,
+                    "household": null,
+                })));
+            }
+            Err(e) => return Err(e),
+        };
         let signed = who.as_ref().and_then(|w| w.2.as_ref());
         return Ok(Json(json!({
             "mode": "hosted",
