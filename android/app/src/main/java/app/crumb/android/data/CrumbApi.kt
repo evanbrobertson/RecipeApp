@@ -254,6 +254,9 @@ class CrumbApi(
     /** `POST /api/checks`: "Check all"; the status carries `queued`. */
     suspend fun checkAll(): ChecksStatus = decode(post("api/checks", "{}"), ChecksStatus.serializer())
 
+    /** `GET /api/staples`: the ingredients most of the box's recipes use. */
+    suspend fun staples(): Staples = get(url("api/staples"), Staples.serializer())
+
     /** `GET /api/checks/review`: the recipes with suggestions waiting. */
     suspend fun reviewList(): List<ReviewRecipe> =
         get(url("api/checks/review"), ReviewList.serializer()).recipes

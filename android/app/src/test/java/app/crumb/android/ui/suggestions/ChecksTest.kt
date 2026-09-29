@@ -1,6 +1,7 @@
 package app.crumb.android.ui.suggestions
 
 import app.crumb.android.data.ChecksStatus
+import app.crumb.android.data.Staple
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -89,5 +90,21 @@ class ChecksTest {
         assertEquals(0f, checksProgress(run = 0, pending = 3), 0f)
         assertEquals(0.7f, checksProgress(run = 10, pending = 3), 0f)
         assertEquals(1f, checksProgress(run = 10, pending = 0), 0f)
+    }
+
+    @Test
+    fun staplesReadAsTheWebShowsThem() {
+        assertEquals("Olive oil", capitalise("olive oil"))
+        assertEquals("Garlic", capitalise("Garlic"))
+        assertEquals("", capitalise(""))
+        val staples = listOf(Staple("garlic", 8), Staple("onion", 4))
+        assertEquals(1f, stapleShare(8, staples))
+        assertEquals(0.5f, stapleShare(4, staples))
+        assertEquals(3f, stapleShare(3, emptyList()))
+    }
+
+    @Test
+    fun countsBrokenPhotoLinks() {
+        assertEquals("1 broken photo link", summary(mapOf("image" to 1)))
     }
 }

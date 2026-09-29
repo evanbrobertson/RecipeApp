@@ -6,13 +6,17 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -31,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -48,6 +55,8 @@ import app.crumb.android.data.ApiException
 import app.crumb.android.data.ChecksStatus
 import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.ReviewRecipe
+import app.crumb.android.data.Staple
+import app.crumb.android.data.Staples
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LocalNav
 import app.crumb.android.ui.components.Btn
@@ -74,6 +83,7 @@ import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.LoaderCircle
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.ShoppingBasket
 import com.composables.icons.lucide.Sparkles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -93,6 +103,8 @@ data class SuggestionsUiState(
     val recipes: List<ReviewRecipe>? = null,
     /** Only set when Wee Chef checks are on (web keeps `checks` undefined otherwise). */
     val checks: ChecksStatus? = null,
+    /** Wee Chef's staples tip; null until loaded or when the request failed. */
+    val staples: Staples? = null,
     val starting: Boolean = false,
     /** The most this Check all had pending at once, so progress counts failures as done. */
     val run: Int = 0,
@@ -131,6 +143,8 @@ class SuggestionsViewModel(private val api: CrumbApi) : ViewModel() {
                 val list = api.reviewList()
                 // Checks may be off for this box; the card then stays hidden
                 val status = runCatching { api.checksStatus() }.getOrNull()
+                val staples = runCatching { api.staples() }.getOrNull()
+                _state.update { it.copy(staples = staples) }
                 applyList(list)
                 applyChecks(status?.takeIf { it.enabled })
                 if ((_state.value.checks?.pending ?: 0) > 0) watch(PollStartMs)
@@ -262,7 +276,7 @@ private fun SuggestionsContent(
                     description = if (state.checks != null) {
                         "Wee Chef will flag anything it isn't sure about."
                     } else {
-                        "Wee Chef checks aren't on for this box."
+                        "Wee Chef will flag any photo link that stops working."
                     },
                 )
             }
@@ -275,6 +289,7 @@ private fun SuggestionsContent(
                 ListCard(rows = rows)
             }
         }
+        state.staples?.takeIf { it.staples.isNotEmpty() }?.let { staples -> item { StaplesCard(staples) } }
     }
 }
 
@@ -328,6 +343,76 @@ private fun ChecksCard(checks: ChecksStatus, state: SuggestionsUiState, onCheckA
         )
     }
 }
+
+/** Wee Chef's tip (web `#staples-title` card): the ingredients most recipes use, with bars. */
+@Composable
+private fun StaplesCard(staples: Staples) {
+    val c = Crumb.colors
+    Card(Modifier.fillMaxWidth(), padding = PaddingValues(20.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                Modifier.size(48.dp).clip(ControlShape).background(c.tint),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Lucide.ShoppingBasket, contentDescription = null, tint = c.primary, modifier = Modifier.size(24.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Wee Chef tip", style = CrumbText.kicker, color = c.primary)
+                Text(
+                    "Your most used ingredients. Essentials like Salt & Pepper are skipped.",
+                    style = CrumbText.body.copy(fontWeight = FontWeight.Bold),
+                    color = c.ink,
+                )
+            }
+        }
+        VSpace(16.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            staples.staples.chunked(2).forEach { pair ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
+                    pair.forEach { s -> StapleCell(s, staples, Modifier.weight(1f).fillMaxHeight()) }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StapleCell(staple: Staple, staples: Staples, modifier: Modifier) {
+    val c = Crumb.colors
+    val share = stapleShare(staple.recipes, staples.staples)
+    val name = capitalise(staple.name)
+    Column(
+        modifier
+            .clip(ControlShape)
+            .border(1.dp, c.line, ControlShape)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$name, in ${staple.recipes} of ${staples.recipes} recipes"
+            },
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(name, style = CrumbText.body.copy(fontWeight = FontWeight.Bold), color = c.ink)
+        VSpace(10.dp)
+        Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)).background(c.line)) {
+            Box(
+                Modifier
+                    .fillMaxWidth(share)
+                    .widthIn(min = 8.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(50))
+                    .background(stapleColor(share, c.butterHover, c.line)),
+            )
+        }
+    }
+}
+
+/**
+ * The bar's butter (web `.staple-bar > span`): faint and greyed for the least used, rich and
+ * opaque for the most.
+ */
+private fun stapleColor(share: Float, butter: Color, grey: Color): Color =
+    lerp(lerp(butter, grey, 0.6f), butter, share).copy(alpha = 0.4f + share * 0.6f)
 
 /**
  * Butter, the one main action on this screen. The kit's [Btn] can't spin its icon, so the
