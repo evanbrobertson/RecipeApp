@@ -72,18 +72,6 @@ pub fn date_label(ms: i64, offset_minutes: i32) -> String {
     }
 }
 
-/// How long a recipe has left in the trash, counted up to the day it goes: "12 days left",
-/// or "Goes for good today" on its last day (`left` on the web's Trash page).
-pub fn trash_left(purge_ms: i64, now_ms: i64) -> String {
-    const DAY: i64 = 86_400_000;
-    let days = ((purge_ms - now_ms).max(0) + DAY - 1) / DAY;
-    if days <= 1 {
-        "Goes for good today".into()
-    } else {
-        format!("{days} days left")
-    }
-}
-
 /// How a recipe got into the box, as Fresh in the box says it ("from a link").
 pub fn source_label(source: &str) -> Option<&'static str> {
     Some(match source {
@@ -159,16 +147,6 @@ mod tests {
         // 12:00 UTC is already tomorrow fourteen hours east
         assert_eq!(date_label(NOW, 14 * 60), "Sep 29, 2026");
         assert_eq!(date_label(0, 0), "Jan 1, 1970");
-    }
-
-    #[test]
-    fn the_trash_counts_up_to_the_day_it_goes() {
-        let day = 24 * HOUR;
-        assert_eq!(trash_left(NOW + 30 * day, NOW), "30 days left");
-        assert_eq!(trash_left(NOW + 2 * day - HOUR, NOW), "2 days left");
-        assert_eq!(trash_left(NOW + day + HOUR, NOW), "2 days left");
-        assert_eq!(trash_left(NOW + day, NOW), "Goes for good today");
-        assert_eq!(trash_left(NOW - HOUR, NOW), "Goes for good today");
     }
 
     #[test]
