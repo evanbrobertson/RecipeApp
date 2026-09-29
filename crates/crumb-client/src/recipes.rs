@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    Client, CookStats, Download, Error, FileImport, Recipe, RecipeFormat, RecipeSummary, Staples,
-    Suggestions, Trashed,
+    Client, CookStats, Download, Error, FileImport, Popular, PopularSetting, Recipe, RecipeFormat,
+    RecipeSummary, Staples, Suggestions, Trashed,
 };
 
 /// The `{id, title, isNew}` the photo import answers with.
@@ -102,6 +102,30 @@ impl Client {
             .fetch(self.http.delete(self.endpoint("api/trash")))
             .await?;
         Ok(res.deleted)
+    }
+
+    /// `GET /api/popular`: links several other households saved that this one hasn't.
+    pub async fn popular(&self) -> Result<Popular, Error> {
+        self.fetch(self.http.get(self.endpoint("api/popular")))
+            .await
+    }
+
+    /// `GET /api/popular/opt-out`: whether Popular runs here, and whether this household's
+    /// saved links count toward it.
+    pub async fn popular_setting(&self) -> Result<PopularSetting, Error> {
+        self.fetch(self.http.get(self.endpoint("api/popular/opt-out")))
+            .await
+    }
+
+    /// `POST /api/popular/opt-out`: leaves this household's saved links out of Popular, or
+    /// counts them again.
+    pub async fn set_popular_opt_out(&self, opted_out: bool) -> Result<(), Error> {
+        self.call(
+            self.http
+                .post(self.endpoint("api/popular/opt-out"))
+                .json(&json!({ "optedOut": opted_out })),
+        )
+        .await
     }
 
     /// `GET /api/recipes/random`: Surprise me. `current` is the recipe on screen (never
