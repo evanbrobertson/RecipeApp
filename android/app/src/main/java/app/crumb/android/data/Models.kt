@@ -132,30 +132,23 @@ data class ImportJob(
 @Serializable
 data class JobRecipe(val id: Long, val title: String, val isNew: Boolean)
 
-/**
- * `POST /api/recipes` and `PATCH /api/recipes/{id}`: every settable field, camelCase.
- * Nutrition values are strings; lists default to empty.
- */
+/** A recipe in the trash (`GET /api/trash`): restorable until [purgeAt] (both ISO-8601). */
 @Serializable
-data class RecipeFields(
+data class Trashed(
+    val id: Long,
     val title: String,
-    val description: String? = null,
     val url: String? = null,
     val image: String? = null,
-    val video: String? = null,
-    val author: String? = null,
-    val prepTime: String? = null,
-    val cookTime: String? = null,
-    val totalTime: String? = null,
-    val freezeTime: String? = null,
-    val recipeYield: String? = null,
-    val recipeCategory: String? = null,
-    val recipeCuisine: String? = null,
-    val ingredients: List<Section> = emptyList(),
-    val instructions: List<Section> = emptyList(),
-    val nutrition: Map<String, String>? = null,
-    val notes: String? = null,
+    val deletedAt: String,
+    val purgeAt: String,
 )
+
+/**
+ * `POST /api/trash/{id}/restore`: the recipe that's back. [isNew] is false when its link was
+ * saved again meanwhile: [id] is then that other recipe, and the deleted copy is gone.
+ */
+@Serializable
+data class Restored(val id: Long, val title: String, val isNew: Boolean = true)
 
 /** `POST /api/recipes/{id}/cooked`: the cook stats plus the new event (`null` if deduped). */
 @Serializable

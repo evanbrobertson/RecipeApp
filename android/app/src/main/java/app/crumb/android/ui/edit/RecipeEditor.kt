@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.crumb.android.data.Flag
-import app.crumb.android.data.RecipeFields
 import app.crumb.android.ui.components.Btn
 import app.crumb.android.ui.components.BtnSize
 import app.crumb.android.ui.components.BtnStyle
@@ -54,7 +53,15 @@ import app.crumb.android.ui.components.HSpace
 import app.crumb.android.ui.components.VSpace
 import app.crumb.android.ui.components.CrumbInput
 import app.crumb.android.ui.theme.Crumb
+import app.crumb.core.DraftSection
+import app.crumb.core.EditorFix
+import app.crumb.core.RecipeDraft
+import app.crumb.core.SectionKind
 import app.crumb.core.categories
+import app.crumb.core.fixFor
+import app.crumb.core.legacyCategory
+import app.crumb.core.metaFields
+import app.crumb.core.quote
 import app.crumb.core.reviewText
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChefHat
@@ -73,7 +80,7 @@ import com.composables.icons.lucide.Trash2
 fun RecipeEditor(
     initial: RecipeDraft,
     saving: Boolean,
-    onSubmit: (RecipeFields) -> Unit,
+    onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
     submitLabel: String = "Save",
     flags: List<Flag> = emptyList(),
@@ -84,17 +91,18 @@ fun RecipeEditor(
     var error by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
-        error = null
-        if (draft.title.trim().isEmpty()) {
-            error = "Give the recipe a title."
-            return
-        }
-        onSubmit(draft.toFields())
+        saveBody(draft).fold(
+            onSuccess = {
+                error = null
+                onSubmit(it)
+            },
+            onFailure = { error = it.message },
+        )
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(28.dp)) {
         // At the top: the Suggestions page brings the cook here for it
-        photoFlag(flags, draft.image)?.let { flag ->
+        photoFlag(flags, draft)?.let { flag ->
             PhotoFlagBanner(flag, onRemove = { draft = draft.copy(image = "") }, onDismiss = onDismissFlag)
         }
         Card(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
@@ -121,46 +129,32 @@ fun RecipeEditor(
         Column {
             Text("Details", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.padding(bottom = 14.dp))
             Card(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DetailCell("Prep time", Modifier.weight(1f)) {
-                        CrumbInput(draft.prepTime, { draft = draft.copy(prepTime = it) }, placeholder = "15m")
-                    }
-                    DetailCell("Cook time", Modifier.weight(1f)) {
-                        CrumbInput(draft.cookTime, { draft = draft.copy(cookTime = it) }, placeholder = "30m")
-                    }
-                }
-                VSpace(16.dp)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DetailCell("Extra time", Modifier.weight(1f)) {
-                        CrumbInput(draft.freezeTime, { draft = draft.copy(freezeTime = it) }, placeholder = "Chill 1h")
-                    }
-                    DetailCell("Total time", Modifier.weight(1f)) {
-                        CrumbInput(draft.totalTime, { draft = draft.copy(totalTime = it) }, placeholder = "1h 45m")
-                    }
-                }
-                VSpace(16.dp)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DetailCell("Yield", Modifier.weight(1f)) {
-                        CrumbInput(draft.recipeYield, { draft = draft.copy(recipeYield = it) }, placeholder = "4 servings")
-                    }
-                    DetailCell("Category", Modifier.weight(1f)) {
-                        CategoryField(draft.recipeCategory) { draft = draft.copy(recipeCategory = it) }
-                    }
-                }
-                VSpace(16.dp)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    DetailCell("Cuisine", Modifier.weight(1f)) {
-                        CrumbInput(draft.recipeCuisine, { draft = draft.copy(recipeCuisine = it) }, placeholder = "Italian")
-                    }
-                    DetailCell("Author", Modifier.weight(1f)) {
-                        CrumbInput(draft.author, { draft = draft.copy(author = it) })
+                // Core's time, yield and label fields, in the web's order, two to a row
+                val fields = remember { metaFields() }
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    fields.chunked(2).forEach { pair ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            pair.forEach { field ->
+                                DetailCell(field.label, Modifier.weight(1f)) {
+                                    if (field.key == "recipeCategory") {
+                                        CategoryField(draft.recipeCategory) { draft = draft.copy(recipeCategory = it) }
+                                    } else {
+                                        CrumbInput(
+                                            draft.meta(field.key),
+                                            { draft = draft.withMeta(field.key, it) },
+                                            placeholder = field.placeholder.ifEmpty { null },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        SectionEditor("ingredients", draft, { draft = it }, flags, onDismissFlag)
-        SectionEditor("instructions", draft, { draft = it }, flags, onDismissFlag)
+        SectionEditor(SectionKind.INGREDIENTS, draft, { draft = it }, flags, onDismissFlag)
+        SectionEditor(SectionKind.INSTRUCTIONS, draft, { draft = it }, flags, onDismissFlag)
 
         Column {
             Text("Notes and sources", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.padding(bottom = 14.dp))
@@ -249,7 +243,7 @@ private fun DetailCell(label: String, modifier: Modifier = Modifier, field: @Com
 private fun CategoryField(value: String, onChange: (String) -> Unit) {
     val c = Crumb.colors
     val categories = remember { categories() }
-    val legacy = legacyCategory(value, categories)
+    val legacy = legacyCategory(value)
     var open by remember { mutableStateOf(false) }
     Box {
         Row(
@@ -323,14 +317,14 @@ private fun CategoryOption(label: String, optionValue: String, selected: String,
 /** Ingredients or instructions: a header with "+ Section", then one section field per block. */
 @Composable
 private fun SectionEditor(
-    kind: String,
+    kind: SectionKind,
     draft: RecipeDraft,
     onDraft: (RecipeDraft) -> Unit,
     flags: List<Flag>,
     onDismiss: ((Flag) -> Unit)?,
 ) {
     val c = Crumb.colors
-    val ingredients = kind == "ingredients"
+    val ingredients = kind == SectionKind.INGREDIENTS
     val sections = if (ingredients) draft.ingredients else draft.instructions
     val title = if (ingredients) "Ingredients" else "Instructions"
     val hint = if (ingredients) "One ingredient per line." else "One step per line."
@@ -347,7 +341,7 @@ private fun SectionEditor(
                 Text(title, style = CrumbText.sectionTitle, color = c.ink)
                 Text(hint, style = CrumbText.hint, color = c.inkMuted)
             }
-            Btn("Section", { setSections(sections + DraftSection()) }, style = BtnStyle.Soft, icon = Lucide.Plus)
+            Btn("Section", { setSections(sections + DraftSection("", "")) }, style = BtnStyle.Soft, icon = Lucide.Plus)
         }
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             sections.forEachIndexed { si, section ->
@@ -376,17 +370,14 @@ private fun SectionEditor(
                         minLines = if (ingredients) 6 else 8,
                         placeholder = textPlaceholder,
                     )
-                    val here = section.text.split("\n").map { it.trim() }
-                    flags
-                        .filter { it.field == kind && it.state == "review" && it.itemText?.let { text -> text in here } == true }
-                        .forEach { flag ->
-                            FlagHint(
-                                flag = flag,
-                                fix = fixFor(kind, si, flag, draft),
-                                onApplyFix = { fix -> onDraft(fix.apply()) },
-                                onDismiss = onDismiss,
-                            )
-                        }
+                    flagsHere(flags, kind, section).forEach { flag ->
+                        FlagHint(
+                            flag = flag,
+                            fix = fixFor(draft, kind, si.toUInt(), flag.kind, flag.itemText.orEmpty()),
+                            onApplyFix = { fix -> onDraft(fix.draft) },
+                            onDismiss = onDismiss,
+                        )
+                    }
                 }
             }
         }
@@ -443,7 +434,7 @@ private fun FlagHint(flag: Flag, fix: EditorFix?, onApplyFix: (EditorFix) -> Uni
             HSpace(8.dp)
             Text(
                 buildAnnotatedString {
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(quote(flag.itemText.orEmpty(), 60)) }
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(quote(flag.itemText.orEmpty(), 60u)) }
                     append(" ")
                     append(reviewText(flag.kind))
                 },

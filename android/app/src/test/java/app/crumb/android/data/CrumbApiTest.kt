@@ -1,5 +1,8 @@
 package app.crumb.android.data
 
+import app.crumb.core.DraftSection
+import app.crumb.core.recipeDraftNew
+import app.crumb.core.recipeDraftToJson
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
@@ -220,9 +223,8 @@ class CrumbApiTest {
                    "createdAt":"2026-09-26T16:26:43.000Z","updatedAt":"2026-09-26T16:26:43.000Z","isNew":true}""",
             ),
         )
-        val recipe = api.createRecipe(
-            RecipeFields(title = "Soup", totalTime = "PT30M", ingredients = listOf(Section(items = listOf("stock")))),
-        )
+        val draft = recipeDraftNew("Soup").copy(totalTime = "PT30M", ingredients = listOf(DraftSection("", "stock")))
+        val recipe = api.createRecipe(recipeDraftToJson(draft))
         assertEquals("Soup", recipe.title)
         assertEquals("120", recipe.nutrition?.get("calories")?.toString()?.trim('"'))
         val request = server.takeRequest()
@@ -245,6 +247,35 @@ class CrumbApiTest {
         assertEquals("POST", request.method)
         assertEquals("/api/recipes/bulk-delete", request.url.encodedPath)
         assertEquals("""{"ids":[1,2,3]}""", request.body?.utf8())
+    }
+
+    @Test
+    fun theTrashListsRestoresPurgesAndEmpties() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""[{"id":4,"title":"Soup","url":null,"image":null,"deletedAt":"2026-09-01T10:00:00.000Z","purgeAt":"2026-10-01T10:00:00.000Z"}]"""))
+        assertEquals("Soup", api.trash().single().title)
+        assertEquals("/api/trash", server.takeRequest().url.encodedPath)
+
+        server.enqueue(json("""{"id":9,"title":"Soup","isNew":false}"""))
+        assertEquals(Restored(9, "Soup", false), api.restoreRecipe(4))
+        server.takeRequest().let {
+            assertEquals("POST", it.method)
+            assertEquals("/api/trash/4/restore", it.url.encodedPath)
+        }
+
+        server.enqueue(json("""{"ok":true}"""))
+        api.purgeTrashed(4)
+        server.takeRequest().let {
+            assertEquals("DELETE", it.method)
+            assertEquals("/api/trash/4", it.url.encodedPath)
+        }
+
+        server.enqueue(json("""{"deleted":3}"""))
+        assertEquals(3, api.emptyTrash())
+        server.takeRequest().let {
+            assertEquals("DELETE", it.method)
+            assertEquals("/api/trash", it.url.encodedPath)
+        }
     }
 
     @Test

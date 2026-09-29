@@ -31,7 +31,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /** Everything the screens share, built once per process. */
-class AppContainer(app: Application, scope: CoroutineScope) {
+class AppContainer(app: Application, val scope: CoroutineScope) {
     val session = SessionStore(app)
     val cache = RecipeCache(File(app.filesDir, "recipes"))
     val theme = ThemeStore(app)

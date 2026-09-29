@@ -109,6 +109,7 @@ import com.composables.icons.lucide.Plug
 import com.composables.icons.lucide.Shuffle
 import com.composables.icons.lucide.Sun
 import com.composables.icons.lucide.Sunrise
+import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.Unlink
 import com.composables.icons.lucide.UserRound
 import kotlinx.coroutines.CancellationException
@@ -285,6 +286,7 @@ fun MoreScreen() {
             listOf(
                 { ListRow(title = accountTitle, subtitle = accountText, icon = Lucide.UserRound, plainIcon = true, onClick = { nav.account() }) },
                 { ListRow(title = "Connections", subtitle = "Claude", icon = Lucide.Plug, plainIcon = true, onClick = { nav.connections() }) },
+                { ListRow(title = "Trash", subtitle = "Deleted recipes, kept for 30 days", icon = Lucide.Trash2, plainIcon = true, onClick = { nav.trash() }) },
                 {
                     ListRow(
                         title = "Download a backup",

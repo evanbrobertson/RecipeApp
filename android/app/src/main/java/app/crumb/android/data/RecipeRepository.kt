@@ -38,6 +38,25 @@ class RecipeRepository(
         fallback = { cache.cookbook(id) },
     )
 
+    /** Moves a recipe to the trash and forgets the phone's copy of it. */
+    suspend fun deleteRecipe(id: Long) {
+        api.deleteRecipe(id)
+        cache.forgetRecipes(listOf(id))
+    }
+
+    suspend fun deleteRecipes(ids: List<Long>): Int {
+        val deleted = api.deleteRecipes(ids)
+        cache.forgetRecipes(ids)
+        return deleted
+    }
+
+    /** Puts a trashed recipe back; the phone's copy is dropped so the next open reads it fresh. */
+    suspend fun restore(id: Long): Restored {
+        val restored = api.restoreRecipe(id)
+        cache.forgetRecipes(listOf(id, restored.id))
+        return restored
+    }
+
     suspend fun markCooked(id: Long): Cooked = api.markCooked(id)
 
     fun photoUrl(recipeId: Long, image: String?, width: Int) = api.photoUrl(recipeId, image, width)

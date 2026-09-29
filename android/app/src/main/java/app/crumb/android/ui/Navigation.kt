@@ -37,6 +37,7 @@ class CrumbNav(
     fun connect() = nav.navigate(ConnectRoute)
     fun account() = nav.navigate(AccountRoute)
     fun connections() = nav.navigate(ConnectionsRoute)
+    fun trash() = nav.navigate(TrashRoute)
 
     /** Starts over from Home with nothing kept (after leaving or switching household). */
     fun restart() {

@@ -1,108 +1,85 @@
 package app.crumb.android.ui.edit
 
+import app.crumb.android.data.CrumbJson
 import app.crumb.android.data.Flag
+import app.crumb.android.data.Recipe
+import app.crumb.android.data.Section
+import app.crumb.core.DraftSection
+import app.crumb.core.SectionKind
+import app.crumb.core.fixFor
+import app.crumb.core.metaFields
+import app.crumb.core.recipeDraftNew
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The RecipeEditor conversions and Wee Chef fixes (web/src/components/RecipeEditor.svelte). */
+/** The app's side of the editor: models handed to crumb-core's editor and its answers back. */
 class EditorLogicTest {
-    private fun flag(kind: String, text: String, field: String = "instructions") =
-        Flag(id = 1, field = field, itemText = text, kind = kind, state = "review")
+    private val soup = Recipe(
+        id = 1,
+        title = "Soup",
+        video = "https://youtu.be/abc",
+        ingredients = listOf(Section("Broth", listOf("stock", "salt"))),
+        nutrition = CrumbJson.parseToJsonElement("""{"calories":320,"fat":"12 g"}""") as JsonObject,
+    )
 
-    @Test fun strips_bullets_and_numbering() {
-        val sections = sectionList(listOf(DraftSection("", "- 2 cups flour\n1. 1 tsp salt\n• pinch of nutmeg")))
-        assertEquals(listOf("2 cups flour", "1 tsp salt", "pinch of nutmeg"), sections.single().items)
+    private fun body(result: Result<String>): JsonObject = CrumbJson.parseToJsonElement(result.getOrThrow()).jsonObject
+
+    @Test fun aSavedRecipeBecomesAFormAndSavesBackWithItsVideo() {
+        val draft = recipeDraft(soup)
+        assertEquals("https://youtu.be/abc", draft.video)
+        assertEquals("Broth", draft.ingredients.single().name)
+        assertEquals("stock\nsalt", draft.ingredients.single().text)
+        assertEquals("calories: 320\nfat: 12 g", draft.nutrition)
+
+        val json = body(saveBody(draft))
+        assertEquals("https://youtu.be/abc", json["video"]!!.jsonPrimitive.content)
+        assertEquals("320", json["nutrition"]!!.jsonObject["calories"]!!.jsonPrimitive.content)
+        // Blank fields go as explicit nulls: the server reads a missing field as "leave it"
+        assertEquals(JsonNull, json["description"])
+        assertEquals(JsonNull, body(saveBody(draft.copy(video = "  ")))["video"])
     }
 
-    @Test fun trims_lines_and_drops_blank_ones() {
-        val sections = sectionList(listOf(DraftSection("", "  flour  \n\n \nsalt")))
-        assertEquals(listOf("flour", "salt"), sections.single().items)
+    @Test fun aFormWithoutATitleSaysWhyItCannotBeSaved() {
+        assertEquals("Give the recipe a title.", saveBody(recipeDraftNew("  ")).exceptionOrNull()?.message)
+        assertTrue(saveBody(recipeDraftNew("Pie")).isSuccess)
     }
 
-    @Test fun drops_sections_left_empty() {
-        val sections = sectionList(listOf(DraftSection("For the sauce", "  \n \n"), DraftSection("", "bake")))
-        assertEquals(1, sections.size)
-        assertEquals(listOf("bake"), sections.single().items)
-        assertNull(sections.single().name)
+    @Test fun theMetaFieldsReadAndWriteTheDraft() {
+        var draft = recipeDraftNew("Pie")
+        val keys = metaFields().map { it.key }
+        keys.forEachIndexed { i, key -> draft = draft.withMeta(key, "v$i") }
+        keys.forEachIndexed { i, key -> assertEquals("v$i", draft.meta(key)) }
+        assertEquals("v4", draft.recipeYield)
     }
 
-    @Test fun keeps_section_names_and_nulls_blank_ones() {
-        val sections = sectionList(listOf(DraftSection(" For the sauce ", "flour"), DraftSection("  ", "bake")))
-        assertEquals("For the sauce", sections[0].name)
-        assertNull(sections[1].name)
+    @Test fun thePhotoFlagShowsOnlyWhileTheLinkIsStillThere() {
+        val flag = Flag(9, "image", "https://x.test/a.jpg", "dead_image", "review")
+        val other = Flag(10, "ingredients", "https://x.test/a.jpg", "junk", "review")
+        val draft = recipeDraftNew("Pie").copy(image = "https://x.test/a.jpg")
+        assertEquals(flag, photoFlag(listOf(other, flag), draft))
+        assertNull(photoFlag(listOf(flag), draft.copy(image = "https://x.test/b.jpg")))
+        assertNull(photoFlag(listOf(flag), recipeDraftNew("Pie")))
+        assertNull(photoFlag(listOf(flag.copy(state = "dismissed")), draft))
     }
 
-    @Test fun empty_fields_become_null_never_blank() {
-        val fields = RecipeDraft(title = "  Pie  ", description = "  ", url = " https://x ").toFields()
-        assertEquals("Pie", fields.title)
-        assertNull(fields.description)
-        assertEquals("https://x", fields.url)
-        assertNull(fields.notes)
-        assertNull(fields.nutrition)
-    }
+    @Test fun aLineFlagSitsUnderItsSectionAndOffersACoreFix() {
+        val flag = Flag(1, "instructions", "Enjoy!", "junk", "review")
+        val draft = recipeDraftNew("Pie").copy(instructions = listOf(DraftSection("", "Bake.\nEnjoy!")))
+        val section = draft.instructions.single()
+        assertEquals(listOf(flag), flagsHere(listOf(flag), SectionKind.INSTRUCTIONS, section))
+        assertTrue(flagsHere(listOf(flag), SectionKind.INGREDIENTS, section).isEmpty())
+        assertTrue(flagsHere(listOf(flag), SectionKind.INSTRUCTIONS, DraftSection("", "Bake.")).isEmpty())
 
-    @Test fun parses_nutrition_key_value_lines() {
-        assertEquals(
-            mapOf("calories" to "320", "protein" to "12 g"),
-            parseNutrition("calories: 320\nno colon here\nprotein: 12 g\n: 9\nfat:"),
-        )
-    }
-
-    @Test fun later_nutrition_keys_win() {
-        assertEquals(mapOf("calories" to "2"), parseNutrition("calories: 1\ncalories: 2"))
-    }
-
-    @Test fun quotes_and_shortens() {
-        assertEquals("“Short”", quote("Short"))
-        assertEquals("“abc…”", quote("abcdef", 4))
-        assertEquals("“Sauce:”", quote("  Sauce:  "))
-    }
-
-    @Test fun heading_fix_names_the_first_section_when_nothing_is_above() {
-        val draft = RecipeDraft(instructions = listOf(DraftSection("", "Sauce:\nMix it")))
-        val fix = fixFor("instructions", 0, flag("heading", "Sauce:"), draft)!!
-        assertEquals("Make it a heading", fix.label)
-        val after = fix.apply()
-        assertEquals(listOf(DraftSection("Sauce", "Mix it")), after.instructions)
-    }
-
-    @Test fun heading_fix_splits_when_lines_are_above() {
-        val draft = RecipeDraft(instructions = listOf(DraftSection("", "Prep\nSauce:\nMix it")))
-        val after = fixFor("instructions", 0, flag("heading", "Sauce:"), draft)!!.apply()
-        assertEquals(listOf(DraftSection("", "Prep"), DraftSection("Sauce", "Mix it")), after.instructions)
-    }
-
-    @Test fun heading_fix_needs_lines_under_it() {
-        val draft = RecipeDraft(instructions = listOf(DraftSection("", "Sauce:")))
-        assertNull(fixFor("instructions", 0, flag("heading", "Sauce:"), draft))
-    }
-
-    @Test fun junk_fix_removes_the_line() {
-        val draft = RecipeDraft(ingredients = listOf(DraftSection("", "2 cups flour\nSubscribe to my channel")))
-        val fix = fixFor("ingredients", 0, flag("junk", "Subscribe to my channel", field = "ingredients"), draft)!!
-        assertEquals("Remove it", fix.label)
-        assertEquals(listOf(DraftSection("", "2 cups flour")), fix.apply().ingredients)
-    }
-
-    @Test fun not_instruction_fix_moves_a_tip_to_the_notes() {
-        val draft = RecipeDraft(notes = "Use the good pan.", instructions = listOf(DraftSection("", "Mix it\nTip: cold butter")))
-        val fix = fixFor("instructions", 0, flag("not_instruction", "Tip: cold butter"), draft)!!
-        assertEquals("Move to notes", fix.label)
-        val after = fix.apply()
-        assertEquals(listOf(DraftSection("", "Mix it")), after.instructions)
-        assertEquals("Use the good pan.\n\nTip: cold butter", after.notes)
-    }
-
-    @Test fun fragment_fix_joins_with_the_step_above() {
-        val draft = RecipeDraft(instructions = listOf(DraftSection("", "Mix the dry\nand the wet")))
-        val fix = fixFor("instructions", 0, flag("fragment", "and the wet"), draft)!!
-        assertEquals("Join with the step above", fix.label)
-        assertEquals(listOf(DraftSection("", "Mix the dry and the wet")), fix.apply().instructions)
-    }
-
-    @Test fun no_fix_when_the_flagged_line_is_gone() {
-        val draft = RecipeDraft(instructions = listOf(DraftSection("", "Mix it")))
-        assertNull(fixFor("instructions", 0, flag("junk", "not there"), draft))
+        val fix = fixFor(draft, SectionKind.INSTRUCTIONS, 0u, flag.kind, flag.itemText!!)
+        assertNotNull(fix)
+        assertEquals("Remove it", fix!!.label)
+        assertEquals("Bake.", fix.draft.instructions.single().text)
     }
 }

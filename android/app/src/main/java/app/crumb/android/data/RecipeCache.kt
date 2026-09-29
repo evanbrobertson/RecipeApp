@@ -29,6 +29,17 @@ class RecipeCache(private val root: File) {
     suspend fun recipe(id: Long): Recipe? = read("recipe-$id", Recipe.serializer())
     suspend fun putRecipe(recipe: Recipe) = write("recipe-${recipe.id}", Recipe.serializer(), recipe)
 
+    /** Drops deleted (or restored, so stale) recipes: their own copy, and their place in the box's list. */
+    suspend fun forgetRecipes(ids: Collection<Long>) {
+        withContext(Dispatchers.IO) {
+            val folder = dir ?: return@withContext
+            ids.forEach { File(folder, "recipe-$it.json").delete() }
+        }
+        recipes()?.takeIf { list -> list.any { it.id in ids } }?.let { list ->
+            putRecipes(list.filter { it.id !in ids })
+        }
+    }
+
     suspend fun cookbooks(): List<CookbookListItem>? = read("cookbooks", CookbookList)
     suspend fun putCookbooks(list: List<CookbookListItem>) = write("cookbooks", CookbookList, list)
 

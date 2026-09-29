@@ -87,11 +87,15 @@ import app.crumb.android.ui.components.EmptyState
 import app.crumb.android.ui.components.Message
 import app.crumb.android.ui.components.OfflineNote
 import app.crumb.android.ui.components.Skeleton
+import app.crumb.android.ui.components.ToastAction
 import app.crumb.android.ui.components.ToastTone
 import app.crumb.android.ui.components.Toaster
 import app.crumb.android.ui.components.VSpace
 import app.crumb.android.ui.friendlyMessage
 import app.crumb.android.ui.theme.Crumb
+import app.crumb.android.ui.trash.deleteManyDescription
+import app.crumb.android.ui.trash.movedToTrashTitle
+import app.crumb.android.ui.trash.undoDelete
 import app.crumb.android.ui.theme.NunitoSans
 import app.crumb.core.categories
 import com.composables.icons.lucide.BookOpen
@@ -267,10 +271,14 @@ fun RecipesScreen(initialQuery: String? = null) {
         busy = true
         scope.launch {
             try {
-                container.api.deleteRecipes(ids)
+                container.recipes.deleteRecipes(ids)
                 container.local.forgetViewed(ids)
                 vm.remove(ids)
-                Toaster.show(deletedTitle(ids.size), tone = ToastTone.Success)
+                Toaster.show(
+                    movedToTrashTitle(ids.size),
+                    tone = ToastTone.Success,
+                    action = ToastAction("Undo") { undoDelete(container, ids) { vm.load() } },
+                )
                 showDelete = false
                 selecting = false
                 selected = emptySet()
@@ -411,7 +419,7 @@ fun RecipesScreen(initialQuery: String? = null) {
     if (showDelete) {
         CrumbModal(
             title = "Delete recipes?",
-            description = deleteDescription(selected.size),
+            description = deleteManyDescription(selected.size),
             onDismiss = { if (!busy) showDelete = false },
             footer = {
                 Btn("Cancel", { showDelete = false }, style = BtnStyle.Ghost, enabled = !busy)

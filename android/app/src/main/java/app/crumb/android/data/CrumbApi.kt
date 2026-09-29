@@ -59,16 +59,6 @@ val CrumbJson = Json {
 }
 
 /**
- * For recipe create/update: the server reads a missing field as "leave it" and null as
- * "clear it", so the editor's empty fields must go as explicit nulls (never "", which the
- * server keeps, or rejects for links).
- */
-private val FieldsJson = Json(CrumbJson) {
-    explicitNulls = true
-    encodeDefaults = true
-}
-
-/**
  * The Crumb server's REST API (src/api.rs). Signed-in requests carry the `crumb_session`
  * cookie from the current [session]; a 401 means the session expired or the password changed.
  */
@@ -250,13 +240,13 @@ class CrumbApi(
         )
     }
 
-    /** `POST /api/recipes`: save the editor's fields. */
-    suspend fun createRecipe(fields: RecipeFields): Recipe =
-        decode(post("api/recipes", FieldsJson.encodeToString(RecipeFields.serializer(), fields)), Recipe.serializer())
+    /** `POST /api/recipes`: save the editor's form (`recipeDraftToJson`'s body). */
+    suspend fun createRecipe(body: String): Recipe =
+        decode(post("api/recipes", body), Recipe.serializer())
 
-    /** `PATCH /api/recipes/{id}`: save the editor's fields over an existing recipe. */
-    suspend fun updateRecipe(id: Long, fields: RecipeFields): Recipe =
-        decode(patch("api/recipes/$id", FieldsJson.encodeToString(RecipeFields.serializer(), fields)), Recipe.serializer())
+    /** `PATCH /api/recipes/{id}`: save the editor's form over an existing recipe. */
+    suspend fun updateRecipe(id: Long, body: String): Recipe =
+        decode(patch("api/recipes/$id", body), Recipe.serializer())
 
     /** `DELETE /api/recipes/{id}`. */
     suspend fun deleteRecipe(id: Long) {
@@ -266,6 +256,21 @@ class CrumbApi(
     /** `POST /api/recipes/bulk-delete`: the number of recipes actually deleted. */
     suspend fun deleteRecipes(ids: List<Long>): Int =
         decode(post("api/recipes/bulk-delete", idsBody("ids", ids)), Deleted.serializer()).deleted
+
+    /** `GET /api/trash`: recipes deleted in the last 30 days, newest first. */
+    suspend fun trash(): List<Trashed> = get(url("api/trash"), ListSerializer(Trashed.serializer()))
+
+    /** `POST /api/trash/{id}/restore`: puts a deleted recipe back. */
+    suspend fun restoreRecipe(id: Long): Restored =
+        decode(post("api/trash/$id/restore", "{}"), Restored.serializer())
+
+    /** `DELETE /api/trash/{id}`: deletes one recipe from the trash for good. */
+    suspend fun purgeTrashed(id: Long) {
+        delete("api/trash/$id").close()
+    }
+
+    /** `DELETE /api/trash`: empties the trash; how many went. */
+    suspend fun emptyTrash(): Int = decode(delete("api/trash"), Deleted.serializer()).deleted
 
     /** `GET /api/recipes/random`: a random recipe, or null when the box is empty (404). */
     suspend fun randomRecipe(exclude: List<Long> = emptyList(), current: Long? = null): RecipeSummary? {
