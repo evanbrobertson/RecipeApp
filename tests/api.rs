@@ -6915,6 +6915,171 @@ async fn with_google(
 }
 
 #[tokio::test]
+async fn the_apps_sign_in_with_google_through_the_browser() {
+    use crumb_core::app_link::{AppSignIn, signed_in_code};
+    let fake = fake_google().await;
+    let t = &google_app(&fake, false);
+    let (_, ann, _) = auth_post(
+        t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    with_google(
+        t,
+        json!({"intent": "link"}),
+        Some(&ann),
+        "g-ann",
+        "a@gmail.test",
+    )
+    .await;
+
+    // Only a provider this Crumb has, and only a PKCE challenge
+    let pair = AppSignIn::new();
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/auth/app/start",
+            Some(json!({"provider": "apple", "challenge": pair.challenge})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/auth/app/start",
+            Some(json!({"provider": "google", "challenge": "short"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The app starts, and opens the page it's given in the browser
+    let start = || async move {
+        let pair = AppSignIn::new();
+        let (status, body) = t
+            .json(
+                "POST",
+                "/api/auth/app/start",
+                Some(json!({"provider": "google", "challenge": pair.challenge})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let url = url::Url::parse(body["url"].as_str().unwrap()).unwrap();
+        assert_eq!(url.path(), "/app/sign-in");
+        let id = url
+            .query_pairs()
+            .find(|(k, _)| k == "id")
+            .map(|(_, v)| v.into_owned())
+            .unwrap();
+        (pair, id)
+    };
+    let (pair, id) = start().await;
+    let page = Request::builder()
+        .uri("/app/sign-in?provider=google&id=x")
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, _) = t.send(page).await;
+    assert_ne!(status, StatusCode::FOUND, "the page is public");
+
+    // The browser signs in as the web does, and ends up at `done`
+    let next = format!("/api/auth/app/done?id={id}");
+    let (to, browser) = with_google(t, json!({"next": next}), None, "g-ann", "a@gmail.test").await;
+    assert_eq!(to, next);
+    let done = |cookie: Option<String>| {
+        let next = next.clone();
+        async move {
+            let mut req = Request::builder().uri(next);
+            if let Some(c) = cookie {
+                req = req.header(header::COOKIE, c);
+            }
+            t.send(req.body(Body::empty()).unwrap()).await
+        }
+    };
+    let (status, _, _) = done(None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "done needs the browser signed in"
+    );
+    let (status, headers, html) = done(browser.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    let link = html
+        .split('"')
+        .find(|s| s.starts_with("app.crumb://signed-in?code="))
+        .unwrap();
+    let code = signed_in_code(link).unwrap();
+    let (status, _, _) = done(browser.clone()).await;
+    assert_eq!(status, StatusCode::GONE, "a start is finished once");
+
+    // Only the verifier gets the session: the app's own, named for the app
+    let redeem = |code: String, verifier: String| async move {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/app/redeem")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::USER_AGENT, "Crumb/1.0 (Android 16; Pixel 9)")
+            .body(Body::from(
+                json!({"code": code, "verifier": verifier}).to_string(),
+            ))
+            .unwrap();
+        let (status, headers, _) = t.send(req).await;
+        let cookie = headers
+            .get(header::SET_COOKIE)
+            .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_string());
+        (status, cookie)
+    };
+    let (status, cookie) = redeem(code.clone(), pair.verifier.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let app = cookie.unwrap();
+    assert_ne!(Some(&app), browser.as_ref());
+    let s = signed(t, &app, "GET", "/api/auth/status", None).await;
+    assert_eq!(s["user"]["email"], "ann@example.com");
+    let devices = signed(t, &app, "GET", "/api/auth/sessions", None).await;
+    let this = devices
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["current"] == true);
+    assert_eq!(
+        this.unwrap()["userAgent"],
+        "Crumb/1.0 (Android 16; Pixel 9)",
+        "the app's own session, not the browser's"
+    );
+    assert_eq!(redeem(code, pair.verifier).await.0, StatusCode::GONE);
+
+    // A wrong verifier uses the code up
+    let (pair, id) = start().await;
+    let next = format!("/api/auth/app/done?id={id}");
+    let (_, browser) = with_google(t, json!({"next": next}), None, "g-ann", "a@gmail.test").await;
+    let req = Request::builder()
+        .uri(&next)
+        .header(header::COOKIE, browser.unwrap())
+        .body(Body::empty())
+        .unwrap();
+    let (_, _, html) = t.send(req).await;
+    let code = html.split('"').find_map(signed_in_code).unwrap();
+    let other = AppSignIn::new().verifier;
+    assert_eq!(redeem(code.clone(), other).await.0, StatusCode::GONE);
+    assert_eq!(redeem(code, pair.verifier).await.0, StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn the_apps_google_sign_in_needs_accounts() {
+    let t = TestApp::new(Some("pw"));
+    let pair = crumb_core::app_link::AppSignIn::new();
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/auth/app/start",
+            Some(json!({"provider": "google", "challenge": pair.challenge})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn accounts_sign_in_with_google() {
     let fake = fake_google().await;
     let t = google_app(&fake, false);
