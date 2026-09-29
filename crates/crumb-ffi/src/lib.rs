@@ -403,6 +403,25 @@ pub fn session_cookie(set_cookie: String) -> Option<String> {
     client::session_cookie(&set_cookie)
 }
 
+/// What to save from one `Set-Cookie` header to stay signed in, in any account mode: the
+/// bare `crumb_session` value, or `name=value` for the hosted edition's cookie.
+#[uniffi::export]
+pub fn saved_session(set_cookie: String) -> Option<String> {
+    client::saved_session(&set_cookie)
+}
+
+/// A saved session as the `Cookie` request header.
+#[uniffi::export]
+pub fn session_header(saved: String) -> String {
+    client::session_header(&saved)
+}
+
+/// Whether a saved session is the hosted edition's (Better Auth's paths).
+#[uniffi::export]
+pub fn is_hosted_session(saved: String) -> bool {
+    client::is_hosted_session(&saved)
+}
+
 /// The message to show for a failed request, from its status and body.
 #[uniffi::export]
 pub fn error_message(status: u16, body: String) -> String {

@@ -31,9 +31,9 @@ pub use types::*;
 /// this value in the keyring so a signed-in session survives a restart.
 pub const SESSION_COOKIE: &str = "crumb_session";
 
-/// Better Auth's session cookie for the hosted edition (`advanced.cookiePrefix` is
-/// `crumb` in `auth/src/auth.ts`); over HTTPS it gets a `__Secure-` prefix.
-const HOSTED_COOKIE: &str = "crumb.session_token";
+pub use crumb_core::client::session_header;
+use crumb_core::client::{is_hosted_cookie, split_session};
+
 const SECURE_PREFIX: &str = "__Secure-";
 
 /// What to save: a link or pasted text, sent to `POST /api/recipes/import`.
@@ -481,26 +481,6 @@ impl Client {
     }
 }
 
-/// A saved [`Client::session_cookie`] as a `Cookie` header value, for code that makes its
-/// own requests to the server (like the desktop app's photo loader).
-pub fn session_header(saved: &str) -> String {
-    let (name, value) = split_session(saved);
-    format!("{name}={value}")
-}
-
-fn is_hosted_cookie(name: &str) -> bool {
-    name == HOSTED_COOKIE || name.strip_prefix(SECURE_PREFIX) == Some(HOSTED_COOKIE)
-}
-
-/// A saved session as cookie name and value: `name=value` for the hosted edition's
-/// cookie, anything else a bare `crumb_session` value (which may itself contain `=`).
-fn split_session(saved: &str) -> (&str, &str) {
-    match saved.split_once('=') {
-        Some((name, value)) if is_hosted_cookie(name) => (name, value),
-        _ => (SESSION_COOKIE, saved),
-    }
-}
-
 /// The file name in a `Content-Disposition` header: the UTF-8 `filename*` when there is
 /// one (RFC 6266, as `api::attachment` writes it), else the plain `filename`.
 fn attachment_name(header: &str) -> Option<String> {
@@ -594,29 +574,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(book.cookbook.unwrap().added, 2);
-    }
-
-    #[test]
-    fn saved_sessions_as_headers() {
-        assert_eq!(session_header("abc.d=="), "crumb_session=abc.d==");
-        assert_eq!(
-            session_header("__Secure-crumb.session_token=x.y"),
-            "__Secure-crumb.session_token=x.y"
-        );
-    }
-
-    #[test]
-    fn saved_sessions_name_their_cookie() {
-        assert_eq!(split_session("abc.def"), ("crumb_session", "abc.def"));
-        assert_eq!(split_session("abc.d=="), ("crumb_session", "abc.d=="));
-        assert_eq!(
-            split_session("crumb.session_token=abc.d%3D"),
-            ("crumb.session_token", "abc.d%3D")
-        );
-        assert_eq!(
-            split_session("__Secure-crumb.session_token=abc"),
-            ("__Secure-crumb.session_token", "abc")
-        );
     }
 
     #[test]
