@@ -7668,3 +7668,169 @@ async fn the_consent_screen_does_not_let_a_name_pose_as_claude() {
     let html = screen("Claude", "https://claude.ai/api/mcp/auth_callback").await;
     assert!(html.contains("Connect Claude?"));
 }
+
+#[tokio::test]
+async fn state_changes_from_other_sites_are_refused() {
+    let t = TestApp::new(None);
+    let post = |extra: &[(&str, &str)]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/recipes/bulk-delete")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::HOST, "crumb.test");
+        for (k, v) in extra {
+            req = req.header(*k, *v);
+        }
+        req.body(Body::from(r#"{"ids":[1]}"#)).unwrap()
+    };
+    for site in ["cross-site", "same-site"] {
+        let (status, _, body) = t.send(post(&[("sec-fetch-site", site)])).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{site}: {body}");
+    }
+    // No Fetch Metadata: the Origin has to be this site's
+    let (status, _, _) = t.send(post(&[("origin", "https://evil.example")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = t.send(post(&[("origin", "null")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // This site's own pages, browsers that only send Origin, and non-browser clients pass
+    for extra in [
+        vec![("sec-fetch-site", "same-origin")],
+        vec![("origin", "http://crumb.test")],
+        vec![],
+    ] {
+        let (status, _, body) = t.send(post(&extra)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{extra:?}: {body}");
+    }
+    // Reads are never refused, and the protocol endpoints take other origins' calls
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/recipes")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::from(
+                    r#"{"redirect_uris":["https://claude.ai/cb"],"client_name":"c"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn mcp_checks_a_browsers_origin() {
+    let t = TestApp::with_config(|c| c.site_url = Some("https://crumb.example".into()));
+    let call = |origin: Option<&str>| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        req.body(Body::from(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        ))
+        .unwrap()
+    };
+    let (status, _, _) = t.send(call(Some("https://evil.example"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    for ok in [
+        None,
+        Some("https://crumb.example"),
+        Some("https://claude.ai"),
+    ] {
+        let (status, _, body) = t.send(call(ok)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{ok:?}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn shell_templates_stay_hidden_however_the_path_is_spelled() {
+    let t = TestApp::new(None);
+    for path in [
+        "/shell/preview/index.html",
+        "/%73hell/preview/index.html",
+        "/%53HELL/preview/index.html",
+        "/shell%2Fpreview/index.html",
+    ] {
+        let (status, _, body) = t.send(get(path)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!body.contains("previewBoot"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn app_pages_carry_a_csp_that_allows_only_their_own_scripts() {
+    let t = TestApp::new(None);
+    let (status, headers, _) = t.send(get("/add")).await;
+    assert_eq!(status, StatusCode::OK);
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+    assert!(csp.contains("object-src 'none'") && csp.contains("frame-ancestors 'none'"));
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[tokio::test]
+async fn hsts_is_sent_over_https_only() {
+    let t = TestApp::with_config(|c| c.trust_proxy_headers = true);
+    let (_, headers, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/health")
+                .header("x-forwarded-proto", "https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert!(
+        headers[header::STRICT_TRANSPORT_SECURITY]
+            .to_str()
+            .unwrap()
+            .starts_with("max-age=")
+    );
+    let (_, headers, _) = t.send(get("/api/health")).await;
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[test]
+fn the_public_origin_ignores_forwarded_headers_unless_a_proxy_is_trusted() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("host", "real.example".parse().unwrap());
+    headers.insert("x-forwarded-host", "evil.example".parse().unwrap());
+    headers.insert("x-forwarded-proto", "https".parse().unwrap());
+    let mut config = Config::default();
+    assert_eq!(config.public_origin(&headers), "http://real.example");
+    config.trust_proxy_headers = true;
+    assert_eq!(config.public_origin(&headers), "https://evil.example");
+    config.site_url = Some("https://fixed.example/".into());
+    assert_eq!(config.public_origin(&headers), "https://fixed.example");
+}
+
+#[test]
+fn accounts_modes_refuse_to_start_without_a_fixed_address() {
+    use crumb::config::AuthMode;
+    let mut config = Config::default();
+    assert!(config.check().is_ok(), "password mode only warns");
+    config.auth_mode = AuthMode::Accounts;
+    assert!(config.check().unwrap_err().contains("SITE_URL"));
+    config.auth_mode = AuthMode::Hosted;
+    assert!(config.check().is_err());
+    config.site_url = Some("https://recipes.example".into());
+    assert!(config.check().is_ok());
+    config.site_url = None;
+    config.railway_domain = Some("app.up.railway.app".into());
+    assert!(config.check().is_ok());
+}

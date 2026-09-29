@@ -1643,7 +1643,31 @@ pub fn preview_policy(page: &str) -> String {
     policy(page, "'self' data: https: http:")
 }
 
+/// The app's own pages' CSP. Scripts run only from this origin and by the hash of each inline
+/// script the page has; nothing can be embedded as an object or re-based, and the page can't
+/// be framed. Images, media and frames stay open to https because recipe videos and photos
+/// come from other sites; `connect_extra` adds the error-reporting endpoint, if any.
+pub fn app_policy(page: &str, connect_extra: &str) -> String {
+    let scripts = script_hashes(page);
+    format!(
+        "default-src 'self'; script-src {scripts} 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data:; \
+         connect-src 'self'{connect_extra}; frame-src https:; worker-src 'self' blob:; \
+         object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    )
+}
+
 fn policy(page: &str, images: &str) -> String {
+    let scripts = script_hashes(page);
+    format!(
+        "default-src 'none'; script-src {scripts}; style-src 'self' 'unsafe-inline'; \
+         img-src {images}; font-src 'self'; connect-src 'self'; base-uri 'none'; \
+         form-action 'self'; frame-ancestors 'none'"
+    )
+}
+
+/// `'self'` and the hash of every inline script in `page` that runs.
+fn script_hashes(page: &str) -> String {
     let mut hashes = Vec::new();
     for c in SCRIPT.captures_iter(page) {
         let attrs = &c[1];
@@ -1667,15 +1691,10 @@ fn policy(page: &str, images: &str) -> String {
             }
         }
     }
-    let scripts = std::iter::once("'self'".to_string())
+    std::iter::once("'self'".to_string())
         .chain(hashes)
         .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "default-src 'none'; script-src {scripts}; style-src 'self' 'unsafe-inline'; \
-         img-src {images}; font-src 'self'; connect-src 'self'; base-uri 'none'; \
-         form-action 'self'; frame-ancestors 'none'"
-    )
+        .join(" ")
 }
 
 // ─── Saving another Crumb's share ───────────────────────────────────────────

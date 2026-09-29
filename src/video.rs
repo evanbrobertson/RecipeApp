@@ -165,6 +165,8 @@ const MAX_DESCRIPTION_CHARS: usize = 10_000;
 /// How long what the browser read waits for its import to start.
 const KEEP_FROM_BROWSER: Duration = Duration::from_secs(15 * 60);
 const MAX_KEPT_FROM_BROWSER: usize = 64;
+/// What one household may have waiting, so one box can't push everyone else's out.
+const MAX_KEPT_FROM_BROWSER_PER_HOUSEHOLD: usize = 8;
 
 fn clip(value: Option<String>, max: usize) -> Option<String> {
     let value = value?;
@@ -226,6 +228,21 @@ static FROM_BROWSER: LazyLock<Mutex<HashMap<BrowserKey, (Instant, FromBrowser)>>
 pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
     let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
     map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    let key = (state.household, url.to_string());
+    while !map.contains_key(&key)
+        && map.keys().filter(|(h, _)| *h == state.household).count()
+            >= MAX_KEPT_FROM_BROWSER_PER_HOUSEHOLD
+    {
+        let Some(oldest) = map
+            .iter()
+            .filter(|((h, _), _)| *h == state.household)
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
     while map.len() >= MAX_KEPT_FROM_BROWSER {
         let Some(oldest) = map
             .iter()
@@ -236,10 +253,7 @@ pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
         };
         map.remove(&oldest);
     }
-    map.insert(
-        (state.household, url.to_string()),
-        (Instant::now(), read.cleaned()),
-    );
+    map.insert(key, (Instant::now(), read.cleaned()));
 }
 
 fn take_from_browser(state: &AppState, url: &str) -> Option<FromBrowser> {

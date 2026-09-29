@@ -372,7 +372,7 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `HOSTED_HOME_OWNER` | No         | Hosted: the email whose household gets the recipes already in `DATABASE_PATH` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | No | Accounts: Sign in with Google (hosted: set on the auth service) |
 | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | No | Accounts: Sign in with Apple (hosted: set on the auth service) |
-| `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
+| `SITE_URL`          | Accounts, hosted | Public URL; the server won't start without it in those modes. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `ANTHROPIC_API_KEY` | No         | Turns on Wee Chef (reads pasted text, files and photos, writes "Try next" blurbs and ideas) |
 | `OPENAI_API_KEY`    | No         | The same with OpenAI instead                                                  |

@@ -11,6 +11,7 @@ pub mod checks;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod guard;
 pub mod hosted;
 pub mod households;
 pub mod images;
@@ -235,6 +236,19 @@ pub fn app(state: AppState) -> Router {
         .layer(security_header(
             "permissions-policy",
             "camera=(), microphone=(), geolocation=(self)",
+        ))
+        // State changes must come from this site; /mcp checks a browser's Origin; HSTS over HTTPS
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::same_origin_only,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::mcp_origin,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::hsts,
         ))
         // The client's address, for the sign-in and registration limits
         .layer(axum::middleware::from_fn_with_state(

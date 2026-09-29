@@ -403,6 +403,7 @@ impl Config {
         if let Some(domain) = &self.railway_domain {
             return format!("https://{domain}");
         }
+        // Forwarded headers are whatever the client sent unless a proxy we trust sets them
         let first = |name: &str| {
             headers
                 .get(name)
@@ -411,10 +412,31 @@ impl Config {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         };
-        let proto = first("x-forwarded-proto").unwrap_or_else(|| "http".into());
-        let host = first("x-forwarded-host")
+        let forwarded = |name: &str| first(name).filter(|_| self.trust_proxy_headers);
+        let proto = forwarded("x-forwarded-proto").unwrap_or_else(|| "http".into());
+        let host = forwarded("x-forwarded-host")
             .or_else(|| first("host"))
             .unwrap_or_else(|| format!("localhost:{}", self.port));
         format!("{proto}://{host}")
+    }
+
+    /// Whether the public address is fixed by configuration (`SITE_URL`, or Railway's domain)
+    /// rather than read from each request's headers.
+    pub fn origin_is_fixed(&self) -> bool {
+        self.site_url.is_some() || self.railway_domain.is_some()
+    }
+
+    /// Refuses configurations that would put a forged `Host` into links people follow: with
+    /// accounts, invites, OAuth metadata and share links need `SITE_URL`.
+    pub fn check(&self) -> Result<(), String> {
+        if !self.origin_is_fixed() && self.auth_mode != AuthMode::Password {
+            return Err(
+                "SITE_URL is required with AUTH_MODE=accounts or hosted (for example \
+                 https://recipes.example.com): invite links, sign-in redirects and the connector's \
+                 address are built from it, and without it they'd follow the request's Host header"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 }

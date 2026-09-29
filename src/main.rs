@@ -30,6 +30,14 @@ fn main() -> Result<(), BoxError> {
 
 async fn serve() -> Result<(), BoxError> {
     let config = Config::from_env();
+    if let Err(problem) = config.check() {
+        return Err(problem.into());
+    }
+    if !config.origin_is_fixed() && config.auth_enabled() {
+        tracing::warn!(
+            "SITE_URL is not set: links and connector addresses are built from each request's Host header. Set SITE_URL to this app's public address"
+        );
+    }
     let path = db::database_path();
     let database = db::open(&path)?;
     tracing::info!("database at {}", path.display());
