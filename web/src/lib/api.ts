@@ -56,6 +56,11 @@ export function isSiteBlocked(e: unknown): boolean {
   return e instanceof ApiError && e.code === "site_blocked"
 }
 
+/** The site's terms of service forbid automated fetching; the extension can still read the page. */
+export function isSiteTerms(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "site_terms"
+}
+
 /** A readable message from anything thrown by api(). */
 export function errorMessage(e: unknown, fallback = "Something went wrong"): string {
   return e instanceof Error && e.message ? e.message : fallback

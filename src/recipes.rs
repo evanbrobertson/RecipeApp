@@ -437,8 +437,15 @@ async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
     // What a preview of the link just showed, else the page as it is now
     let scraped = match crate::preview::take(state, url) {
         Some(scraped) => scraped,
-        None => crate::scraper::scrape_page(state, url).await?,
+        None => {
+            // A site whose terms forbid automated fetching: nothing is fetched. The cook's
+            // own browser can read it (the extension's `page`, taken above).
+            crate::site_terms::guard(url)?;
+            crate::scraper::scrape_page(state, url).await?
+        }
     };
+    // Wee Chef looks at an unfamiliar site's terms in the background
+    state.terms.consider(state, url);
     // Another Crumb's share page: take its export (sections, notes and the original link
     // as they are) instead of what scraping the page gave
     if let Some(export) = &scraped.crumb {
@@ -756,6 +763,7 @@ pub async fn refresh_from_source(
             "Recipes from videos can't be refreshed from the video. Edit the recipe instead.",
         ));
     }
+    crate::site_terms::guard(&url)?;
     let mut scraped = crate::scraper::scrape_recipe(state, &url).await?;
     crate::checks::tidy(&mut scraped, crate::checks::TidyScope::Scrape);
 

@@ -228,6 +228,17 @@ pub struct Config {
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
+    /// Where Wee Chef's terms-of-service checks are kept (`sites.db` next to the database, see
+    /// `site_terms`). None = in memory.
+    pub terms_db: Option<PathBuf>,
+    /// `TERMS_CHECK=off` turns Wee Chef's terms-of-service check off.
+    pub terms_check: bool,
+    /// `TERMS_ISSUES_TOKEN`: a GitHub token that may write issues, for the check's suggestions.
+    pub terms_issues_token: Option<String>,
+    /// `TERMS_ISSUES_REPO`: the repository (`owner/name`) those issues go to.
+    pub terms_issues_repo: String,
+    /// GitHub's API. Not an env var: tests point it at a stub.
+    pub github_api: String,
     pub host: String,
     pub port: u16,
 }
@@ -270,6 +281,11 @@ impl Default for Config {
             scrape_relay_token: None,
             scrape_relay_proxy: None,
             households_dir: None,
+            terms_db: None,
+            terms_check: true,
+            terms_issues_token: None,
+            terms_issues_repo: "evanbrobertson/RecipeApp".into(),
+            github_api: "https://api.github.com".into(),
             host: "0.0.0.0".into(),
             port: 3000,
         }
@@ -418,6 +434,11 @@ impl Config {
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),
+            terms_db: Some(crate::site_terms::sites_db_path(&crate::db::database_path())),
+            terms_check: !switched_off("TERMS_CHECK"),
+            terms_issues_token: env(&["TERMS_ISSUES_TOKEN"]),
+            terms_issues_repo: env(&["TERMS_ISSUES_REPO"]).unwrap_or(d.terms_issues_repo),
+            github_api: d.github_api,
             host: env(&["HOST"]).unwrap_or(d.host),
             port: env(&["PORT"])
                 .and_then(|p| p.parse().ok())

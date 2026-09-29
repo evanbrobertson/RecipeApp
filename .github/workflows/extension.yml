@@ -10,6 +10,7 @@ on:
     branches: [master]
     paths:
       - "extension/**"
+      - "data/site-terms.toml"
       - ".github/workflows/extension.yml"
   workflow_dispatch:
 

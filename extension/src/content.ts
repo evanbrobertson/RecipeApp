@@ -19,6 +19,7 @@ import {
   type Waiting,
 } from "./messages"
 import { readRecipe } from "./page"
+import { termsNote } from "./terms"
 import { showToast } from "./toast"
 import { looksLikeRecipe, peekVideo, readVideo, videoId } from "./youtube"
 
@@ -74,6 +75,8 @@ function offerRead(found: Found, title = "Read this recipe in Crumb?") {
   showToast({
     title,
     detail: found.name || document.title,
+    // A site whose terms forbid automated fetching: say why Crumb reads it from here
+    note: termsNote(location.hostname) ?? undefined,
     timeoutMs: TOAST_MS,
     actions: [
       {
@@ -103,6 +106,16 @@ const VIDEO_ASK_MS = 400
 function answerReadPage() {
   chrome.runtime.onMessage.addListener((message: ReadPage, sender, reply) => {
     if (message?.type !== "readPage" || sender.id !== chrome.runtime.id) return false
+    // The toolbar button was clicked: on a site whose terms forbid automated fetching, say
+    // why Crumb reads the recipe from this page (the prompt may not have been shown)
+    const note = termsNote(location.hostname)
+    if (note)
+      showToast({
+        title: "Reading this recipe for Crumb",
+        note,
+        timeoutMs: 6000,
+        actions: [{ label: "OK", run: () => {} }],
+      })
     reply(readRecipe(document))
     return false
   })

@@ -1,0 +1,97 @@
+# Sites whose terms of service explicitly forbid automated fetching or scraping.
+#
+# Crumb's server never fetches a page from a host listed here (no page, API, relay, archive or
+# browser): it answers "site_terms" and points the cook at the browser extension, which reads
+# the page in the cook's own browser. Reviewed by a person; see the README section "Sites whose
+# terms forbid automated fetching". Compiled into the server and the extension.
+#
+# Each entry:
+#   name    how the site is called to the cook
+#   hosts   the hosts covered; a host also covers all of its subdomains (www. and the rest)
+#   clause  the short quote from the terms that forbids automated access
+#   source  the URL of the terms
+#   checked the day a person last read the terms (YYYY-MM-DD)
+# Only an explicit ban on automated access counts. Clauses that also forbid manual copying, and
+# generic "personal, non-commercial use" wording, are not a reason to list a site.
+
+# People Inc (formerly Dotdash Meredith). The clause is section (e) of the brands' terms, read
+# on 2026-09-29. Verified the same day: every host below is a brand listed on
+# https://www.people.inc/brands, whose brand page links to that domain. Cooking Light is not
+# on that list, so it is not here.
+
+[[site]]
+name = "Allrecipes"
+hosts = ["allrecipes.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Serious Eats"
+hosts = ["seriouseats.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Simply Recipes"
+hosts = ["simplyrecipes.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Food & Wine"
+hosts = ["foodandwine.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "EatingWell"
+hosts = ["eatingwell.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Martha Stewart"
+hosts = ["marthastewart.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Better Homes & Gardens"
+hosts = ["bhg.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Real Simple"
+hosts = ["realsimple.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "Southern Living"
+hosts = ["southernliving.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "MyRecipes"
+hosts = ["myrecipes.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"
+
+[[site]]
+name = "The Spruce Eats"
+hosts = ["thespruceeats.com"]
+clause = "you shall not use any manual or automated software, devices, or other processes (including but not limited to spiders, robots, scrapers, crawlers, avatars, data mining tools or the like) to \"scrape,\" harvest, or download data from the Services"
+source = "https://www.people.inc/brands-termsofservice"
+checked = "2026-09-29"

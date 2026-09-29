@@ -140,6 +140,11 @@ web/src/
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`,
   plus a `code` only when a client can act on it (`site_blocked`: a recipe site's bot check turned the server away, so the web
   nudges toward the extension instead of showing an error).
+- **Sites whose terms forbid automated fetching:** `data/site-terms.toml` (reviewed by a person, compiled into the
+  server and the extension) lists hosts the server never fetches. `site_terms::check`/`guard` run before every scrape
+  (import, preview, refresh, MCP) and answer 422 `site_terms`; a `page` from the extension is still taken. Wee Chef
+  suggests more in the background (`site_terms::Flagger`, `tos-suggestion` GitHub issues, `data/site-terms-ignore.toml`
+  for hosts a person cleared); a person edits the list, Wee Chef never does. Robots.txt is ignored on purpose.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.

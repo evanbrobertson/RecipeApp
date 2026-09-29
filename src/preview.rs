@@ -155,6 +155,13 @@ async fn page(
     if let Some(scraped) = peek(&state, &url) {
         return ready(&state, &url, &scraped);
     }
+    // A site whose terms forbid automated fetching isn't fetched; the extension's handover
+    // (`via=extension`) is kept above and below, so it still works
+    if params.via.as_deref() != Some("extension")
+        && let Some(refusal) = crate::site_terms::check(&url)
+    {
+        return failed(&state, &url, &refusal.error());
+    }
     if !trusted(&headers) {
         return waiting(&state, &url, "ask");
     }
@@ -166,6 +173,9 @@ async fn page(
     }
     if params.go.is_none() {
         return waiting(&state, &url, "loading");
+    }
+    if let Err(err) = crate::site_terms::guard(&url) {
+        return failed(&state, &url, &err);
     }
     match crate::scraper::scrape_page(&state, &url).await {
         // Another Crumb's shared cookbook: nothing to read here, but it saves whole
