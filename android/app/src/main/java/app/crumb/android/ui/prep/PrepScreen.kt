@@ -82,8 +82,16 @@ import app.crumb.android.ui.recipe.ScaleControl
 import app.crumb.android.ui.recipe.recipeViewModel
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.NunitoSans
-import app.crumb.core.MiseItem
+import app.crumb.core.PrepGroupKind
+import app.crumb.core.PrepItem
+import app.crumb.core.VesselCount
 import app.crumb.core.miseEnPlace
+import app.crumb.core.prepAmount
+import app.crumb.core.prepGroupTitle
+import app.crumb.core.prepGroups
+import app.crumb.core.vesselCountLabel
+import app.crumb.core.vesselCounts
+import app.crumb.core.vesselLabel
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Flame
@@ -131,8 +139,8 @@ private fun PrepContent(recipe: Recipe, offline: Boolean) {
     val context = LocalContext.current
 
     // Vessel classification is crumb-core's miseEnPlace, never re-done here
-    val items = remember(recipe) {
-        val lines = recipe.ingredients.flatMap { it.items }
+    val lines = remember(recipe) { recipe.ingredients.flatMap { it.items } }
+    val items = remember(lines) {
         runCatching { miseEnPlace(lines) }.getOrElse { emptyList() }
     }
     val ready = RecipeSession.prepReady(recipe.id)
@@ -163,7 +171,7 @@ private fun PrepContent(recipe: Recipe, offline: Boolean) {
             BackLink(recipe.title) { nav.back() }
             Text("Mise en place", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.padding(top = 4.dp))
             Quote()
-            val counts = getOutCounts(items)
+            val counts = vesselCounts(items)
             if (counts.isNotEmpty()) {
                 GetOutCard(counts, scale) { RecipeSession.setScale(recipe.id, it) }
             }
@@ -175,7 +183,7 @@ private fun PrepContent(recipe: Recipe, offline: Boolean) {
                     Btn("Back to recipe", { nav.recipe(recipe.id) }, style = BtnStyle.Soft)
                 }
             } else {
-                Countertop(items, ready, scale) { toggle(it) }
+                Countertop(lines, ready, scale) { toggle(it) }
             }
             VSpace(96.dp)
         }
@@ -244,8 +252,10 @@ private fun GetOutCard(counts: List<VesselCount>, scale: Double, onScale: (Doubl
             Text("Get out:", style = CrumbText.label, color = c.ink)
             counts.forEach { count ->
                 val text = buildAnnotatedString {
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.ink)) { append("${count.count}") }
-                    append(" × ${getOutNoun(count)}")
+                    // Core words it "2 × small bowls"; the count leads in bold
+                    val label = vesselCountLabel(count.vessel, count.count)
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = c.ink)) { append(label.substringBefore(" ")) }
+                    append(label.substringAfter(" "))
                 }
                 Text(text, style = CrumbText.label.copy(fontWeight = FontWeight.Normal), color = c.inkMuted)
             }
@@ -275,9 +285,9 @@ private fun ProgressRow(done: Int, total: Int, progress: Float) {
 
 /** The speckled sunk countertop all three sections sit on, as the web's `.counter`. */
 @Composable
-private fun Countertop(items: List<MiseItem>, ready: Set<String>, scale: Double, onToggle: (Int) -> Unit) {
+private fun Countertop(lines: List<String>, ready: Set<String>, scale: Double, onToggle: (Int) -> Unit) {
     val c = Crumb.colors
-    val groups = remember(items) { prepGroups(items) }
+    val groups = remember(lines) { runCatching { prepGroups(lines) }.getOrElse { emptyList() } }
     Column(
         Modifier
             .fillMaxWidth()
@@ -292,11 +302,11 @@ private fun Countertop(items: List<MiseItem>, ready: Set<String>, scale: Double,
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Well(groupIcon(group.kind))
-                    Text(groupTitle(group.kind), style = CrumbText.sectionTitle, color = c.ink)
+                    Text(prepGroupTitle(group.kind), style = CrumbText.sectionTitle, color = c.ink)
                 }
                 VSpace(12.dp)
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    group.entries.chunked(2).forEach { row ->
+                    group.items.chunked(2).forEach { row ->
                         Row(
                             Modifier.fillMaxWidth().height(IntrinsicSize.Max),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -304,9 +314,9 @@ private fun Countertop(items: List<MiseItem>, ready: Set<String>, scale: Double,
                             row.forEach { entry ->
                                 ItemCard(
                                     entry = entry,
-                                    ready = entry.index.toString() in ready,
+                                    ready = entry.key.toString() in ready,
                                     scale = scale,
-                                    onClick = { onToggle(entry.index) },
+                                    onClick = { onToggle(entry.key.toInt()) },
                                     modifier = Modifier.weight(1f).fillMaxHeight(),
                                 )
                             }
@@ -321,7 +331,7 @@ private fun Countertop(items: List<MiseItem>, ready: Set<String>, scale: Double,
 
 /** One ingredient card: vessel drawing, amount, name, task and vessel label. Tapping readies it. */
 @Composable
-private fun ItemCard(entry: PrepEntry, ready: Boolean, scale: Double, onClick: () -> Unit, modifier: Modifier) {
+private fun ItemCard(entry: PrepItem, ready: Boolean, scale: Double, onClick: () -> Unit, modifier: Modifier) {
     val c = Crumb.colors
     val item = entry.item
     val badgeScale by animateFloatAsState(if (ready) 1f else 0.75f, tween(150), label = "prep-badge")
@@ -416,16 +426,10 @@ private fun TaskPill(task: String) {
 private fun String.capitalizeWords(): String =
     split(" ").joinToString(" ") { it.replaceFirstChar { ch -> ch.uppercase() } }
 
-private fun groupTitle(kind: PrepGroupKind): String = when (kind) {
-    PrepGroupKind.Chop -> "Chop & prep"
-    PrepGroupKind.Measure -> "Measure into bowls"
-    PrepGroupKind.Reach -> "Keep within reach"
-}
-
 private fun groupIcon(kind: PrepGroupKind): ImageVector = when (kind) {
-    PrepGroupKind.Chop -> Lucide.Slice
-    PrepGroupKind.Measure -> Lucide.Soup
-    PrepGroupKind.Reach -> Lucide.Hand
+    PrepGroupKind.CHOP -> Lucide.Slice
+    PrepGroupKind.MEASURE -> Lucide.Soup
+    PrepGroupKind.REACH -> Lucide.Hand
 }
 
 /** A short buzz when everything is ready, as the web's `navigator.vibrate(60)`. */
