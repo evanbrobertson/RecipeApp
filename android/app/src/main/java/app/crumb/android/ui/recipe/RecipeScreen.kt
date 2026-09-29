@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -391,13 +394,25 @@ fun RecipeScreen(id: Long, fromRandom: Boolean = false, onSignedOut: () -> Unit)
             )
             else -> RecipeContent(recipe, state, fromRandom, vm)
         }
-        FilledTonalIconButton(
-            onClick = { nav.back() },
-            colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Crumb.colors.paper.copy(alpha = 0.92f)),
-            modifier = Modifier.statusBarsPadding().padding(12.dp).testTag("back"),
-        ) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+        // Once the page is up, Back lives in its first item
+        if (recipe == null) {
+            FilledTonalIconButton(
+                onClick = { nav.back() },
+                colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Crumb.colors.paper.copy(alpha = 0.92f)),
+                modifier = Modifier.statusBarsPadding().padding(12.dp).testTag("back"),
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+            }
         }
+        // The status bar's icons are drawn over scrolled content, so it gets a scrim; the hero and
+        // the padding above the title start below it, so nothing changes at the top of the page
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBars)
+                .background(Crumb.colors.canvas.copy(alpha = 0.9f)),
+        )
     }
 }
 
@@ -437,20 +452,31 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
 
     LazyColumn(Modifier.fillMaxSize().testTag("recipe").onGloballyPositioned { origin = it.positionInRoot() }, state = listState, horizontalAlignment = Alignment.CenterHorizontally) {
         item {
-            if (hasHero) {
-                Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    // The web caps the hero at 640px wide; a landscape phone is also kept to
-                    // three quarters of its short height so the title shows below it
-                    val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
-                    RecipePhoto(
-                        photo,
-                        recipe.image,
-                        Modifier.widthIn(max = heroMaxWidth(screenHeight.value).dp).fillMaxWidth().aspectRatio(4f / 3f),
-                        contentDescription = recipe.title,
-                    )
+            // The Back button sits in the page's first item, so it scrolls away with it instead of
+            // floating over the kicker and title
+            Box(Modifier.fillMaxWidth()) {
+                if (hasHero) {
+                    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        // The web caps the hero at 640px wide; a landscape phone is also kept to
+                        // three quarters of its short height so the title shows below it
+                        val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+                        RecipePhoto(
+                            photo,
+                            recipe.image,
+                            Modifier.widthIn(max = heroMaxWidth(screenHeight.value).dp).fillMaxWidth().aspectRatio(4f / 3f),
+                            contentDescription = recipe.title,
+                        )
+                    }
+                } else {
+                    Box(Modifier.statusBarsPadding().padding(top = 56.dp))
                 }
-            } else {
-                Box(Modifier.statusBarsPadding().padding(top = 56.dp))
+                FilledTonalIconButton(
+                    onClick = { nav.back() },
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Crumb.colors.paper.copy(alpha = 0.92f)),
+                    modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(12.dp).testTag("back"),
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                }
             }
         }
         item {
