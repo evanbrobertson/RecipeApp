@@ -18,7 +18,8 @@ use crate::model::{
 use crate::recipes::{self, CookbookPatch, EventKind, ImportSummary};
 use crate::suggestions;
 
-const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
+/// One file: a Crumb backup is about 10 KB a recipe; a Paprika export with photos is the big case.
+const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 /// Everything one import request may carry; the body limit is a little over it for the framing.
 const MAX_UPLOAD_BYTES: usize = 2 * MAX_FILE_BYTES;
 
@@ -346,7 +347,7 @@ async fn import_files(
         {
             total += chunk.len();
             if total > MAX_UPLOAD_BYTES {
-                return Err(AppError::bad_request("Upload is over 100 MB"));
+                return Err(AppError::bad_request("Upload is over 50 MB"));
             }
             if !too_big {
                 if data.len() + chunk.len() > MAX_FILE_BYTES {
@@ -358,7 +359,7 @@ async fn import_files(
             }
         }
         if too_big {
-            results.push(ImportSummary::failed(&name, "File is over 50 MB"));
+            results.push(ImportSummary::failed(&name, "File is over 25 MB"));
         } else if !data.is_empty() {
             files.push((name, data));
         }

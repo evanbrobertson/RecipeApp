@@ -414,9 +414,10 @@ static HTML_START: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*<(!doctype|html)").unwrap());
 
 /// Limits on what an upload may unpack to, shared by every level of nesting in one upload.
-const MAX_ENTRY_BYTES: u64 = 50 * 1024 * 1024;
-const MAX_UNPACKED_BYTES: u64 = 150 * 1024 * 1024;
-const MAX_ENTRIES: usize = 2000;
+/// Paprika keeps one gzipped recipe (with its photo) per entry, so entries are many but small.
+const MAX_ENTRY_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_UNPACKED_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_ENTRIES: usize = 5000;
 const MAX_ARCHIVE_DEPTH: u8 = 2;
 
 /// What is left of an upload's unpacking allowance.

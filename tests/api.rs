@@ -7437,9 +7437,9 @@ async fn import_refuses_archive_bombs_and_oversized_uploads() {
             .body(Body::from(body))
             .unwrap()
     };
-    // 60 MB of zeros, a few KB gzipped: over the per-file cap once unpacked
+    // 30 MB of zeros, a few KB gzipped: over the per-file cap once unpacked
     let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-    e.write_all(&vec![0u8; 60 * 1024 * 1024]).unwrap();
+    e.write_all(&vec![0u8; 30 * 1024 * 1024]).unwrap();
     let bomb = e.finish().unwrap();
     assert!(bomb.len() < 1_000_000);
     let (status, _, text) = t.send(upload("bomb.txt.gz", bomb)).await;
@@ -7447,17 +7447,17 @@ async fn import_refuses_archive_bombs_and_oversized_uploads() {
     let results: Value = serde_json::from_str(&text).unwrap();
     assert!(results[0]["error"].as_str().is_some(), "{text}");
 
-    // A file over 50 MB is refused while it streams in, and says so
+    // A file over 25 MB is refused while it streams in, and says so
     let (status, _, text) = t
-        .send(upload("big.txt", vec![b'a'; 51 * 1024 * 1024]))
+        .send(upload("big.txt", vec![b'a'; 26 * 1024 * 1024]))
         .await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let results: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(results[0]["error"], "File is over 50 MB");
+    assert_eq!(results[0]["error"], "File is over 25 MB");
 
     // More than the whole request may carry is a 4xx before anything is imported
     let (status, _, _) = t
-        .send(upload("huge.txt", vec![b'a'; 110 * 1024 * 1024]))
+        .send(upload("huge.txt", vec![b'a'; 60 * 1024 * 1024]))
         .await;
     assert!(status.is_client_error(), "{status}");
 }
