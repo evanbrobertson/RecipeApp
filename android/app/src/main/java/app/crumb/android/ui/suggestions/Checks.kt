@@ -2,6 +2,7 @@ package app.crumb.android.ui.suggestions
 
 import app.crumb.android.data.ChecksStatus
 import app.crumb.android.data.CrumbApi
+import app.crumb.android.data.Staple
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,7 @@ private val FieldNames = mapOf(
     "instructions" to ("step" to "steps"),
     "notes" to ("note" to "notes"),
     "totalTime" to ("time" to "times"),
+    "image" to ("broken photo link" to "broken photo links"),
 )
 
 /** "2 steps · 1 ingredient" (web `summary`), the field with the most flags first. */
@@ -45,6 +47,16 @@ fun summary(fields: Map<String, Int>): String =
             val (one, many) = FieldNames[field] ?: ("thing" to "things")
             "$n ${if (n == 1) one else many}"
         }
+
+/** A staple's name as the tip shows it: "olive oil" → "Olive oil". */
+fun capitalise(name: String): String = name.replaceFirstChar { it.uppercaseChar() }
+
+/**
+ * How full and strong a staple's bar is, 0–1 (web `share`): its recipes against the most-used
+ * staple's, so the top one fills the bar and the rest read at a glance beside it.
+ */
+fun stapleShare(used: Int, staples: List<Staple>): Float =
+    used.toFloat() / maxOf(1, staples.maxOfOrNull { it.recipes } ?: 0)
 
 /** How long to wait before the first Check all poll (web `watch`'s default). */
 internal const val PollStartMs = 1_500L

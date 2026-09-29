@@ -222,6 +222,17 @@ data class ChecksStatus(
     val queued: Int = 0,
 )
 
+/** An ingredient many of the box's recipes use, lowercase ("olive oil"). */
+@Serializable
+data class Staple(val name: String, val recipes: Int)
+
+/**
+ * `GET /api/staples`: Wee Chef's "keep these on hand" tip. [recipes] is how many are in the
+ * box; [staples] are most-used first, and empty for a box too small to tell.
+ */
+@Serializable
+data class Staples(val recipes: Int = 0, val staples: List<Staple> = emptyList())
+
 /** One recipe on the Suggestions page with how many flags it has per field. */
 @Serializable
 data class ReviewRecipe(
