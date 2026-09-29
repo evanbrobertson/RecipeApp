@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,6 +57,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -84,6 +88,7 @@ import app.crumb.android.ui.components.Chip
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbModal
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.EmptyState
 import app.crumb.android.ui.components.Message
 import app.crumb.android.ui.components.OfflineNote
@@ -241,7 +246,7 @@ class RecipesViewModel(
  * The recipe box (web/src/islands/RecipesPage.svelte): a debounced search, client-side
  * category chips, a two-column grid, and select mode with bulk delete and add-to-cookbook.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun RecipesScreen(initialQuery: String? = null) {
     val container = AppContainerProvider
@@ -331,21 +336,25 @@ fun RecipesScreen(initialQuery: String? = null) {
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(
+            // On a large font scale the buttons drop under the title rather than squeezing it
+            FlowRow(
                 Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                itemVerticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Recipes", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.weight(1f))
-                if (state.recipes.isNotEmpty()) {
-                    Btn(
-                        text = if (selecting) "Done" else "Select",
-                        onClick = { selecting = !selecting; selected = emptySet() },
-                        style = if (selecting) BtnStyle.Tile else BtnStyle.Outline,
-                        icon = if (selecting) Lucide.X else Lucide.SquareCheck,
-                    )
+                PageTitle("Recipes", c.ink, modifier = Modifier.padding(end = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (state.recipes.isNotEmpty()) {
+                        Btn(
+                            text = if (selecting) "Done" else "Select",
+                            onClick = { selecting = !selecting; selected = emptySet() },
+                            style = if (selecting) BtnStyle.Tile else BtnStyle.Outline,
+                            icon = if (selecting) Lucide.X else Lucide.SquareCheck,
+                        )
+                    }
+                    Btn("Add", onClick = { nav.add() }, style = BtnStyle.Primary, icon = Lucide.Plus)
                 }
-                Btn("Add", onClick = { nav.add() }, style = BtnStyle.Primary, icon = Lucide.Plus)
             }
 
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -551,14 +560,17 @@ private fun SelectToolbar(
             Btn(if (allSelected) "Clear" else "Select all", onToggleAll, style = BtnStyle.Ghost, padding = 12.dp)
             // The buttons keep their own width (the web's justify-between), so a 360dp phone
             // squeezes the count, never the Delete button
+            // "2 selected" gives way to "2" when it doesn't fit, so it never cuts off mid-word
+            var short by remember(selectedCount.toString().length) { mutableStateOf(false) }
             Text(
-                "$selectedCount selected",
+                if (short) "$selectedCount" else "$selectedCount selected",
                 style = CrumbText.label,
                 color = c.ink,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
+                onTextLayout = { if (it.hasVisualOverflow) short = true },
                 textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).semantics { contentDescription = "$selectedCount selected" },
             )
             Btn("Cookbook", onCookbook, style = BtnStyle.Soft, icon = Lucide.BookPlus, enabled = selectedCount > 0, padding = 14.dp)
             DeleteIconButton(onDelete, enabled = selectedCount > 0)

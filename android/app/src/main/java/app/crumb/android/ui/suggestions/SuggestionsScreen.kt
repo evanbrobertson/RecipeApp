@@ -65,6 +65,7 @@ import app.crumb.android.ui.components.BtnStyle
 import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.EmptyState
 import app.crumb.android.ui.components.ListCard
 import app.crumb.android.ui.components.Message
@@ -297,7 +298,7 @@ private fun SuggestionsContent(
 private fun Header() {
     val c = Crumb.colors
     Column {
-        Text("Suggestions", style = CrumbText.pageTitle, color = c.ink)
+        PageTitle("Suggestions", c.ink)
         VSpace(4.dp)
         Text(
             "Wee Chef reads your recipes and flags anything worth a look. Nothing changes until you say so.",

@@ -68,6 +68,22 @@ import com.composables.icons.lucide.Lucide
 // rather than Material defaults, so the phone app looks like the web app. Sizes are the CSS
 // rem values at 16px = 16sp/dp.
 
+/**
+ * A page title on one line that shrinks to fit (down to 20sp) rather than breaking mid-word,
+ * for a title sharing its row with buttons or on a large font scale.
+ */
+@Composable
+fun PageTitle(text: String, color: Color, modifier: Modifier = Modifier) {
+    BasicText(
+        text,
+        modifier,
+        style = CrumbText.pageTitle.copy(color = color),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        autoSize = TextAutoSize.StepBased(minFontSize = 20.sp, maxFontSize = 30.sp, stepSize = 1.sp),
+    )
+}
+
 /** Text styles: `.page-title`, `.section-title`, `.meta`, `.kicker`, `.label`, `.hint`, `.hand`. */
 object CrumbText {
     val pageTitle = TextStyle(fontFamily = DmSerif, fontSize = 30.sp, lineHeight = 31.5.sp)

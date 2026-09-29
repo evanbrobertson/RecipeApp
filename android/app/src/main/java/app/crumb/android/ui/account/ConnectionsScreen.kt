@@ -21,6 +21,7 @@ import app.crumb.android.ui.LocalNav
 import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.GroupLabel
 import app.crumb.android.ui.components.ListRow
 import app.crumb.android.ui.theme.Crumb
@@ -49,7 +50,7 @@ fun ConnectionsScreen() {
                 Icon(Lucide.ArrowLeft, contentDescription = null, tint = c.inkMuted, modifier = Modifier.size(18.dp))
                 Text("More", style = CrumbText.label, color = c.inkMuted)
             }
-            Text("Connections", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.padding(top = 12.dp))
+            PageTitle("Connections", c.ink, modifier = Modifier.padding(top = 12.dp))
             Text("Use your recipe box from other apps.", style = CrumbText.body, color = c.inkMuted, modifier = Modifier.padding(top = 8.dp))
         }
         Column {

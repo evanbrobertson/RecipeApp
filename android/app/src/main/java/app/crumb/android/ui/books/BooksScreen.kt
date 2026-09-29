@@ -52,6 +52,7 @@ import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbInput
 import app.crumb.android.ui.components.CrumbModal
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.EmptyState
 import app.crumb.android.ui.components.FieldLabel
 import app.crumb.android.ui.components.Message
@@ -101,7 +102,7 @@ fun ShelfScreen(onOpenRecipe: (Long) -> Unit, onOpenCookbook: (Long) -> Unit, on
     ) {
         Row(Modifier.fillMaxWidth().padding(bottom = 28.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
-                Text("Your shelf", style = CrumbText.pageTitle, color = c.ink)
+                PageTitle("Your shelf", c.ink)
                 Text(
                     "Pull a book off the shelf to open it.",
                     style = CrumbText.bodySmall, color = c.inkMuted, modifier = Modifier.padding(top = 8.dp),

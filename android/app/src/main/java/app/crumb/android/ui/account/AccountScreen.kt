@@ -69,6 +69,7 @@ import app.crumb.android.ui.components.BtnStyle
 import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.GroupLabel
 import app.crumb.android.ui.components.Skeleton
 import app.crumb.android.ui.components.ToastTone
@@ -299,7 +300,7 @@ fun AccountScreen() {
     ) {
         Column {
             BackLink("More") { nav.back() }
-            Text("Account", style = CrumbText.pageTitle, color = Crumb.colors.ink, modifier = Modifier.padding(top = 12.dp))
+            PageTitle("Account", Crumb.colors.ink, modifier = Modifier.padding(top = 12.dp))
             Text(
                 "How you sign in, your household and connected apps.",
                 style = CrumbText.body,

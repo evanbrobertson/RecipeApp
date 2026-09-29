@@ -80,6 +80,7 @@ import app.crumb.android.ui.components.BtnStyle
 import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.PageTitle
 import app.crumb.android.ui.components.GroupLabel
 import app.crumb.android.ui.components.ListCard
 import app.crumb.android.ui.components.ListRow
@@ -260,7 +261,7 @@ fun MoreScreen() {
         Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        Text("More", style = CrumbText.pageTitle, color = c.ink)
+        PageTitle("More", c.ink)
         state.error?.let { Text(it, style = CrumbText.bodySmall, color = c.error) }
 
         Group(
