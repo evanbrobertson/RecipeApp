@@ -62,7 +62,7 @@ fun newlyFixedCount(flags: List<Flag>, before: Set<Long>): Int =
  */
 fun checkToast(checks: RecipeChecks, fixedBefore: Set<Long>): CheckToast {
     val review = reviewFlags(checks.flags).size
-    return checkDoneToast(checks.status, newlyFixedCount(checks.flags, fixedBefore).toUInt(), review.toUInt())
+    return checkDoneToast(checks.status.orEmpty(), newlyFixedCount(checks.flags, fixedBefore).toUInt(), review.toUInt())
 }
 
 /** A nutrition value: the raw string, a number printed plainly, or null when empty. */

@@ -226,10 +226,13 @@ data class Flag(
     val detail: JsonElement? = null,
 )
 
-/** `GET`/`POST /api/recipes/{id}/checks`: `null` when the recipe was never checked. */
+/**
+ * `GET`/`POST /api/recipes/{id}/checks`: `null` when the recipe was never checked. Its [status]
+ * is null too when only the photo link is flagged (never checked, as the web's RecipeChecks).
+ */
 @Serializable
 data class RecipeChecks(
-    val status: String,
+    val status: String? = null,
     val canUndo: Boolean = false,
     val flags: List<Flag> = emptyList(),
 )

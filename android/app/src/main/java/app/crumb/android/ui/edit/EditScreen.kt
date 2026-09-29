@@ -39,6 +39,7 @@ import app.crumb.android.data.Recipe
 import app.crumb.android.data.RecipeChecks
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LoadingViewModel
+import app.crumb.android.ui.runLogged
 import app.crumb.android.ui.LocalNav
 import app.crumb.android.ui.UiState
 import app.crumb.android.ui.components.Btn
@@ -73,7 +74,7 @@ class EditViewModel(container: AppContainer, private val recipeId: Long) : Loadi
 
     override suspend fun fetch(): Loaded<EditData> {
         val loaded = repo.recipe(recipeId)
-        val checks = runCatching { api.recipeChecks(recipeId) }.getOrNull()
+        val checks = runLogged("recipeChecks") { api.recipeChecks(recipeId) }
         return Loaded(EditData(loaded.value, checks), loaded.offline)
     }
 }

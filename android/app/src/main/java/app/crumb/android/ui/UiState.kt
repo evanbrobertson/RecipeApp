@@ -1,5 +1,6 @@
 package app.crumb.android.ui
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModel
@@ -31,6 +32,19 @@ fun Throwable.friendlyMessage(): String = when (this) {
     is OfflineException -> "Can't reach your Crumb server. Check your connection and try again."
     is IllegalStateException, is IllegalArgumentException -> message ?: "Something went wrong. Try again."
     else -> "Something went wrong. Try again."
+}
+
+/**
+ * For the extras a screen can do without: null on failure, but logged, so a response the app can't
+ * decode (a schema mismatch) doesn't hide as "nothing there".
+ */
+suspend fun <T> runLogged(what: String, block: suspend () -> T): T? = try {
+    block()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    Log.w("Crumb", "$what failed: ${e.javaClass.simpleName}: ${e.message}")
+    null
 }
 
 /** A screen that loads one thing and can reload it. */

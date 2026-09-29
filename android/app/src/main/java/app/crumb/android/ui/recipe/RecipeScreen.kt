@@ -78,6 +78,7 @@ import app.crumb.android.data.Share
 import app.crumb.android.data.ShareKind
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LocalNav
+import app.crumb.android.ui.runLogged
 import app.crumb.android.ui.components.Btn
 import app.crumb.android.ui.components.BtnSize
 import app.crumb.android.ui.components.BtnStyle
@@ -206,13 +207,13 @@ class RecipePageViewModel(
     }
 
     private suspend fun loadAux() {
-        val books = runCatching { container.recipes.cookbooks() }.getOrNull()
-        val inBooks = runCatching { container.api.recipeCookbooks(id) }.getOrNull()
-        val checks = runCatching { container.api.recipeChecks(id) }.getOrNull()
-        val wee = runCatching { container.api.connector().weeChefChecks }.getOrNull()
+        val books = runLogged("cookbooks") { container.recipes.cookbooks() }
+        val inBooks = runLogged("recipeCookbooks") { container.api.recipeCookbooks(id) }
+        val checks = runLogged("recipeChecks") { container.api.recipeChecks(id) }
+        val wee = runLogged("connector") { container.api.connector().weeChefChecks }
         // Servers older than the Android app have no GET here; the line just stays hidden
-        val cooked = runCatching { container.api.cookStats(id) }.getOrNull()
-        val share = runCatching { container.api.existingShare(ShareKind.Recipe, id) }.getOrNull()
+        val cooked = runLogged("cookStats") { container.api.cookStats(id) }
+        val share = runLogged("existingShare") { container.api.existingShare(ShareKind.Recipe, id) }
         _state.update {
             it.copy(
                 cookbooks = books?.value ?: it.cookbooks,
@@ -330,7 +331,7 @@ class RecipePageViewModel(
                 }
                 if (asked) polls++
                 // A failed poll stops the loop, as on the web
-                val checks = runCatching { container.api.recipeChecks(id) }.getOrNull() ?: return@launch
+                val checks = runLogged("recipeChecks") { container.api.recipeChecks(id) } ?: return@launch
                 if (checks.status != "pending" && checks.flags.any { it.state == "fixed" }) {
                     runCatching { container.recipes.recipe(id) }.getOrNull()?.let { loaded ->
                         _state.update { it.copy(recipe = loaded.value) }
