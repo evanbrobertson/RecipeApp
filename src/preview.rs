@@ -353,6 +353,7 @@ mod tests {
         let scraped = Scraped {
             recipe: crate::model::RecipeFields::default(),
             crumb: None,
+            api: None,
         };
         keep(&other, "https://other.test/mine", &scraped);
         for i in 0..MAX_KEPT * 2 {

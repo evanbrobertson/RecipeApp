@@ -399,7 +399,7 @@ pub async fn serve_photo(
     // A photo hosted by a site whose terms forbid automated fetching is never downloaded here:
     // the cook's browser loads it from the original
     if crate::site_terms::photo_is_listed(&image) {
-        return unavailable(Failure::Elsewhere, &image);
+        return unavailable(Failure::Elsewhere, &image, caching);
     }
     let key = image_key(&image);
     let current = v.is_some_and(|v| v == key);
@@ -984,9 +984,14 @@ mod tests {
     fn a_listed_sites_photo_is_sent_to_the_original_and_never_fetched() {
         let photo = "https://www.allrecipes.com/thmb/pie.jpg";
         // The resizer's answer for a linked photo it must not touch: the browser loads it
-        let res = unavailable(Failure::Elsewhere, photo);
+        let res = unavailable(Failure::Elsewhere, photo, Caching::Private);
         assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(res.headers()[header::LOCATION], photo);
+        // A public share page still never redirects visitors, listed or not
+        assert_eq!(
+            unavailable(Failure::Elsewhere, photo, Caching::Public).status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
