@@ -174,6 +174,7 @@ class ImportViewModel(
                                 state = if (outcome.isNew) LinkState.Saved else LinkState.Duplicate,
                                 id = outcome.id,
                                 title = outcome.title,
+                                message = if (outcome.droppedPhoto) "Saved without its photo: the link doesn't work" else null,
                             )
                             is ImportOutcome.Book -> jobs[i].copy(
                                 state = if (outcome.cookbook.added > 0) LinkState.Saved else LinkState.Duplicate,
@@ -407,7 +408,9 @@ private fun LinkRow(job: LinkJob) {
             if (job.state == LinkState.Duplicate && !job.cookbook) {
                 Text("Already saved", style = CrumbText.meta, color = c.inkMuted)
             }
-            job.message?.let { Text(it, style = CrumbText.bodySmall.copy(fontSize = 13.sp), color = c.error) }
+            job.message?.let {
+                Text(it, style = CrumbText.bodySmall.copy(fontSize = 13.sp), color = if (job.state == LinkState.Failed) c.error else c.inkMuted)
+            }
         }
     }
 }
