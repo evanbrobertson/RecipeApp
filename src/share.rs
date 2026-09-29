@@ -1393,6 +1393,8 @@ impl<'a> View<'a> {
                     "title": self.recipe.title,
                     "url": url,
                     "host": host_of(url),
+                    "video": self.recipe.video,
+                    "videoEmbed": self.recipe.video_embed,
                 }
             });
         }
@@ -1638,9 +1640,14 @@ pub fn content_security_policy(page: &str) -> String {
     policy(page, "'self' data:")
 }
 
-/// [`content_security_policy`] for a preview, whose photo is still on the recipe's site.
+/// [`content_security_policy`] for a preview, whose photo is still on the recipe's site and
+/// whose video (only once the cook presses Play) plays from its own.
 pub fn preview_policy(page: &str) -> String {
-    policy(page, "'self' data: https: http:")
+    policy(page, "'self' data: https: http:").replacen(
+        "default-src 'none';",
+        "default-src 'none'; media-src https:; frame-src https:;",
+        1,
+    )
 }
 
 /// The app's own pages' CSP. Scripts run only from this origin and by the hash of each inline

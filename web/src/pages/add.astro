@@ -3,6 +3,7 @@ import Icon from "../components/Icon.astro"
 import { Link, ClipboardType, List, PenLine, FileDown, ChevronRight } from "lucide"
 import Layout from "../layouts/Layout.astro"
 import TopBox from "../islands/TopBox.svelte"
+import PopularLinks from "../islands/PopularLinks.svelte"
 
 const tips = [
   {
@@ -30,6 +31,8 @@ const tips = [
       <p class="text-ink-muted mt-2">Paste a link or the recipe itself.</p>
       <div class="mt-5"><TopBox client:load tabs={false} onTile={false} autofocus /></div>
     </div>
+
+    <PopularLinks client:only="svelte" />
 
     <section>
       <h2 class="section-title mb-3.5">What you can paste</h2>

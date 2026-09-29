@@ -14,6 +14,7 @@
   import Sun from "@lucide/svelte/icons/sun"
   import Sunrise from "@lucide/svelte/icons/sunrise"
   import Plug from "@lucide/svelte/icons/plug"
+  import Trash2 from "@lucide/svelte/icons/trash-2"
   import UserRound from "@lucide/svelte/icons/user-round"
   import { onMount } from "svelte"
   import { type Status, authStatus } from "../lib/account"
@@ -203,6 +204,27 @@
     status = await authStatus()
   })
   const signedIn = $derived(!!status && status.mode !== "password" && !!status.user)
+
+  // Popular (src/popular.rs): only on servers with several households
+  let popular = $state<{ enabled: boolean; optedOut: boolean } | null>(null)
+  onMount(async () => {
+    try {
+      popular = await api("/api/popular/opt-out")
+    } catch {
+      popular = null
+    }
+  })
+  async function setPopular(share: boolean) {
+    if (!popular) return
+    const before = popular.optedOut
+    popular.optedOut = !share
+    try {
+      await api("/api/popular/opt-out", { method: "POST", body: { optedOut: !share } })
+    } catch (e) {
+      popular.optedOut = before
+      toast({ title: "Couldn't change that", description: errorMessage(e), tone: "error" })
+    }
+  }
 </script>
 
 <svelte:window onstorage={sync} />
@@ -235,6 +257,14 @@
       </span>
       <ChevronRight class="text-ink-muted size-5 flex-none" />
     </a>
+    <a href="/more/trash" class="list-row settings-row">
+      <Trash2 class="settings-icon" />
+      <span class="min-w-0 flex-1">
+        <span class="block font-bold">Trash</span>
+        <span class="text-ink-muted block text-sm">Deleted recipes, kept for 30 days</span>
+      </span>
+      <ChevronRight class="text-ink-muted size-5 flex-none" />
+    </a>
     <a href="/api/export" class="list-row settings-row" download>
       <Archive class="settings-icon" />
       <span class="min-w-0 flex-1">
@@ -245,6 +275,30 @@
     </a>
   </div>
 </section>
+
+{#if popular?.enabled}
+  <section>
+    <h2 class="settings-heading">Popular</h2>
+    <div class="list-card">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={!popular.optedOut}
+        class="list-row settings-row w-full text-left"
+        onclick={() => setPopular(popular!.optedOut)}
+      >
+        <span class="min-w-0 flex-1">
+          <span class="block font-bold">Count our saved links</span>
+          <span class="text-ink-muted block text-sm">
+            A link several households saved shows in Popular on the Add page. Only the link
+            counts, never your copy of the recipe or who saved it.
+          </span>
+        </span>
+        <span class={["switch", !popular.optedOut && "on"]} aria-hidden="true"></span>
+      </button>
+    </div>
+  </section>
+{/if}
 
 <section>
   <h2 class="settings-heading" id="theme-title">Theme</h2>

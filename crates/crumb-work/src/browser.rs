@@ -1,9 +1,10 @@
-//! Headless Chromium fallback for sites that block plain HTTP fetches.
+//! Headless Chromium fallback for sites that block plain HTTP fetches, on the server and on
+//! a `crumb-relay` that works for it.
 //!
 //! Chromium is installed in the Docker image; locally set CHROMIUM_PATH or it's skipped.
 //! Only one page loads at a time to keep memory in check on a small instance, and it takes
-//! a permit of the heavy-work budget video imports use (see [`crate::video_jobs`]), so the
-//! two never stack beyond it. The browser
+//! a permit of the heavy-work budget video imports use (the server's `video_jobs`, a relay's
+//! own), so the two never stack beyond it. The browser
 //! is driven over the DevTools protocol directly (a handful of commands), which keeps the
 //! binary small compared with a full CDP client.
 //!
@@ -38,6 +39,18 @@ const CANDIDATES: [&str; 4] = [
 const RECIPE_READY: &str = r#"[...document.querySelectorAll('script[type="application/ld+json"]')]
   .some((s) => /Recipe/.test(s.textContent || ""))
   || !!document.querySelector('[itemprop="recipeIngredient"], [class*="ingredient"]')"#;
+
+static CHALLENGE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)just a moment|attention required|access denied|access to this page has been denied|verify you are human|are you a robot|not a robot|pardon our interruption|security check",
+    )
+    .unwrap()
+});
+
+/// Whether a page's title is a bot check's ("Just a moment…" and the like).
+pub fn is_challenge_title(title: &str) -> bool {
+    CHALLENGE_TITLE.is_match(title)
+}
 
 static VERSION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(\d+)\.\d+\.\d+\.\d+\b").unwrap());
@@ -388,7 +401,7 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
 
     // Bot challenges usually redirect or reload once solved; give them a moment
     for _ in 0..8 {
-        if !crate::scraper::is_challenge_title(&cdp.title().await) {
+        if !is_challenge_title(&cdp.title().await) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -405,7 +418,7 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
-    if crate::scraper::is_challenge_title(&cdp.title().await) {
+    if is_challenge_title(&cdp.title().await) {
         return Err("Blocked by the site".into());
     }
     let html = cdp.eval("document.documentElement.outerHTML").await?;

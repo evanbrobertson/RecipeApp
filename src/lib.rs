@@ -6,7 +6,7 @@ pub mod account_api;
 pub mod accounts;
 pub mod api;
 pub mod auth;
-pub mod browser;
+pub use crumb_work::browser;
 pub mod checks;
 pub mod config;
 pub mod db;
@@ -20,6 +20,7 @@ pub mod llm;
 pub mod mcp;
 pub mod oauth;
 pub mod photos;
+pub mod popular;
 pub mod preview;
 pub mod recipes;
 pub mod relay;
@@ -31,6 +32,7 @@ pub mod social;
 pub mod suggestions;
 pub mod telemetry;
 pub mod throttle;
+pub mod trash;
 pub mod video;
 pub mod video_jobs;
 pub mod web;
@@ -88,6 +90,8 @@ pub struct AppState {
     pub sites: Arc<sites::Sites>,
     /// Wee Chef's look at sites' terms of service (see [`site_terms`]).
     pub terms: Arc<site_terms::Flagger>,
+    /// Links several households saved, counted every few hours (see [`popular`]).
+    pub popular: Arc<popular::Popular>,
 }
 
 impl AppState {
@@ -163,6 +167,7 @@ impl AppState {
             relays,
             sites,
             terms,
+            popular: Arc::default(),
         }
     }
 }

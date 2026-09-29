@@ -416,6 +416,8 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `SCRAPE_WORDPRESS`  | No         | Set to `off` to stop blocked WordPress recipe sites being read through their REST API |
 | `SCRAPE_ARCHIVE`    | No         | Set to `off` to stop blocked recipe sites being read from the Internet Archive's copy |
 | `SCRAPE_SITE_MEMORY` | No        | Set to `off` to stop remembering how each recipe site was last read (`sites.db` beside the database: host, platform, API address, what worked; kept a week, no recipe content). The terms-check record in the same file is not affected |
+| `POPULAR`                | No        | Set to `off` to hide Popular for everyone. Popular (accounts and hosted modes) lists public recipe links saved by several households, as links only (host and the title they agree on), on the Add page; a household opts out on More |
+| `POPULAR_MIN_HOUSEHOLDS` | No        | How many households must have saved a link before it's Popular (default 3, at least 2) |
 | `SCRAPE_RELAYS`     | No         | Comma-separated base URLs of `crumb-relay`s (see [docs/RELAY.md](docs/RELAY.md)), asked for a page when both of the server's own fetches were blocked |
 | `SCRAPE_RELAY_TOKEN` | With relays | The token the relays were started with (their `RELAY_TOKEN`); without it relays are off |
 | `SCRAPE_RELAY_PROXY` | No        | A proxy (e.g. `socks5h://host:1055`) to reach the relays through, for Tailscale in userspace mode |
@@ -449,7 +451,7 @@ Replay masks all text and blocks all media.
 The in-app page (**More → Connections → Claude**) shows your exact URL. Claude Code:
 `claude mcp add --transport http recipes https://<your-app>/mcp`.
 
-Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
+Tools exposed: `search_recipes`, `get_recipe`, `save_recipe`, `import_recipe_from_text`, `import_recipe_from_url`, `update_recipe`, `refresh_recipe_from_source`, `suggest_recipes`, `random_recipe`, `mark_recipe_cooked`, `delete_recipe` (to the trash, 30 days), `list_trash`, `restore_recipe`, `list_cookbooks`, `get_cookbook`, `add_to_cookbook`, `remove_from_cookbook`, `update_cookbook`, `delete_cookbook`.
 
 ## Checks
 

@@ -682,7 +682,7 @@ async fn oauth_flow_then_mcp_tools() {
         ))
         .await;
     let list: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 19);
 
     let (_, _, text) = t
         .send(rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
@@ -892,7 +892,7 @@ async fn mcp_organising_tools() {
     let (msg, err) = call("delete_recipe", json!({"ids": [1, 99], "confirm": true})).await;
     assert!(err && msg.contains("No recipe with id 99"), "{msg}");
     let (msg, _) = call("delete_recipe", json!({"id": 2, "confirm": true})).await;
-    assert!(msg.starts_with("Deleted 1 recipe(s)"), "{msg}");
+    assert!(msg.starts_with("Moved 1 recipe(s) to the trash"), "{msg}");
     let (msg, _) = call("search_recipes", json!({})).await;
     assert!(msg.starts_with("1 recipe(s)"), "{msg}");
 }
@@ -8170,6 +8170,59 @@ async fn a_preview_shows_the_recipe_the_extension_read() {
 }
 
 #[tokio::test]
+async fn a_preview_shows_the_video_the_extension_read() {
+    let t = TestApp::new(None);
+    // Allrecipes: the Recipe's JSON-LD names JW Player's mp4
+    let url = "https://www.allrecipes.com/zing-noodles-11725006";
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    let ld = r#"[{"@type":["Recipe","NewsArticle"],"name":"Zing Noodles","recipeIngredient":["1 jar sauce","1 lb noodles"],
+        "recipeInstructions":[{"@type":"HowToStep","text":"Cook."}],
+        "video":{"@type":"VideoObject","contentUrl":"https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4",
+          "thumbnailUrl":"https://cdn.jwplayer.com/v2/media/9QcFPcvu/thumbnails/g43V12F6.jpg?width=1280"}}]"#;
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": {"jsonLd": [ld]}})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+
+    let (status, headers, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let preview = &page_data(&html)["preview"];
+    assert_eq!(
+        preview["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+    assert_eq!(preview["videoEmbed"]["provider"], "file");
+    // Played from its own site, once the cook presses Play
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(
+        csp.contains("media-src https:") && csp.contains("frame-src https:"),
+        "{csp}"
+    );
+
+    // Adding it keeps the video
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(
+        recipe["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+}
+
+#[tokio::test]
 async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
     let t = TestApp::new(None);
     let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
@@ -8251,4 +8304,112 @@ async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
         mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
     assert!(is_error, "{msg}");
     assert!(msg.contains("terms of service forbid"), "{msg}");
+}
+
+#[tokio::test]
+async fn a_deleted_recipe_waits_in_the_trash() {
+    let t = TestApp::new(None);
+    let (_, soup) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({"title": "Soup", "url": "https://a.example/soup"})),
+        )
+        .await;
+    let id = soup["id"].as_i64().unwrap();
+    let (status, _) = t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, trash) = t.json("GET", "/api/trash", None).await;
+    assert_eq!(trash[0]["id"], id);
+    assert_eq!(trash[0]["title"], "Soup");
+    assert!(trash[0]["purgeAt"].as_str().unwrap() > trash[0]["deletedAt"].as_str().unwrap());
+
+    // Claude is told it's restorable, and can put it back (but has no way to empty the trash)
+    let (msg, is_error) = mcp_call(&t, "list_trash", json!({})).await;
+    assert!(!is_error && msg.contains("Soup"), "{msg}");
+    let (msg, is_error) = mcp_call(&t, "restore_recipe", json!({"id": id})).await;
+    assert!(!is_error && msg.starts_with("Restored \"Soup\""), "{msg}");
+    let (status, back) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!((status, &back["title"]), (StatusCode::OK, &json!("Soup")));
+
+    let (msg, _) = mcp_call(&t, "delete_recipe", json!({"id": id, "confirm": true})).await;
+    assert!(msg.contains("to the trash"), "{msg}");
+    let (status, res) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!((status, &res["isNew"]), (StatusCode::OK, &json!(true)));
+
+    // Deleted for good: one, then all
+    t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    let (status, _) = t.json("DELETE", &format!("/api/trash/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, res) = t.json("DELETE", "/api/trash", None).await;
+    assert_eq!(res["deleted"], 0);
+}
+
+#[tokio::test]
+async fn popular_lists_links_enough_households_saved() {
+    let t = accounts_app(None, false);
+    let accounts = t.state.accounts.clone().unwrap();
+    let ids: Vec<i64> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|org| accounts.hosted_household(org, org, false).unwrap())
+        .collect();
+    let save = |household: i64, url: &str, title: &str| {
+        t.state
+            .for_household(household)
+            .unwrap()
+            .db
+            .lock()
+            .execute(
+                "INSERT INTO recipes (url, title, ingredients, instructions, created_at, updated_at)
+                 VALUES (?1, ?2, '[]', '[]', 1, 1)",
+                [url, title],
+            )
+            .unwrap();
+    };
+    // Three households saved the pie (one with its own title, one via a tracking link)
+    save(ids[0], "https://www.pies.example/apple-pie/", "Apple Pie");
+    save(
+        ids[1],
+        "https://pies.example/apple-pie?utm_source=feed",
+        "apple pie",
+    );
+    save(
+        ids[2],
+        "https://pies.example/apple-pie/#comments",
+        "Nana's pie",
+    );
+    // Two saved the soup: not enough
+    save(ids[0], "https://soup.example/leek-soup", "Leek Soup");
+    save(ids[1], "https://soup.example/leek-soup", "Leek Soup");
+    // A private address, however many have it, never counts
+    for &h in &ids[..3] {
+        save(h, "http://192.168.1.2/secret-stew", "Stew");
+    }
+
+    let home = t.state.for_household(1).unwrap();
+    let links = crumb::popular::for_household(&home).await;
+    assert_eq!(links.len(), 1, "{links:?}");
+    assert_eq!(links[0].host, "pies.example");
+    // Only two agree on a title, fewer than the three needed, so it comes from the link
+    assert_eq!(links[0].title, "Apple pie");
+    assert_eq!(links[0].households, 3);
+    assert!(!links[0].url.contains("utm_") && !links[0].url.contains('#'));
+
+    // A household that saved it doesn't see it
+    let theirs = t.state.for_household(ids[0]).unwrap();
+    assert!(crumb::popular::for_household(&theirs).await.is_empty());
+
+    // One opting out takes it below the line, once counted again
+    crumb::popular::set_opted_out(&t.state.for_household(ids[2]).unwrap().db.lock(), true).unwrap();
+    t.state.popular.forget().await;
+    assert!(crumb::popular::for_household(&home).await.is_empty());
 }

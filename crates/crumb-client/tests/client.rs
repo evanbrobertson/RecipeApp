@@ -354,6 +354,20 @@ async fn bulk_deletes_recipes() {
     let client = Client::new(&server.origin).unwrap();
     assert_eq!(client.bulk_delete(&[a, b, 999_999]).await.unwrap(), 2);
     assert!(client.recipes(None, None).await.unwrap().is_empty());
+
+    // Both are in the trash, newest first, and can be put back
+    let trash = client.trash().await.unwrap();
+    assert_eq!(trash.len(), 2);
+    assert!(trash.iter().any(|t| t.title == "A"));
+    let (back, is_new) = client.restore_recipe(a).await.unwrap();
+    assert_eq!((back.id, back.title.as_str(), is_new), (a, "A", true));
+    assert!(matches!(
+        client.restore_recipe(a).await,
+        Err(Error::Api { status: 404, .. })
+    ));
+    client.purge_trashed(b).await.unwrap();
+    assert_eq!(client.empty_trash().await.unwrap(), 0);
+    assert_eq!(client.recipes(None, None).await.unwrap().len(), 1);
 }
 
 #[tokio::test]

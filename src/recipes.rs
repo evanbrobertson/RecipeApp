@@ -308,15 +308,9 @@ pub fn update_recipe(conn: &Connection, id: i64, patch: RecipePatch) -> AppResul
     Ok(recipe)
 }
 
+/// Moves these recipes to the trash (`trash.rs`), where they can be put back for 30 days.
 pub fn delete_recipes(conn: &Connection, ids: &[i64]) -> AppResult<usize> {
-    if ids.is_empty() {
-        return Ok(0);
-    }
-    let placeholders = vec!["?"; ids.len()].join(", ");
-    Ok(conn.execute(
-        &format!("DELETE FROM recipes WHERE id IN ({placeholders})"),
-        params_from_iter(ids.iter()),
-    )?)
+    crate::trash::delete(conn, ids)
 }
 
 pub(crate) fn is_http(s: &str) -> bool {

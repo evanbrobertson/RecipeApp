@@ -11,7 +11,8 @@
 //! | 429 | rate limited or busy: try again later, or another relay |
 //! | 502 | the site couldn't be reached |
 //!
-//! `GET /health` needs no token and answers a [`Health`].
+//! `GET /health` needs no token and answers a [`Health`]. A relay that also works for the
+//! server (Chromium, videos) has more routes: `crumb_work::wire`.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,4 +43,8 @@ pub struct ErrorReply {
 pub struct Health {
     pub name: String,
     pub version: String,
+    /// What it does besides `fetch`: `render` (Chromium), `video` (yt-dlp and ffmpeg); see
+    /// `crumb_work::wire`. Empty from a relay older than that.
+    #[serde(default)]
+    pub can: Vec<String>,
 }

@@ -1,0 +1,22 @@
+---
+import Icon from "../../components/Icon.astro"
+import { ArrowLeft } from "lucide"
+import Layout from "../../layouts/Layout.astro"
+import TrashPage from "../../islands/TrashPage.svelte"
+---
+
+<Layout title="Trash" section="more">
+  <div class="mx-auto flex max-w-[600px] flex-col gap-8">
+    <div>
+      <a href="/more" class="btn btn-ghost mb-3 -ml-3 px-3"><Icon icon={ArrowLeft} /> More</a>
+      <h1 class="page-title">Trash</h1>
+      <p class="text-ink-muted mt-2">
+        Deleted recipes stay here for 30 days, with their cookbooks and cook log, then go for good.
+      </p>
+    </div>
+
+    <TrashPage client:only="svelte">
+      <div slot="fallback" class="skeleton rounded-ui h-40"></div>
+    </TrashPage>
+  </div>
+</Layout>

@@ -224,3 +224,18 @@ pub struct SharedLink {
     pub created_at: String,
     pub last_opened_at: Option<String>,
 }
+
+/// A recipe in the trash (`GET /api/trash`, `trash::Trashed`): deleted, and restorable
+/// until `purge_at`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Trashed {
+    pub id: i64,
+    pub title: String,
+    pub url: Option<String>,
+    pub image: Option<String>,
+    /// ISO-8601.
+    pub deleted_at: String,
+    /// ISO-8601: when it goes for good.
+    pub purge_at: String,
+}

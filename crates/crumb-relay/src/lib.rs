@@ -30,6 +30,8 @@ use url::Url;
 
 pub mod config;
 pub mod limits;
+pub mod terms;
+pub mod work;
 
 pub use config::Config;
 use limits::Limits;
@@ -50,25 +52,40 @@ pub struct Relay {
     token_digest: [u8; 32],
     limits: Limits,
     fetcher: Fetcher,
+    /// Chromium and the video tools, when this relay works for the server (see [`work`]).
+    work: work::Work,
 }
 
 impl Relay {
     pub fn new(config: &Config) -> Arc<Self> {
-        Self::with_fetcher(
+        terms::install();
+        Self::with(
             config,
             Arc::new(|profile, url| {
                 Box::pin(async move { crumb_fetch::fetch_public(profile, &url).await })
             }),
+            work::Work::from_env(config.heavy_workers, config.work),
         )
     }
 
+    /// A relay that fetches with `fetcher` and does no other work (tests).
     pub fn with_fetcher(config: &Config, fetcher: Fetcher) -> Arc<Self> {
+        Self::with(config, fetcher, work::Work::none())
+    }
+
+    pub fn with(config: &Config, fetcher: Fetcher, work: work::Work) -> Arc<Self> {
         Arc::new(Self {
             name: config.name.clone(),
             token_digest: Sha256::digest(config.token.as_bytes()).into(),
             limits: Limits::new(config.host_interval, config.concurrency, config.per_minute),
             fetcher,
+            work,
         })
+    }
+
+    /// What this relay does besides fetching (`GET /health`'s `can`).
+    pub fn can(&self) -> Vec<String> {
+        self.work.can()
     }
 
     fn authorised(&self, headers: &HeaderMap) -> bool {
@@ -89,10 +106,18 @@ impl Relay {
 }
 
 pub fn router(relay: Arc<Relay>) -> Router {
+    let work = Router::new()
+        .route("/render", post(work::render))
+        .route("/video/meta", post(work::video_meta))
+        .route("/video/watch", post(work::watch))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            work::MAX_WORK_REQUEST_BYTES,
+        ));
     Router::new()
         .route("/health", get(health))
         .route("/fetch", post(fetch))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+        .merge(work)
         .with_state(relay)
 }
 
@@ -110,6 +135,7 @@ async fn health(State(relay): State<Arc<Relay>>) -> Json<Health> {
     Json(Health {
         name: relay.name.clone(),
         version: env!("CARGO_PKG_VERSION").into(),
+        can: relay.can(),
     })
 }
 
@@ -270,7 +296,87 @@ mod tests {
         let health: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(health["name"], "pi-test");
         assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(health.as_object().unwrap().len(), 2);
+        assert_eq!(health["can"], json!([]), "no Chromium or video tools here");
+        assert_eq!(health.as_object().unwrap().len(), 3);
+    }
+
+    fn post_json(uri: &str, token: Option<&str>, body: Value) -> Request<Body> {
+        let mut req = Request::post(uri).header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        req.body(Body::from(body.to_string())).unwrap()
+    }
+
+    async fn status_of(app: Router, req: Request<Body>) -> StatusCode {
+        app.oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn work_needs_the_token_and_the_tools() {
+        let (app, _) = relay_with(&config(), |_, _| page(200, ""));
+        let video = json!({"url": "https://www.tiktok.com/@cook/video/123"});
+        for (uri, body) in [
+            ("/render", json!({"url": "https://food.test/r"})),
+            ("/video/meta", video.clone()),
+            ("/video/watch", json!({"meta": video})),
+        ] {
+            let req = post_json(uri, None, body.clone());
+            assert_eq!(
+                status_of(app.clone(), req).await,
+                StatusCode::UNAUTHORIZED,
+                "{uri}"
+            );
+            let req = post_json(uri, Some(TOKEN), body);
+            assert_eq!(
+                status_of(app.clone(), req).await,
+                StatusCode::NOT_IMPLEMENTED,
+                "{uri}: no tools on this relay"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn only_video_sites_are_given_to_yt_dlp() {
+        let missing = std::path::PathBuf::from("/nonexistent/yt-dlp");
+        let work = work::Work {
+            browser: None,
+            video: crumb_work::video::VideoTools {
+                yt_dlp: Some(missing.clone()),
+                ffmpeg: Some(missing),
+                whisper: None,
+            },
+            heavy: Arc::new(tokio::sync::Semaphore::new(1)),
+            workers: 1,
+        };
+        let fetcher: Fetcher = Arc::new(|_, _| Box::pin(async { page(200, "") }));
+        let app = router(Relay::with(&config(), fetcher, work));
+        let health = app
+            .clone()
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = health.into_body().collect().await.unwrap().to_bytes();
+        let health: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(health["can"], json!(["video"]));
+        for url in [
+            "https://food.test/some-page",
+            "http://127.0.0.1/video",
+            "file:///etc/passwd",
+        ] {
+            let req = post_json("/video/meta", Some(TOKEN), json!({"url": url}));
+            assert_eq!(
+                status_of(app.clone(), req).await,
+                StatusCode::BAD_REQUEST,
+                "{url}"
+            );
+            let req = post_json("/video/watch", Some(TOKEN), json!({"meta": {"url": url}}));
+            assert_eq!(
+                status_of(app.clone(), req).await,
+                StatusCode::BAD_REQUEST,
+                "{url}"
+            );
+        }
     }
 
     #[tokio::test]
