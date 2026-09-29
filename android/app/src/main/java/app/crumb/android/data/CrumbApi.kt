@@ -133,7 +133,7 @@ class CrumbApi(
     suspend fun importUrl(link: String, progress: (String) -> Unit = {}): ImportResult =
         when (val started = startImport(link)) {
             is ImportStart.Done -> started.result
-            is ImportStart.Queued -> watchJob(started.job.jobId!!, started.job, progress)
+            is ImportStart.Queued -> watchJob(started.job.jobId!!, started.job, progress = progress)
         }
 
     /** `POST /api/recipes/import` for a link, without waiting for a cooking video's job. */
@@ -158,9 +158,15 @@ class CrumbApi(
      * Polls a video's job until it is saved (or fails), from its [first] answer or, for a job
      * picked up again after the app was away, from the server's. Gives up with the
      * [OfflineException] after [MAX_POLL_MISSES] polls in a row that can't connect; the job itself
-     * keeps running on the server.
+     * keeps running on the server. Once [expired] says it has waited long enough, the job is a
+     * [JobGoneException] to this watcher.
      */
-    suspend fun watchJob(jobId: String, first: ImportJob? = null, progress: (String) -> Unit = {}): ImportResult {
+    suspend fun watchJob(
+        jobId: String,
+        first: ImportJob? = null,
+        expired: () -> Boolean = { false },
+        progress: (String) -> Unit = {},
+    ): ImportResult {
         var job = first
         var missed = 0
         while (true) {
@@ -173,6 +179,7 @@ class CrumbApi(
                     }
                     "failed" -> throw ApiException(current.statusCode ?: 422, current.message ?: "Couldn't read that video")
                 }
+                if (expired()) throw JobGoneException()
                 progress(app.crumb.core.jobProgress(current.status, current.position?.toUInt()))
             }
             if (current != null || missed > 0) delay(POLL_MS)

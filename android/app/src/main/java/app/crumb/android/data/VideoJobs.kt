@@ -4,7 +4,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,16 +12,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import java.util.concurrent.atomic.AtomicInteger
 
 /** A cooking video the server is still reading: enough to ask after it again later. */
 @Serializable
 data class PendingJob(val id: String, val link: String, /** Epoch ms. */ val startedAt: Long) {
-    /** How much of its hour is left, at least 1 ms. */
-    fun remaining(now: Long): Long = (startedAt + MAX_AGE_MS - now).coerceAtLeast(1)
-
     fun expired(now: Long): Boolean = now - startedAt > MAX_AGE_MS
 
     fun encode(): String = CrumbJson.encodeToString(serializer(), this)
@@ -138,18 +133,13 @@ class VideoJobs(
         synchronized(this) {
             val job = scope.async {
                 try {
-                    val result = withTimeout(pending.remaining(now())) {
-                        api.watchJob(pending.id, first) { line ->
-                            progressState.value = line
-                            onProgress(line)
-                        }
+                    val result = api.watchJob(pending.id, first, expired = { pending.expired(now()) }) { line ->
+                        progressState.value = line
+                        onProgress(line)
                     }
                     forget(pending.id)
                     end(JobEnd.Saved(result))
                     result
-                } catch (e: TimeoutCancellationException) {
-                    forget(pending.id)
-                    throw e
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: JobGoneException) {

@@ -49,8 +49,6 @@ class PendingJobTest {
         val job = PendingJob("j1", "https://youtu.be/abc", 1_000)
         assertFalse(job.expired(1_000 + PendingJob.MAX_AGE_MS))
         assertTrue(job.expired(1_001 + PendingJob.MAX_AGE_MS))
-        assertEquals(PendingJob.MAX_AGE_MS - 500, job.remaining(1_500))
-        assertEquals(1L, job.remaining(1_000 + PendingJob.MAX_AGE_MS + 5))
     }
 }
 
@@ -72,10 +70,10 @@ class VideoJobsTest {
     private fun json(body: String, code: Int = 200) =
         MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
 
-    private fun TestScope.jobs(): VideoJobs {
+    private fun TestScope.jobs(now: () -> Long = { clock }): VideoJobs {
         val s = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         scope = s
-        return VideoJobs(api, store, s) { clock }
+        return VideoJobs(api, store, s, now)
     }
 
     private val queued = ImportJob(jobId = "j1", status = "queued", position = 2)
@@ -206,10 +204,12 @@ class VideoJobsTest {
 
     @Test
     fun aJobThatAgesOutWhileWatchedIsDropped() = runTest {
-        store.job = PendingJob("j1", "https://youtu.be/abc", clock - PendingJob.MAX_AGE_MS + 1)
-        val jobs = jobs()
+        // Each look at the clock is a second later
+        var t = clock
+        store.job = PendingJob("j1", "https://youtu.be/abc", t - PendingJob.MAX_AGE_MS + 2_500)
+        val jobs = jobs { t += 1_000; t }
         jobs.load()
-        repeat(3) { server.enqueue(json("""{"id":"j1","status":"running"}""")) }
+        repeat(6) { server.enqueue(json("""{"id":"j1","status":"running"}""")) }
         jobs.resume()
         jobs.pending.first { it == null }
         assertNull(store.job)
