@@ -47,7 +47,7 @@ Item {
 
     Requests {
         id: requests
-        onFailed: (error) => ApplicationWindow.window.toast({ "title": "Couldn't do that", "description": error, "tone": "error" })
+        onFailed: (error) => page.ApplicationWindow.window.toast({ "title": "Couldn't do that", "description": error, "tone": "error" })
     }
 
     Component.onCompleted: loadApps()

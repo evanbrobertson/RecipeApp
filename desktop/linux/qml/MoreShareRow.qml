@@ -114,7 +114,7 @@ Item {
                 }
 
                 TapHandler {
-                    onTapped: ApplicationWindow.window.go(row.cookbook ? "cookbook" : "recipe", { "id": row.share.id })
+                    onTapped: row.ApplicationWindow.window.go(row.cookbook ? "cookbook" : "recipe", { "id": row.share.id })
                 }
             }
 

@@ -36,7 +36,7 @@ Item {
             if (card.selectable)
                 card.toggled(card.recipe.id)
             else
-                ApplicationWindow.window.go("recipe", { "id": card.recipe.id })
+                card.ApplicationWindow.window.go("recipe", { "id": card.recipe.id })
         }
     }
 

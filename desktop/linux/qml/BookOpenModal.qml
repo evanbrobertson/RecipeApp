@@ -215,9 +215,12 @@ Popup {
 
                             TapHandler {
                                 onTapped: {
+                                    // Before closing: `dismissed` may take this delegate with it
+                                    const window = entry.ApplicationWindow.window
+                                    const id = entry.modelData.id
                                     modal.close()
                                     modal.dismissed()
-                                    ApplicationWindow.window.go("recipe", { "id": entry.modelData.id })
+                                    window.go("recipe", { "id": id })
                                 }
                             }
 
