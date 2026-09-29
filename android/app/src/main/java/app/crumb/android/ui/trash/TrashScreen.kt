@@ -36,6 +36,7 @@ import app.crumb.android.data.Trashed
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LocalNav
 import app.crumb.android.ui.components.Btn
+import app.crumb.android.ui.components.BtnSize
 import app.crumb.android.ui.components.BtnStyle
 import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.CardShape
@@ -230,20 +231,23 @@ private fun TrashRow(item: Trashed, photoUrl: String?, enabled: Boolean, onResto
     Row(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         RecipePhoto(photoUrl, item.image, Modifier.size(56.dp), placeholderId = item.id)
+        // Small buttons keep their width, so the title gets what's left (two lines) and the
+        // days left stay on one
         Column(Modifier.weight(1f)) {
-            Text(item.title, style = CrumbText.rowTitle, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.title, style = CrumbText.rowTitle, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
             daysLeftLabel(item.purgeAt, System.currentTimeMillis())?.let {
-                Text(it, style = CrumbText.bodySmall, color = c.inkMuted)
+                Text(it, style = CrumbText.bodySmall, color = c.inkMuted, maxLines = 1)
             }
         }
-        Btn("Put back", onRestore, style = BtnStyle.Soft, icon = Lucide.RotateCcw, enabled = enabled)
+        Btn("Put back", onRestore, style = BtnStyle.Soft, size = BtnSize.Sm, padding = 12.dp, icon = Lucide.RotateCcw, enabled = enabled)
         Btn(
             null,
             onPurge,
             style = BtnStyle.Ghost,
+            size = BtnSize.Sm,
             icon = Lucide.Trash2,
             contentDescription = "Delete ${item.title} for good",
             enabled = enabled,
