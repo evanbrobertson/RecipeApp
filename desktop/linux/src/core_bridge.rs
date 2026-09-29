@@ -201,6 +201,16 @@ pub fn checks_status_text(counts_json: &str, run: i32) -> String {
     )
 }
 
+/// The review list's summary from a `{field: count}` object, keeping the server's order.
+pub fn review_summary(fields_json: &str) -> String {
+    let fields: serde_json::Map<String, Value> = parse(fields_json).unwrap_or_default();
+    let pairs: Vec<(String, u32)> = fields
+        .into_iter()
+        .map(|(k, v)| (k, v.as_u64().unwrap_or(0) as u32))
+        .collect();
+    checks::review_summary(&pairs)
+}
+
 pub fn fix_text(detail_json: &str, item_text: &str) -> String {
     let d: Value = parse(detail_json).unwrap_or(Value::Null);
     let s = |k: &str| d.get(k).and_then(Value::as_str);
@@ -250,6 +260,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "linksIn"]
         fn links_in(self: &Core, text: QString) -> QString;
+        /// Every link anywhere in some text, as the Import page finds them (JSON array).
+        #[qinvokable]
+        #[cxx_name = "linksInText"]
+        fn links_in_text(self: &Core, text: QString) -> QString;
         #[qinvokable]
         #[cxx_name = "jobProgress"]
         fn job_progress(self: &Core, status: QString, position: i32) -> QString;
@@ -342,6 +356,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "checksStatusText"]
         fn checks_status_text(self: &Core, counts: QString, run: i32) -> QString;
+        /// "2 steps · 1 ingredient" for a review-list recipe's `fields` (a JSON object).
+        #[qinvokable]
+        #[cxx_name = "reviewSummary"]
+        fn review_summary(self: &Core, fields: QString) -> QString;
         #[qinvokable]
         #[cxx_name = "tidiedTitle"]
         fn tidied_title(self: &Core, n: i32) -> QString;
@@ -458,6 +476,9 @@ impl qobject::Core {
     }
     pub fn links_in(&self, text: QString) -> QString {
         q(out(add::links_in(&text.to_string())))
+    }
+    pub fn links_in_text(&self, text: QString) -> QString {
+        q(out(add::links_in_text(&text.to_string())))
     }
     pub fn job_progress(&self, status: QString, position: i32) -> QString {
         q(add::job_progress(
@@ -578,6 +599,9 @@ impl qobject::Core {
     pub fn checks_status_text(&self, counts: QString, run: i32) -> QString {
         q(checks_status_text(&counts.to_string(), run))
     }
+    pub fn review_summary(&self, fields: QString) -> QString {
+        q(review_summary(&fields.to_string()))
+    }
     pub fn tidied_title(&self, n: i32) -> QString {
         q(recipe_page::tidied_title(n.max(0) as u32))
     }
@@ -683,6 +707,14 @@ mod tests {
                 2
             ),
             "[[0],[1]]"
+        );
+    }
+
+    #[test]
+    fn review_summaries_keep_the_servers_order() {
+        assert_eq!(
+            review_summary(r#"{"notes": 1, "instructions": 2, "ingredients": 1}"#),
+            "2 steps · 1 note · 1 ingredient"
         );
     }
 

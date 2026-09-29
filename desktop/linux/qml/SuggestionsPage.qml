@@ -34,23 +34,6 @@ Item {
         return top
     }
 
-    // The web's summary line for a recipe: "2 steps · 1 ingredient"
-    readonly property var names: ({
-        "ingredients": "ingredient",
-        "instructions": "step",
-        "notes": "note",
-        "totalTime": "time",
-        "image": "broken photo link"
-    })
-
-    function summary(fields) {
-        var entries = Object.keys(fields || {}).map(function (f) { return [f, fields[f]] })
-        entries.sort(function (a, b) { return b[1] - a[1] })
-        return entries.map(function (e) {
-            return Core.plural(e[1], page.names[e[0]] || "thing")
-        }).join(" · ")
-    }
-
     function setChecks(status) {
         checks = status && status.enabled ? status : null
         var pending = checks ? checks.pending : 0
@@ -322,7 +305,7 @@ Item {
                             width: rows.width
                             recipe: modelData
                             first: index === 0
-                            summary: page.summary(modelData.fields)
+                            summary: Core.reviewSummary(JSON.stringify(modelData.fields || {}))
                             onOpened: ApplicationWindow.window.go("edit", { "id": modelData.id })
                         }
                     }

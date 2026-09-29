@@ -25,7 +25,7 @@ Item {
     property var fileJobs: []
     property bool dragging: false
     property var vision: null
-    readonly property var parsedLinks: linksField.text.trim() ? JSON.parse(Core.linksIn(linksField.text)) : []
+    readonly property var parsedLinks: linksField.text.trim() ? JSON.parse(Core.linksInText(linksField.text)) : []
     readonly property var linkIcons: ({
         "waiting": "clock",
         "working": "loader-circle",

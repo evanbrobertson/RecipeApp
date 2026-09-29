@@ -128,6 +128,9 @@ Item {
             loading = false
             rememberViewed(r)
             requests.call("viewed", {"id": r.id}, null, function () {})
+            requests.call("cookStats", {"id": r.id}, function (stats) {
+                cookStats = stats
+            }, function () {})
         }, function () {
             loading = false
         })

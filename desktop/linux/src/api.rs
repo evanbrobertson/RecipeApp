@@ -206,6 +206,7 @@ pub async fn dispatch(
         "bulkDelete" => Ok(json!({ "deleted": client.bulk_delete(&ids(args, "ids")).await? })),
         "viewed" => client.viewed(int(args, "id")?).await.map(|()| Value::Null),
         "cooked" => to_json(client.cooked(int(args, "id")?).await?),
+        "cookStats" => to_json(client.cook_stats(int(args, "id")?).await?),
         "undoCooked" => to_json(
             client
                 .undo_cooked(int(args, "id")?, opt_int(args, "event"))
