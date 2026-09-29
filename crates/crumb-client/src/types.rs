@@ -239,3 +239,47 @@ pub struct Trashed {
     /// ISO-8601: when it goes for good.
     pub purge_at: String,
 }
+
+/// A recipe read from a link but not saved: a [`Recipe`] without what saving gives it
+/// (`preview::api`). `url` is the page it was read from, `source` is `url`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRecipe {
+    pub url: Option<String>,
+    pub source: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub image: Option<String>,
+    pub author: Option<String>,
+    pub prep_time: Option<String>,
+    pub cook_time: Option<String>,
+    pub total_time: Option<String>,
+    pub freeze_time: Option<String>,
+    pub recipe_yield: Option<String>,
+    pub recipe_category: Option<String>,
+    pub recipe_cuisine: Option<String>,
+    pub ingredients: Vec<crate::Section>,
+    pub instructions: Vec<crate::Section>,
+    pub nutrition: Option<Value>,
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub video: Option<String>,
+    #[serde(default)]
+    pub video_embed: Option<crumb_core::embed::VideoEmbed>,
+    #[serde(default)]
+    pub original_url: Option<String>,
+}
+
+/// `POST /api/recipes/preview`: what a link is, before saving it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum Preview {
+    /// Already in the box.
+    Saved { id: i64, title: String },
+    /// A cooking video or another Crumb's shared cookbook: import it as usual, there is
+    /// nothing to preview.
+    Import,
+    /// The recipe, read and tidied as an import would; the next import of the link keeps
+    /// this reading instead of fetching the page again.
+    Ready { recipe: Box<PreviewRecipe> },
+}

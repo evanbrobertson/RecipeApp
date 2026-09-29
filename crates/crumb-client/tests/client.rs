@@ -3,8 +3,8 @@
 use crumb::{AppState, app, browser::Browser, config::Config, db};
 use crumb_client::{
     AiStatus, Client, CookStats, Cooked, Credentials, Device, Error, ImportInput, Imported,
-    ImportedCookbook, Mode, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section, ShareKind,
-    Status, StatusHousehold,
+    ImportedCookbook, Mode, Preview, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section,
+    ShareKind, Status, StatusHousehold,
 };
 use serde_json::{Value, json};
 
@@ -1295,4 +1295,47 @@ async fn a_listed_site_error_carries_its_name() {
     assert_eq!(err.code(), Some("site_terms"));
     assert_eq!(err.site(), Some("Allrecipes"));
     assert!(matches!(err, Error::Api { status: 422, .. }));
+}
+
+#[tokio::test]
+async fn previews_a_link_before_it_is_saved() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let recipe_site = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(|| async {
+            axum::response::Html(format!(
+                r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                json!({"@type": "Recipe", "name": "Leek Soup",
+                    "recipeIngredient": ["2 leeks"], "recipeInstructions": ["Simmer."]})
+            ))
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, recipe_site).await.unwrap() });
+    // The test's recipe site is on this machine
+    let server = Server::configured(|config| config.scrape_allow_private = true).await;
+    let client = Client::new(&server.origin).unwrap();
+
+    let url = format!("{site}/soup");
+    let Preview::Ready { recipe } = client.preview(&url).await.unwrap() else {
+        panic!("expected a recipe");
+    };
+    assert_eq!(recipe.title, "Leek Soup");
+    assert_eq!(recipe.url.as_deref(), Some(url.as_str()));
+
+    let imported = client.import(ImportInput::Url(url.clone())).await.unwrap();
+    match client.preview(&url).await.unwrap() {
+        Preview::Saved { id, title } => {
+            assert_eq!((id, title.as_str()), (imported.recipe.id, "Leek Soup"));
+        }
+        other => panic!("expected saved, got {other:?}"),
+    }
+
+    let video = "https://www.youtube.com/watch?v=Xy_djhH3WE4";
+    assert!(matches!(
+        client.preview(video).await.unwrap(),
+        Preview::Import
+    ));
+    let err = client.preview("nope").await.unwrap_err();
+    assert!(matches!(err, Error::Api { status: 400, .. }), "{err:?}");
 }
