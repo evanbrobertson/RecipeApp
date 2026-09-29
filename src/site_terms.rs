@@ -16,11 +16,9 @@
 //! is checked against the text, and nothing changes without a person editing the list.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use rusqlite::{Connection, params};
 use scraper::{Html, Selector};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -29,6 +27,7 @@ use tokio::sync::mpsc;
 use crate::AppState;
 use crate::error::AppError;
 use crate::llm;
+use crate::sites::{self, Sites};
 
 /// The `code` on the error a listed site gets.
 pub const SITE_TERMS: &str = "site_terms";
@@ -227,139 +226,48 @@ struct Job {
     origin: String,
 }
 
-/// Queues terms checks for hosts imported from, one at a time, and keeps what it found in
-/// `terms_checks` (in `sites.db` beside the database).
+/// Queues terms checks for hosts imported from, one at a time. What it found is kept in
+/// `terms_checks` in `sites.db` (see [`Sites`]).
 pub struct Flagger {
-    path: Option<PathBuf>,
-    db: Mutex<Option<Connection>>,
     tx: OnceLock<mpsc::Sender<Job>>,
     pending: Mutex<HashSet<String>>,
 }
 
-/// `sites.db`, beside the database.
-pub fn sites_db_path(home_db: &Path) -> PathBuf {
-    home_db
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .join("sites.db")
-}
-
 fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
+    sites::now_secs()
 }
 
 impl Flagger {
-    /// `path`: the SQLite file (None = in memory). Opened on first use.
-    pub fn new(path: Option<PathBuf>) -> Self {
+    pub fn new() -> Self {
         Self {
-            path,
-            db: Mutex::new(None),
             tx: OnceLock::new(),
             pending: Mutex::default(),
         }
     }
 
-    fn with_db<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {
-        let mut guard = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_none() {
-            let opened = match &self.path {
-                Some(path) => Connection::open(path),
-                None => Connection::open_in_memory(),
-            }
-            .and_then(|conn| {
-                conn.busy_timeout(Duration::from_secs(5))?;
-                if self.path.is_some() {
-                    conn.pragma_update(None, "journal_mode", "WAL")?;
-                }
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS terms_checks (
-                        host TEXT PRIMARY KEY,
-                        checked_at INTEGER NOT NULL,
-                        result TEXT NOT NULL,
-                        terms_url TEXT,
-                        issue_url TEXT
-                    )",
-                )?;
-                Ok(conn)
-            });
-            match opened {
-                Ok(conn) => *guard = Some(conn),
-                Err(err) => {
-                    tracing::warn!("[terms] couldn't open the checks table: {err}");
-                    return None;
-                }
-            }
-        }
-        match f(guard.as_ref()?) {
-            Ok(v) => Some(v),
-            Err(err) => {
-                tracing::warn!("[terms] checks table: {err}");
-                None
-            }
-        }
-    }
-
     /// Whether `host` was checked recently enough to leave alone.
-    fn fresh(&self, host: &str) -> bool {
-        self.with_db(|c| {
-            let row: Option<(i64, String)> = c
-                .query_row(
-                    "SELECT checked_at, result FROM terms_checks WHERE host = ?1",
-                    [host],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .map(Some)
-                .or_else(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                    e => Err(e),
-                })?;
-            Ok(row.is_some_and(|(at, result)| {
-                let window = if result == Outcome::Failed.label() {
-                    RETRY_SECS
-                } else {
-                    RECHECK_SECS
-                };
-                at + window > now()
-            }))
+    fn fresh(&self, sites: &Sites, host: &str) -> bool {
+        sites.terms_check(host).is_some_and(|(at, result)| {
+            let window = if result == Outcome::Failed.label() {
+                RETRY_SECS
+            } else {
+                RECHECK_SECS
+            };
+            at + window > now()
         })
-        .unwrap_or(false)
     }
 
-    fn record(&self, host: &str, outcome: &Outcome, terms_url: Option<&str>) {
+    fn record(&self, sites: &Sites, host: &str, outcome: &Outcome, terms_url: Option<&str>) {
         let issue = match outcome {
             Outcome::Flagged(url) | Outcome::Existing(url) => Some(url.as_str()),
             _ => None,
         };
-        self.with_db(|c| {
-            c.execute(
-                "INSERT INTO terms_checks (host, checked_at, result, terms_url, issue_url)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(host) DO UPDATE SET checked_at = excluded.checked_at,
-                   result = excluded.result, terms_url = excluded.terms_url,
-                   issue_url = excluded.issue_url",
-                params![host, now(), outcome.label(), terms_url, issue],
-            )
-        });
+        sites.record_terms_check(host, now(), outcome.label(), terms_url, issue);
     }
 
     /// What was recorded for `host`: result and the issue's address.
-    pub fn recorded(&self, host: &str) -> Option<(String, Option<String>)> {
-        self.with_db(|c| {
-            c.query_row(
-                "SELECT result, issue_url FROM terms_checks WHERE host = ?1",
-                [host],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(e),
-            })
-        })
-        .flatten()
+    pub fn recorded(&self, sites: &Sites, host: &str) -> Option<(String, Option<String>)> {
+        sites.terms_recorded(host)
     }
 
     /// A recipe was just imported from `url`: if its host is one nobody has looked at
@@ -386,7 +294,7 @@ impl Flagger {
         }
         {
             let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            if pending.contains(&host) || self.fresh(&host) {
+            if pending.contains(&host) || self.fresh(&state.sites, &host) {
                 return;
             }
             pending.insert(host.clone());
@@ -419,7 +327,7 @@ async fn run(job: Job) {
     let (outcome, terms_url) = look(&job.state, &job.host, &job.origin).await;
     tracing::info!("[terms] {}: {}", job.host, outcome.label());
     let flagger = &job.state.terms;
-    flagger.record(&job.host, &outcome, terms_url.as_deref());
+    flagger.record(&job.state.sites, &job.host, &outcome, terms_url.as_deref());
     flagger
         .pending
         .lock()
@@ -1183,22 +1091,16 @@ mod tests {
         assert_eq!(outcome, Outcome::Failed);
         assert!(shared.lock().unwrap().created.is_empty());
 
-        let flagger = Flagger::new(None);
-        flagger.record("a.example", &Outcome::Failed, None);
-        flagger.record("b.example", &Outcome::Allowed, None);
-        assert!(flagger.fresh("a.example") && flagger.fresh("b.example"));
+        let flagger = Flagger::new();
+        let sites = Sites::open_in_memory().unwrap();
+        flagger.record(&sites, "a.example", &Outcome::Failed, None);
+        flagger.record(&sites, "b.example", &Outcome::Allowed, None);
+        assert!(flagger.fresh(&sites, "a.example") && flagger.fresh(&sites, "b.example"));
         // A failure is retried after a day, a finished check after 90
-        flagger
-            .with_db(|c| {
-                c.execute(
-                    "UPDATE terms_checks SET checked_at = checked_at - 90000",
-                    [],
-                )
-            })
-            .unwrap();
-        assert!(!flagger.fresh("a.example"));
-        assert!(flagger.fresh("b.example"));
-        assert!(!flagger.fresh("c.example"));
+        sites.backdate_terms_checks(90_000);
+        assert!(!flagger.fresh(&sites, "a.example"));
+        assert!(flagger.fresh(&sites, "b.example"));
+        assert!(!flagger.fresh(&sites, "c.example"));
     }
 
     #[tokio::test]
@@ -1222,7 +1124,7 @@ mod tests {
         state.terms.consider(&state, &url);
         let mut found = None;
         for _ in 0..100 {
-            found = state.terms.recorded("localhost");
+            found = state.terms.recorded(&state.sites, "localhost");
             if found.is_some() {
                 break;
             }
@@ -1231,8 +1133,13 @@ mod tests {
         let (result, issue) = found.expect("the check ran");
         assert_eq!(result, "flagged");
         assert_eq!(issue.as_deref(), Some("https://github.test/o/r/issues/1"));
-        assert!(state.terms.recorded("allrecipes.com").is_none());
-        assert!(quiet.terms.recorded("localhost").is_none());
+        assert!(
+            state
+                .terms
+                .recorded(&state.sites, "allrecipes.com")
+                .is_none()
+        );
+        assert!(quiet.terms.recorded(&quiet.sites, "localhost").is_none());
 
         // Checked lately, so an import from it now does nothing
         state.terms.consider(&state, &url);

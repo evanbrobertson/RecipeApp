@@ -1,6 +1,9 @@
 //! Site memory: what worked the last time a recipe was read from a host, so the next scrape
 //! can go straight to it (see `scraper::scrape_with`).
 //!
+//! The same file keeps `terms_checks`, when Wee Chef last looked at a host's terms of service
+//! (see `site_terms`).
+//!
 //! One server-wide file, `sites.db` beside the home database. These are facts about public
 //! websites ("recipetineats.com is WordPress and its own API answers"), not about anyone's
 //! box, so unlike recipes they are not kept per household: what one household's import
@@ -119,6 +122,13 @@ impl Sites {
                extra_json TEXT NOT NULL DEFAULT '{}',
                checked_at INTEGER NOT NULL,
                failures INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS terms_checks (
+               host TEXT PRIMARY KEY,
+               checked_at INTEGER NOT NULL,
+               result TEXT NOT NULL,
+               terms_url TEXT,
+               issue_url TEXT
              );",
         )?;
         Ok(Self(Mutex::new(conn)))
@@ -224,6 +234,69 @@ impl Sites {
         if let Err(e) = result {
             tracing::warn!("[sites] write failed: {e}");
         }
+    }
+}
+
+impl Sites {
+    /// When `host`'s terms were last looked at, and what came of it.
+    pub fn terms_check(&self, host: &str) -> Option<(i64, String)> {
+        self.lock()
+            .query_row(
+                "SELECT checked_at, result FROM terms_checks WHERE host = ?1",
+                [host],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .inspect_err(|e| tracing::warn!("[sites] terms read failed: {e}"))
+            .ok()
+            .flatten()
+    }
+
+    /// The result of the last look at `host`'s terms and the issue opened for it.
+    pub fn terms_recorded(&self, host: &str) -> Option<(String, Option<String>)> {
+        self.lock()
+            .query_row(
+                "SELECT result, issue_url FROM terms_checks WHERE host = ?1",
+                [host],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .inspect_err(|e| tracing::warn!("[sites] terms read failed: {e}"))
+            .ok()
+            .flatten()
+    }
+
+    /// Remembers a look at `host`'s terms.
+    pub fn record_terms_check(
+        &self,
+        host: &str,
+        now: i64,
+        result: &str,
+        terms_url: Option<&str>,
+        issue_url: Option<&str>,
+    ) {
+        let saved = self.lock().execute(
+            "INSERT INTO terms_checks (host, checked_at, result, terms_url, issue_url)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(host) DO UPDATE SET checked_at = excluded.checked_at,
+               result = excluded.result, terms_url = excluded.terms_url,
+               issue_url = excluded.issue_url",
+            params![host, now, result, terms_url, issue_url],
+        );
+        if let Err(e) = saved {
+            tracing::warn!("[sites] terms write failed: {e}");
+        }
+    }
+
+    /// Makes every recorded terms check `secs` older.
+    #[cfg(test)]
+    pub fn backdate_terms_checks(&self, secs: i64) {
+        self.lock()
+            .execute(
+                "UPDATE terms_checks SET checked_at = checked_at - ?1",
+                [secs],
+            )
+            .unwrap();
     }
 }
 
@@ -353,6 +426,34 @@ mod tests {
                 .unwrap()
                 .skip_page(1_000 + 2 * DAY)
         );
+    }
+
+    #[test]
+    fn terms_checks_share_the_file_and_are_overwritten_per_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sites.db");
+        let sites = Sites::open(&path).unwrap();
+        sites.record_win("food.test", &won("wreq-firefox"), 10);
+        sites.record_terms_check("food.test", 100, "error", None, None);
+        sites.record_terms_check(
+            "food.test",
+            200,
+            "flagged",
+            Some("https://t"),
+            Some("https://i"),
+        );
+        let reopened = Sites::open(&path).unwrap();
+        assert_eq!(
+            reopened.terms_check("food.test"),
+            Some((200, "flagged".into()))
+        );
+        assert_eq!(
+            reopened.terms_recorded("food.test"),
+            Some(("flagged".into(), Some("https://i".into())))
+        );
+        assert!(reopened.terms_check("other.test").is_none());
+        // the site facts are in the same file
+        assert!(reopened.get("food.test", 20).is_some());
     }
 
     #[test]

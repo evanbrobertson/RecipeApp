@@ -134,7 +134,7 @@ impl AppState {
             };
             Arc::new(opened.expect("accounts database"))
         });
-        let terms = Arc::new(site_terms::Flagger::new(config.terms_db.clone()));
+        let terms = Arc::new(site_terms::Flagger::new());
         Self {
             accounts,
             hosted,
