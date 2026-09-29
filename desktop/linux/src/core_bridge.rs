@@ -511,7 +511,7 @@ impl qobject::Core {
         q(trash::days_left(purge_ms as i64, now_ms as i64))
     }
     pub fn trash_delete_one(&self) -> QString {
-        q(trash::DELETE_ONE.to_string())
+        q(trash::DELETE_ONE)
     }
     pub fn trash_delete_many(&self, n: i32) -> QString {
         q(trash::delete_many(n.max(0) as u32))
