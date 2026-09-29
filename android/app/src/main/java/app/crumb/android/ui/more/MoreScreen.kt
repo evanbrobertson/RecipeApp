@@ -47,7 +47,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -60,14 +59,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.crumb.android.BuildConfig
+import app.crumb.android.data.AccountApi
 import app.crumb.android.data.ApiException
+import app.crumb.android.data.AuthStatus
+import app.crumb.android.data.accountRow
 import app.crumb.android.data.ConnectorInfo
 import app.crumb.android.data.CrumbApi
-import app.crumb.android.data.Download
 import app.crumb.android.data.ShareKind
 import app.crumb.android.data.SharedLink
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LocalNav
+import app.crumb.android.ui.account.rememberFileSaver
 import app.crumb.android.ui.components.Btn
 import app.crumb.android.ui.components.BtnStyle
 import app.crumb.android.ui.components.Card
@@ -87,29 +89,23 @@ import app.crumb.android.ui.theme.ThemeMode
 import app.crumb.android.ui.theme.ThemeSettings
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.BookOpen
-import com.composables.icons.lucide.ChefHat
-import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Check
-import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.CookingPot
 import com.composables.icons.lucide.Copy
 import com.composables.icons.lucide.Download
-import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.FileDown
-import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.LoaderCircle
 import com.composables.icons.lucide.LocateFixed
-import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MonitorSmartphone
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.PenLine
 import com.composables.icons.lucide.Plug
-import com.composables.icons.lucide.Server
 import com.composables.icons.lucide.Shuffle
 import com.composables.icons.lucide.Sun
 import com.composables.icons.lucide.Sunrise
 import com.composables.icons.lucide.Unlink
+import com.composables.icons.lucide.UserRound
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -126,6 +122,8 @@ import kotlin.math.round
 /** Everything the More page reads from the server (web MoreSettings' page data). */
 data class MoreUiState(
     val connector: ConnectorInfo? = null,
+    /** Who's signed in (the Account row's name); null until it lands or if the server didn't say. */
+    val auth: AuthStatus? = null,
     /** null until the first load lands; empty means no live links. */
     val shares: List<SharedLink>? = null,
     val error: String? = null,
@@ -133,7 +131,7 @@ data class MoreUiState(
     val stopping: Boolean = false,
 )
 
-class MoreViewModel(private val api: CrumbApi) : ViewModel() {
+class MoreViewModel(private val api: CrumbApi, private val accounts: AccountApi) : ViewModel() {
     private val _state = MutableStateFlow(MoreUiState())
     val state: StateFlow<MoreUiState> = _state.asStateFlow()
 
@@ -148,7 +146,8 @@ class MoreViewModel(private val api: CrumbApi) : ViewModel() {
                 val connector = api.connector()
                 // The shares list is best-effort: a box that has never shared shows nothing
                 val shares = runCatching { api.shares() }.getOrDefault(emptyList())
-                _state.update { it.copy(connector = connector, shares = shares) }
+                val auth = runCatching { accounts.status() }.getOrNull()
+                _state.update { it.copy(connector = connector, shares = shares, auth = auth) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -187,24 +186,14 @@ fun MoreScreen() {
     val container = AppContainerProvider
     val nav = LocalNav.current
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
-    val vm: MoreViewModel = crumbViewModel { MoreViewModel(container.api) }
+    val vm: MoreViewModel = crumbViewModel { MoreViewModel(container.api, container.accounts) }
     val state by vm.state.collectAsStateWithLifecycle()
     val settings by container.theme.settings.collectAsStateWithLifecycle(initialValue = ThemeSettings())
     val clipboard = LocalClipboardManager.current
     val c = Crumb.colors
 
-    var pending by remember { mutableStateOf<Download?>(null) }
-    val backupSaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        val download = pending
-        pending = null
-        if (uri != null && download != null) {
-            runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(download.bytes) } }
-                .onSuccess { Toaster.show("Backup saved", tone = ToastTone.Success) }
-                .onFailure { Toaster.show("Couldn't save that", it.message ?: "Try again.", ToastTone.Error) }
-        }
-    }
+    val saveBackup = rememberFileSaver("Backup saved")
 
     var locating by remember { mutableStateOf(false) }
     fun findLocation() {
@@ -239,8 +228,6 @@ fun MoreScreen() {
         if (state.signedOut) nav.signedOut()
     }
 
-    val server = container.session.current?.server?.toString()?.trimEnd('/')
-    val serverHost = server?.removePrefix("https://")?.removePrefix("http://")
     val saved = settings.location != null
     val effectiveLocation = remember(saved, settings.location) { settings.location ?: SunClock.estimate() }
 
@@ -268,10 +255,12 @@ fun MoreScreen() {
             ),
         )
 
+        val (accountTitle, accountText) = accountRow(state.auth, state.connector?.authEnabled != false)
         Group(
-            "Claude & backups",
+            "Account",
             listOf(
-                { ListRow(title = "Connect to Claude", icon = Lucide.Plug, plainIcon = true, onClick = { nav.connect() }) },
+                { ListRow(title = accountTitle, subtitle = accountText, icon = Lucide.UserRound, plainIcon = true, onClick = { nav.account() }) },
+                { ListRow(title = "Connections", subtitle = "Claude", icon = Lucide.Plug, plainIcon = true, onClick = { nav.connections() }) },
                 {
                     ListRow(
                         title = "Download a backup",
@@ -281,9 +270,7 @@ fun MoreScreen() {
                         onClick = {
                             scope.launch {
                                 try {
-                                    val download = container.api.exportAll()
-                                    pending = download
-                                    backupSaver.launch(download.fileName)
+                                    saveBackup(container.api.exportAll())
                                 } catch (e: Exception) {
                                     Toaster.show("Couldn't download that", e.friendlyMessage(), ToastTone.Error)
                                 }
@@ -326,71 +313,6 @@ fun MoreScreen() {
                 },
             )
         }
-
-        val info = state.connector
-        Group(
-            "Settings",
-            buildList<@Composable () -> Unit> {
-                if (info != null) {
-                    add {
-                        ListRow(
-                            title = "Tricky sites",
-                            subtitle = if (info.browserScraping) "A real browser steps in when a site blocks us" else "Browser fallback not installed",
-                            icon = Lucide.Globe,
-                            plainIcon = true,
-                            onClick = null,
-                        )
-                    }
-                    add {
-                        ListRow(
-                            title = "Pasted text",
-                            subtitle = if (info.weeChef) "Tidied up by Wee Chef" else "Read by the built-in parser",
-                            icon = Lucide.ChefHat,
-                            plainIcon = true,
-                            onClick = null,
-                            trailing = if (info.weeChef) {
-                                { Text("Wee Chef is on", style = CrumbText.meta, color = c.inkMuted, maxLines = 1) }
-                            } else null,
-                        )
-                    }
-                    if (info.weeChefChecks) {
-                        add {
-                            ListRow(
-                                title = "Wee Chef checks",
-                                icon = Lucide.ClipboardCheck,
-                                plainIcon = true,
-                                onClick = { nav.suggestions() },
-                                trailing = {
-                                    Text("Suggestions", style = CrumbText.meta, color = c.inkMuted, modifier = Modifier.padding(end = 4.dp))
-                                    Icon(Lucide.ChevronRight, null, tint = c.inkMuted, modifier = Modifier.size(20.dp))
-                                },
-                            )
-                        }
-                    }
-                }
-                add {
-                    ListRow(
-                        title = "Server",
-                        subtitle = serverHost,
-                        icon = Lucide.Server,
-                        plainIcon = true,
-                        onClick = server?.let { { uriHandler.openUri(it) } },
-                        trailing = { Icon(Lucide.ExternalLink, null, tint = c.inkMuted, modifier = Modifier.size(20.dp)) },
-                    )
-                }
-                if (info?.authEnabled != false) {
-                    add {
-                        ListRow(
-                            title = "Sign out",
-                            icon = Lucide.LogOut,
-                            plainIcon = true,
-                            onClick = { scope.launch { container.signOut() } },
-                            chevron = false,
-                        )
-                    }
-                }
-            },
-        )
 
         Text(
             "Crumb for Android ${BuildConfig.VERSION_NAME}",

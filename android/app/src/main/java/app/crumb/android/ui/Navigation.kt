@@ -31,6 +31,13 @@ class CrumbNav(
     fun add(text: String? = null) = nav.navigate(AddRoute(text)) { launchSingleTop = true }
     fun import(links: String? = null) = nav.navigate(ImportRoute(links))
     fun connect() = nav.navigate(ConnectRoute)
+    fun account() = nav.navigate(AccountRoute)
+    fun connections() = nav.navigate(ConnectionsRoute)
+
+    /** Starts over from Home with nothing kept (after leaving or switching household). */
+    fun restart() {
+        nav.navigate(HomeRoute) { popUpTo(nav.graph.id) { inclusive = true } }
+    }
     fun recipes(query: String? = null) = nav.navigate(RecipesRoute(query)) { launchSingleTop = true }
     fun shelf() = nav.navigate(ShelfRoute) { launchSingleTop = true }
     fun suggestions() = nav.navigate(SuggestionsRoute) { launchSingleTop = true }
