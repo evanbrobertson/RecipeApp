@@ -42,9 +42,11 @@ Item {
     readonly property bool showNoRecipes: !page.loading && page.recipes.length === 0 && page.q === ""
     readonly property bool showNothingMatches: !page.loading && !page.showNoRecipes && page.visibleRecipes.length === 0
 
-    // The grid: 4 columns at ≥1100px of page width, 3 at ≥800, else 2.
+    // The grid, by window width as the web's breakpoints are: 5 columns at xl (1280), 4 at
+    // lg (1024), 3 at sm (640), else 2.
     readonly property real gridWidth: scroller.contentWidthAvailable
-    readonly property int gridColumns: page.gridWidth >= 1100 ? 4 : page.gridWidth >= 800 ? 3 : 2
+    readonly property real windowWidth: ApplicationWindow.window ? ApplicationWindow.window.width : 1280
+    readonly property int gridColumns: windowWidth >= 1280 ? 5 : windowWidth >= 1024 ? 4 : windowWidth >= 640 ? 3 : 2
     readonly property real gridGapX: page.gridColumns === 2 ? 12 : 16
     readonly property real gridCellWidth: Math.max(0, Math.floor((page.gridWidth - (page.gridColumns - 1) * page.gridGapX) / page.gridColumns))
 
