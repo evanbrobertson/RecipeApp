@@ -8,6 +8,8 @@
 # Each entry:
 #   name    how the site is called to the cook
 #   hosts   the hosts covered; a host also covers all of its subdomains (www. and the rest)
+#   image_hosts  optional: image CDN hosts that serve the site's photos (and nobody else's); the server
+#           downloads no photo from them or from the hosts above, it sends the cook's browser to the original
 #   clause  the short quote from the terms that forbids automated access
 #   source  the URL of the terms
 #   checked the day a person last read the terms (YYYY-MM-DD)

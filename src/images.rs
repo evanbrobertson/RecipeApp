@@ -396,6 +396,11 @@ pub async fn serve_photo(
     else {
         return not_found();
     };
+    // A photo hosted by a site whose terms forbid automated fetching is never downloaded here:
+    // the cook's browser loads it from the original
+    if crate::site_terms::photo_is_listed(&image) {
+        return unavailable(Failure::Elsewhere, &image);
+    }
     let key = image_key(&image);
     let current = v.is_some_and(|v| v == key);
     let images = &state.images;
@@ -519,6 +524,12 @@ async fn load_source(
             "unsupported image URL scheme {}",
             parsed.scheme()
         )));
+    }
+    // A listed site's photos are never downloaded (callers skip them; this is the backstop)
+    if crate::site_terms::photo_is_listed(image) {
+        return Err(LoadError::passing(
+            "the photo is on a site whose terms forbid automated fetching",
+        ));
     }
     // A photo link is the recipe site's to name, so it can name anything: never the server's
     // own network
@@ -719,7 +730,7 @@ async fn load_with_reqwest(
 /// site itself refuses counts (see [`LoadError::dead`]); a slow or failing site gets the
 /// benefit of the doubt. An embedded photo is never dead here: it was read when kept.
 pub async fn photo_is_dead(state: &AppState, image: &str, referer: Option<&str>) -> bool {
-    if image.starts_with("data:") {
+    if image.starts_with("data:") || crate::site_terms::photo_is_listed(image) {
         return false;
     }
     match load_source(state, image, referer).await {
@@ -738,6 +749,9 @@ pub async fn photo_is_dead(state: &AppState, image: &str, referer: Option<&str>)
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
 /// None when it can't be had or isn't a JPEG, PNG or WebP.
 pub async fn fetch_to_embed(state: &AppState, url: &str) -> Option<String> {
+    if crate::site_terms::photo_is_listed(url) {
+        return None;
+    }
     match load_source(state, url, None).await {
         Ok(bytes) => embed(&bytes),
         Err(err) => {
@@ -964,6 +978,31 @@ mod tests {
             unavailable(Failure::Elsewhere, ftp, Caching::Private).status(),
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[test]
+    fn a_listed_sites_photo_is_sent_to_the_original_and_never_fetched() {
+        let photo = "https://www.allrecipes.com/thmb/pie.jpg";
+        // The resizer's answer for a linked photo it must not touch: the browser loads it
+        let res = unavailable(Failure::Elsewhere, photo);
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(res.headers()[header::LOCATION], photo);
+    }
+
+    #[tokio::test]
+    async fn save_time_checks_and_embedding_skip_a_listed_sites_photo() {
+        let state = crate::AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            crate::config::Config::default(),
+            crate::browser::Browser::disabled(),
+        );
+        let photo = "https://www.allrecipes.com/thmb/pie.jpg";
+        // Not fetched, so never found dead and never embedded
+        assert!(!photo_is_dead(&state, photo, None).await);
+        assert!(fetch_to_embed(&state, photo).await.is_none());
+        // The backstop is a refusal that isn't "dead"
+        let err = load_source(&state, photo, None).await.unwrap_err();
+        assert!(!err.dead);
     }
 
     #[test]
