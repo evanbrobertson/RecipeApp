@@ -66,6 +66,17 @@ adb reverse tcp:3000 tcp:3000
 Then sign in to `http://localhost:3000`. Debug builds also accept plain HTTP on the local
 network (`http://192.168.x.x:3000`).
 
+### Google, Apple and invite links
+
+With a server in accounts or hosted mode that has Google or Apple set up, the sign-in screen offers
+"Continue with Google / Apple". The app asks the server to start it (`/api/auth/app/start`), opens
+the address in a Custom Tab, and the browser ends at `app.crumb://signed-in?code=…`, which
+`MainActivity` catches and redeems (`/api/auth/app/redeem`) with the PKCE verifier kept, encrypted,
+while the browser was up. Invite links (`https://host/invite#token`, or `app.crumb://invite?…` from
+the web invite page) are parsed by the core and join a household from a dialog; signed out, the
+invite waits while you sign in or up. To try it against a local server, `adb reverse` its port and
+run it with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set to anything so Google is offered.
+
 ## Release signing
 
 Unsigned unless a keystore is configured. Locally, create `android/keystore.properties`
