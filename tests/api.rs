@@ -7887,6 +7887,8 @@ fn accounts_modes_refuse_to_start_without_a_fixed_address() {
     config.site_url = None;
     config.railway_domain = Some("app.up.railway.app".into());
     assert!(config.check().is_ok());
+}
+
 /// A recipe as the extension reads it from a page: its JSON-LD inside a `@graph`.
 fn page_reading(name: &str) -> Value {
     let ld = json!({"@context": "https://schema.org", "@graph": [
