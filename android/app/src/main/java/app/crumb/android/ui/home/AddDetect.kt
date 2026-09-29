@@ -60,3 +60,12 @@ fun addLabel(mode: AddMode, input: String): String = when {
     mode == AddMode.Link && linksIn(input).size > 1 -> "Import all"
     else -> "Add"
 }
+
+/**
+ * The link when what was shared is one link (alone, or with a few words on its line, as apps
+ * share a page): it opens its preview. Anything else, several links included, is not one.
+ */
+fun sharedLink(text: String): String? {
+    val links = linksIn(text)
+    return links.singleOrNull()?.takeIf { detect(text).mode == AddMode.Link }
+}

@@ -28,7 +28,11 @@ class CrumbNav(
     fun edit(id: Long) = nav.navigate(EditRoute(id))
     fun newRecipe(title: String? = null) = nav.navigate(NewRecipeRoute(title))
     fun cookbook(id: Long) = nav.navigate(BookRoute(id))
-    fun add(text: String? = null) = nav.navigate(AddRoute(text)) { launchSingleTop = true }
+    fun add(text: String? = null, textMode: Boolean = false) =
+        nav.navigate(AddRoute(text, textMode)) { launchSingleTop = true }
+
+    /** A recipe link read and shown before it's saved. */
+    fun preview(url: String) = nav.navigate(PreviewRoute(url))
     fun import(links: String? = null) = nav.navigate(ImportRoute(links))
     fun connect() = nav.navigate(ConnectRoute)
     fun account() = nav.navigate(AccountRoute)

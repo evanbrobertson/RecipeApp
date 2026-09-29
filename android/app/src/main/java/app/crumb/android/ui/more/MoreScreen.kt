@@ -20,6 +20,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,6 +68,7 @@ import app.crumb.android.data.ApiException
 import app.crumb.android.data.AuthStatus
 import app.crumb.android.data.accountRow
 import app.crumb.android.data.ConnectorInfo
+import app.crumb.android.data.PopularSetting
 import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.ShareKind
 import app.crumb.android.data.SharedLink
@@ -130,6 +135,8 @@ data class MoreUiState(
     val error: String? = null,
     val signedOut: Boolean = false,
     val stopping: Boolean = false,
+    /** Popular's setting; null when this server has no Popular (one household, password mode, `POPULAR=off`). */
+    val popular: PopularSetting? = null,
 )
 
 class MoreViewModel(private val api: CrumbApi, private val accounts: AccountApi) : ViewModel() {
@@ -148,13 +155,30 @@ class MoreViewModel(private val api: CrumbApi, private val accounts: AccountApi)
                 // The shares list is best-effort: a box that has never shared shows nothing
                 val shares = runCatching { api.shares() }.getOrDefault(emptyList())
                 val auth = runCatching { accounts.status() }.getOrNull()
-                _state.update { it.copy(connector = connector, shares = shares, auth = auth) }
+                val popular = runCatching { api.popularSetting() }.getOrNull()
+                _state.update { it.copy(connector = connector, shares = shares, auth = auth, popular = popular) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _state.update {
                     it.copy(error = e.friendlyMessage(), signedOut = (e as? ApiException)?.isSignedOut == true)
                 }
+            }
+        }
+    }
+
+    /** The Popular switch: on counts this household's saved links toward Popular (web `setPopular`). */
+    fun setPopular(share: Boolean) {
+        val before = _state.value.popular ?: return
+        _state.update { it.copy(popular = before.copy(optedOut = !share)) }
+        viewModelScope.launch {
+            try {
+                api.setPopularOptOut(!share)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(popular = before) }
+                Toaster.show("Couldn't change that", e.friendlyMessage(), ToastTone.Error)
             }
         }
     }
@@ -284,6 +308,19 @@ fun MoreScreen() {
             ),
         )
 
+        state.popular?.let { popular ->
+            Column {
+                GroupLabel("Popular")
+                ListCard(
+                    rows = listOf(
+                        {
+                            PopularSwitch(share = !popular.optedOut, onChange = { vm.setPopular(it) })
+                        },
+                    ),
+                )
+            }
+        }
+
         ThemeSection(
             mode = settings.mode,
             saved = saved,
@@ -321,6 +358,39 @@ fun MoreScreen() {
             style = CrumbText.meta,
             color = c.inkMuted,
         )
+    }
+}
+
+/** "Count our saved links": the web's settings row with an on/off switch (44×26 track, tile when on). */
+@Composable
+private fun PopularSwitch(share: Boolean, onChange: (Boolean) -> Unit) {
+    val c = Crumb.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = share, role = Role.Switch, onValueChange = onChange)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Count our saved links", style = CrumbText.rowTitle, color = c.ink)
+            Text(
+                "A link several households saved shows in Popular on the Add page. Only the link counts, never your copy of the recipe or who saved it.",
+                style = CrumbText.bodySmall,
+                color = c.inkMuted,
+            )
+        }
+        Box(Modifier.width(44.dp).height(26.dp).clip(CircleShape).background(if (share) c.tile else c.lineStrong)) {
+            Box(
+                Modifier
+                    .align(if (share) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(3.dp)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(c.paper),
+            )
+        }
     }
 }
 
