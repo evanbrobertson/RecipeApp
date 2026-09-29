@@ -10,6 +10,8 @@ in a clean UI. Also a remote MCP connector for Claude.
   Markdown, Try next, ingredient scaling, mise en place and prep groups, timers, text export, sun clock, check
   wording, shelf geometry, the Add box, Home's wording, editor drafts and one-tap fixes),
   `crumb-client` (typed Rust client for the API), `crumb-ffi` (UniFFI bindings to crumb-core for Kotlin and Swift).
+  `crumb-fetch` (the Firefox/Safari `wreq` profiles, shared by the server and the relay; plus the public-address guard the relay uses),
+  `crumb-relay` (a small service on other networks that fetches pages the server's IP was blocked on; `docs/RELAY.md`).
   Thin clients, fat server: the native apps call these instead of re-implementing logic
 - **Frontend:** Astro 7 static build + Svelte 5 islands, in `web/`
 - **Styling:** Tailwind CSS 4, "Green Tile" design language: semantic tokens and shared classes in
@@ -19,7 +21,9 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
-  HTML/microdata fallback, headless Chromium over CDP for sites that still block or need JavaScript
+  HTML/microdata fallback. If both profiles were blocked: the site's WordPress API (`src/scraper/fallbacks.rs`), then
+  `crumb-relay`s on other networks over Tailscale (`src/relay.rs`, `SCRAPE_RELAYS`), then the Internet Archive's copy.
+  Headless Chromium over CDP comes last, for sites that still block or need JavaScript
 - **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
@@ -56,6 +60,8 @@ crates/
   crumb-core/     # Pure logic shared by the server and every client; the server re-exports it (crumb::model, ...)
   crumb-client/   # Typed API client, tested against the real router
   crumb-ffi/      # UniFFI bindings (uniffi.toml: Kotlin package app.crumb.core, Swift module CrumbCore)
+  crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard; the server re-exports it in scraper.rs
+  crumb-relay/    # Relay binary (axum): POST /fetch behind a bearer token, rate limits; Dockerfile, systemd unit
 src/
   main.rs         # Boot: config, DB, browser, listen
   lib.rs          # AppState, router, layers
@@ -78,6 +84,7 @@ src/
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   video.rs        # Cooking videos: caption, else download + whisper transcript + frames for Wee Chef
   video_jobs.rs   # Their queue: worker pool, bounded wait, job status for the Add box, heavy-work budget
+  relay.rs        # Client for crumb-relay: rotation, 5-minute skip of a relay that's down, time budget
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test

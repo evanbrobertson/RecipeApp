@@ -1,20 +1,22 @@
 //! Recipe scraping: fetch the page, then JSON-LD first, then recipe-plugin markup and microdata.
 //!
-//! Pages are fetched with `wreq`, which sends a real browser's TLS and HTTP/2 fingerprint and
-//! headers. Many recipe sites (behind Cloudflare, Akamai, PerimeterX and the like) refuse a
-//! plain Rust client on its fingerprint alone, whatever its User-Agent says. The order is
-//! Firefox, then Safari when the site blocks it. When both were refused or challenged (not
-//! for a page that simply has no recipe), the ways round the block come next: the site's own
-//! WordPress API, then the Internet Archive's copy ([`fallbacks`]). Last is headless Chromium
-//! when installed, the dearest, which also takes pages that need JavaScript.
+//! Pages are fetched with `wreq` (see `crumb-fetch`), which sends a real browser's TLS and
+//! HTTP/2 fingerprint and headers. Many recipe sites (behind Cloudflare, Akamai, PerimeterX and
+//! the like) refuse a plain Rust client on its fingerprint alone, whatever its User-Agent says.
+//! The order is Firefox, then Safari when the site blocks it. When both were refused or
+//! challenged (not for a page that simply has no recipe), the ways round the block come next:
+//! the site's own WordPress API, a relay on another network (`crumb-relay`, see `crate::relay`),
+//! then the Internet Archive's copy ([`fallbacks`]). Last is headless Chromium when installed,
+//! the dearest, which also takes pages that need JavaScript.
 
-use http_body_util::BodyExt;
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{Map, Value};
 use std::future::Future;
-use std::sync::{LazyLock, OnceLock};
-use std::time::Duration;
+use std::sync::LazyLock;
+
+use crumb_fetch::Profile;
+pub use crumb_fetch::{MAX_PAGE_BYTES, ReadError, read_capped};
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
@@ -27,11 +29,6 @@ pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 
 const PASTE_HINT: &str = "Try copying the recipe text and pasting it instead.";
 
-const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Largest recipe page read; real ones are well under 2 MB.
-pub const MAX_PAGE_BYTES: usize = 10 * 1024 * 1024;
-
 /// How a page was fetched, in the order they're tried.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -39,6 +36,8 @@ pub enum Method {
     Safari,
     /// The site's own WordPress REST API, for a blog that blocks its pages.
     WordPress,
+    /// A `crumb-relay` on another network (see `crate::relay`).
+    Relay,
     /// The Internet Archive's copy of the page.
     Archive,
     Browser,
@@ -48,16 +47,27 @@ impl Method {
     /// The name in the log line for an import.
     pub fn label(self) -> &'static str {
         match self {
-            Method::Firefox => "wreq-firefox",
-            Method::Safari => "wreq-safari",
+            Method::Firefox => Profile::Firefox.label(),
+            Method::Safari => Profile::Safari.label(),
             Method::WordPress => "wordpress-api",
+            Method::Relay => "relay",
             Method::Archive => "wayback",
             Method::Browser => "browser",
         }
     }
+
+    /// The browser profile this method fetches with itself, if it does.
+    fn profile(self) -> Option<Profile> {
+        match self {
+            Method::Firefox => Some(Profile::Firefox),
+            Method::Safari => Some(Profile::Safari),
+            _ => None,
+        }
+    }
 }
 
-/// What one fetch attempt got back.
+/// What one step of a scrape got back: a fetch's answer (see [`crumb_fetch::Fetched`]), or a
+/// recipe read without a page.
 #[derive(Debug)]
 pub enum Fetched {
     /// A response. The body is only read for a 2xx.
@@ -68,86 +78,26 @@ pub enum Fetched {
     Recipe(Box<Scraped>),
 }
 
+impl From<crumb_fetch::Fetched> for Fetched {
+    fn from(fetched: crumb_fetch::Fetched) -> Self {
+        match fetched {
+            crumb_fetch::Fetched::Page { status, html } => Fetched::Page { status, html },
+            crumb_fetch::Fetched::Unreachable(why) => Fetched::Unreachable(why),
+        }
+    }
+}
+
 /// The shared browser-profile client for `method` (Firefox or Safari). Built on first use;
 /// `None` if it can't be built (logged once), and then that step is skipped.
 pub fn wreq_client(method: Method) -> Option<&'static wreq::Client> {
-    static FIREFOX: OnceLock<Option<wreq::Client>> = OnceLock::new();
-    static SAFARI: OnceLock<Option<wreq::Client>> = OnceLock::new();
-    let (cell, emulation) = match method {
-        Method::Firefox => (&FIREFOX, wreq_util::Emulation::Firefox151),
-        Method::Safari => (&SAFARI, wreq_util::Emulation::Safari26_4),
-        _ => return None,
-    };
-    cell.get_or_init(|| {
-        wreq::Client::builder()
-            .emulation(emulation)
-            .cookie_store(true)
-            // wreq doesn't follow redirects unless told to
-            .redirect(wreq::redirect::Policy::limited(10))
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(PAGE_TIMEOUT)
-            .pool_idle_timeout(Duration::from_secs(60))
-            .pool_max_idle_per_host(2)
-            .build()
-            .inspect_err(|e| {
-                tracing::error!(
-                    "[scraper] couldn't build the {} client: {e}",
-                    method.label()
-                )
-            })
-            .ok()
-    })
-    .as_ref()
-}
-
-/// Why a body read stopped.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ReadError {
-    TooLarge,
-    Failed(String),
-}
-
-/// Reads a wreq response body, giving up once it passes `cap` bytes.
-pub async fn read_capped(mut res: wreq::Response, cap: usize) -> Result<Vec<u8>, ReadError> {
-    if res.content_length().is_some_and(|n| n > cap as u64) {
-        return Err(ReadError::TooLarge);
-    }
-    let mut body = Vec::new();
-    while let Some(frame) = res.frame().await {
-        let frame = frame.map_err(|e| ReadError::Failed(e.to_string()))?;
-        if let Ok(chunk) = frame.into_data() {
-            if body.len() + chunk.len() > cap {
-                return Err(ReadError::TooLarge);
-            }
-            body.extend_from_slice(&chunk);
-        }
-    }
-    Ok(body)
+    crumb_fetch::client(method.profile()?)
 }
 
 /// Fetches a page with one of the wreq browser profiles. The profile sets every header.
 pub async fn fetch_wreq(method: Method, url: &str) -> Fetched {
-    let Some(client) = wreq_client(method) else {
-        return Fetched::Unreachable("client unavailable".into());
-    };
-    let res = match client.get(url).send().await {
-        Ok(res) => res,
-        Err(e) => return Fetched::Unreachable(e.to_string()),
-    };
-    let status = res.status().as_u16();
-    if !res.status().is_success() {
-        return Fetched::Page {
-            status,
-            html: String::new(),
-        };
-    }
-    match read_capped(res, MAX_PAGE_BYTES).await {
-        Ok(body) => Fetched::Page {
-            status,
-            html: String::from_utf8_lossy(&body).into_owned(),
-        },
-        Err(ReadError::TooLarge) => Fetched::Unreachable("page too large".into()),
-        Err(ReadError::Failed(e)) => Fetched::Unreachable(e),
+    match method.profile() {
+        Some(profile) => crumb_fetch::fetch(profile, url).await.into(),
+        None => Fetched::Unreachable("client unavailable".into()),
     }
 }
 
@@ -280,16 +230,19 @@ pub struct Steps {
     pub wordpress: bool,
     /// The Internet Archive's copy; `SCRAPE_ARCHIVE=off` turns it off.
     pub archive: bool,
+    /// The relays: only if some are set up (`SCRAPE_RELAYS`).
+    pub relay: bool,
 }
 
 impl Steps {
     /// Every step on, less the ones the environment switches off; the browser is on only
     /// if it can run (`browser`).
-    pub fn from_env(browser: bool) -> Self {
+    pub fn from_env(browser: bool, relay: bool) -> Self {
         Self {
             browser,
             wordpress: !crate::config::switched_off("SCRAPE_WORDPRESS"),
             archive: !crate::config::switched_off("SCRAPE_ARCHIVE"),
+            relay,
         }
     }
 
@@ -297,6 +250,7 @@ impl Steps {
         match method {
             Method::Firefox | Method::Safari => true,
             Method::WordPress => self.wordpress,
+            Method::Relay => self.relay,
             Method::Archive => self.archive,
             Method::Browser => self.browser,
         }
@@ -305,7 +259,7 @@ impl Steps {
 
 /// The ways round a block, in order: tried when Firefox and Safari were both refused, and
 /// before the browser. A new one goes in here.
-const BLOCKED_STEPS: [Method; 2] = [Method::WordPress, Method::Archive];
+const BLOCKED_STEPS: [Method; 3] = [Method::WordPress, Method::Relay, Method::Archive];
 
 /// The fetch order, with the fetchers passed in (so it's testable without a network):
 /// Firefox; Safari if Firefox was blocked; if Safari was blocked too, the [`BLOCKED_STEPS`];
@@ -361,6 +315,20 @@ where
     Err(format!("{problem} {PASTE_HINT}"))
 }
 
+/// The page the first relay that can gives, or "unreachable" (also with no relay set up).
+async fn fetch_relay(relays: &crate::relay::Relays, url: &str) -> Fetched {
+    let got = relays
+        .fetch(url, |fetched| match fetched {
+            crumb_fetch::Fetched::Page { html, .. } => Scraped::from_page(html, url).is_some(),
+            crumb_fetch::Fetched::Unreachable(_) => false,
+        })
+        .await;
+    got.map_or_else(
+        || Fetched::Unreachable("no relay gave the page".into()),
+        Into::into,
+    )
+}
+
 /// Scrapes a recipe page (see [`scrape_with`] for the order it tries).
 pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeFields> {
     let recipe = scrape_page(state, url).await?.recipe;
@@ -379,20 +347,26 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
     }
 
     let browser = state.browser.clone();
-    let result = scrape_with(url, Steps::from_env(browser.available()), |method| {
-        let browser = browser.clone();
-        async move {
-            match method {
-                Method::Browser => match browser.fetch(url).await {
-                    Ok(html) => Fetched::Page { status: 200, html },
-                    Err(err) => Fetched::Unreachable(err),
-                },
-                Method::WordPress => fallbacks::fetch_wordpress(url).await,
-                Method::Archive => fallbacks::fetch_archive(url).await,
-                wreq => fetch_wreq(wreq, url).await,
+    let result = scrape_with(
+        url,
+        Steps::from_env(browser.available(), !state.relays.is_empty()),
+        |method| {
+            let browser = browser.clone();
+            let relays = state.relays.clone();
+            async move {
+                match method {
+                    Method::Browser => match browser.fetch(url).await {
+                        Ok(html) => Fetched::Page { status: 200, html },
+                        Err(err) => Fetched::Unreachable(err),
+                    },
+                    Method::WordPress => fallbacks::fetch_wordpress(url).await,
+                    Method::Relay => fetch_relay(&relays, url).await,
+                    Method::Archive => fallbacks::fetch_archive(url).await,
+                    wreq => fetch_wreq(wreq, url).await,
+                }
             }
-        }
-    })
+        },
+    )
     .await;
 
     let host = crate::telemetry::host_of(url);
@@ -1251,7 +1225,8 @@ mod tests {
         assert!(!is_challenge_page(GRAPH));
     }
 
-    /// [`scripted_steps`] with the ways round a block off (just Firefox, Safari and the browser).
+    /// [`scripted_steps`] with the WordPress and archive steps off (just Firefox, Safari, a
+    /// relay and the browser).
     fn scripted(
         browser: bool,
         responses: Vec<(Method, Fetched)>,
@@ -1260,6 +1235,7 @@ mod tests {
             browser,
             wordpress: false,
             archive: false,
+            relay: true,
         };
         scripted_steps(steps, responses)
     }
@@ -1275,11 +1251,11 @@ mod tests {
             .unwrap()
             .block_on(scrape_with("https://food.test/r", steps, |method| {
                 asked.borrow_mut().push(method);
-                let at = responses
-                    .iter()
-                    .position(|(m, _)| *m == method)
-                    .unwrap_or_else(|| panic!("unexpected fetch with {method:?}"));
-                let fetched = responses.remove(at).1;
+                let fetched = match responses.iter().position(|(m, _)| *m == method) {
+                    Some(at) => responses.remove(at).1,
+                    None if method == Method::Relay => Fetched::Unreachable("no relays".into()),
+                    None => panic!("unexpected fetch with {method:?}"),
+                };
                 async move { fetched }
             }));
         (result, asked.into_inner())
@@ -1354,7 +1330,12 @@ mod tests {
         assert_eq!(result.unwrap().0, Method::Browser);
         assert_eq!(
             asked,
-            vec![Method::Firefox, Method::Safari, Method::Browser]
+            vec![
+                Method::Firefox,
+                Method::Safari,
+                Method::Relay,
+                Method::Browser
+            ]
         );
 
         // A page without a recipe (rendered by scripts) goes straight to the browser
@@ -1381,7 +1362,7 @@ mod tests {
             "{message}"
         );
         assert!(message.ends_with(PASTE_HINT));
-        assert_eq!(asked, vec![Method::Firefox, Method::Safari]);
+        assert_eq!(asked, vec![Method::Firefox, Method::Safari, Method::Relay]);
 
         let (result, _) = scripted(
             true,
@@ -1406,6 +1387,7 @@ mod tests {
             browser: true,
             wordpress: true,
             archive: true,
+            relay: true,
         }
     }
 
@@ -1458,6 +1440,7 @@ mod tests {
                     Method::Firefox,
                     Method::Safari,
                     Method::WordPress,
+                    Method::Relay,
                     Method::Archive
                 ]
             );
@@ -1478,6 +1461,7 @@ mod tests {
                 Method::Firefox,
                 Method::Safari,
                 Method::WordPress,
+                Method::Relay,
                 Method::Archive,
                 Method::Browser
             ]
@@ -1523,8 +1507,10 @@ mod tests {
     fn switched_off_steps_are_skipped() {
         let mut script = refused();
         script.push((Method::Archive, ok(GRAPH)));
+        // No relays set up counts as off
         let steps = Steps {
             wordpress: false,
+            relay: false,
             ..all_steps()
         };
         let (result, asked) = scripted_steps(steps, script);
@@ -1549,9 +1535,99 @@ mod tests {
                 Method::Firefox,
                 Method::Safari,
                 Method::WordPress,
+                Method::Relay,
                 Method::Browser
             ]
         );
+    }
+
+    #[test]
+    fn relay_after_both_profiles_were_blocked() {
+        let (result, asked) = scripted(
+            true,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, ok(CHALLENGE)),
+                (Method::Relay, ok(GRAPH)),
+            ],
+        );
+        assert_eq!(result.unwrap().0, Method::Relay);
+        assert_eq!(asked, vec![Method::Firefox, Method::Safari, Method::Relay]);
+    }
+
+    #[test]
+    fn browser_after_a_relay_that_failed() {
+        for relayed in [
+            Fetched::Unreachable("down".into()),
+            status(403),
+            ok(CHALLENGE),
+            ok("<p>no recipe</p>"),
+        ] {
+            let (result, asked) = scripted(
+                true,
+                vec![
+                    (Method::Firefox, status(403)),
+                    (Method::Safari, status(403)),
+                    (Method::Relay, relayed),
+                    (Method::Browser, ok(GRAPH)),
+                ],
+            );
+            assert_eq!(result.unwrap().0, Method::Browser);
+            assert_eq!(
+                asked,
+                vec![
+                    Method::Firefox,
+                    Method::Safari,
+                    Method::Relay,
+                    Method::Browser
+                ]
+            );
+        }
+
+        // A relay that gave nothing leaves the site's own answer as the reason
+        let (result, _) = scripted(
+            false,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, status(403)),
+                (Method::Relay, ok("<p>no recipe</p>")),
+            ],
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with("The site responded with 403.")
+        );
+    }
+
+    #[test]
+    fn no_relay_unless_both_profiles_were_blocked() {
+        // Firefox got a recipe, or Safari did, or a failure that isn't a block
+        let (_, asked) = scripted(true, vec![(Method::Firefox, ok(GRAPH))]);
+        assert!(!asked.contains(&Method::Relay));
+        let (_, asked) = scripted(
+            true,
+            vec![(Method::Firefox, status(403)), (Method::Safari, ok(GRAPH))],
+        );
+        assert!(!asked.contains(&Method::Relay));
+        for failed in [
+            status(404),
+            status(500),
+            Fetched::Unreachable("dns".into()),
+            ok("<p>no recipe</p>"),
+        ] {
+            let (_, asked) = scripted(false, vec![(Method::Firefox, failed)]);
+            assert_eq!(asked, vec![Method::Firefox]);
+        }
+        // Firefox blocked, then Safari failed some other way
+        let (_, asked) = scripted(
+            false,
+            vec![
+                (Method::Firefox, status(403)),
+                (Method::Safari, status(404)),
+            ],
+        );
+        assert_eq!(asked, vec![Method::Firefox, Method::Safari]);
     }
 
     #[test]

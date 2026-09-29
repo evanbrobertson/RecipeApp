@@ -10,7 +10,7 @@ async fn main() {
     for url in std::env::args().skip(1) {
         let started = Instant::now();
         let tried = std::cell::RefCell::new(Vec::new());
-        let steps = Steps::from_env(browser.available());
+        let steps = Steps::from_env(browser.available(), false);
         let result = scrape_with(&url, steps, |method| {
             let browser = browser.clone();
             let url = url.clone();

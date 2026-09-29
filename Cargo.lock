@@ -703,6 +703,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "crumb-core",
+ "crumb-fetch",
  "flate2",
  "futures-util",
  "hmac",
@@ -732,7 +733,6 @@ dependencies = [
  "url",
  "webp",
  "wreq",
- "wreq-util",
  "zip",
 ]
 
@@ -766,6 +766,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crumb-fetch"
+version = "0.1.0"
+dependencies = [
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "wreq",
+ "wreq-util",
+]
+
+[[package]]
 name = "crumb-ffi"
 version = "0.1.0"
 dependencies = [
@@ -773,6 +787,23 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uniffi",
+]
+
+[[package]]
+name = "crumb-relay"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "crumb-fetch",
+ "http-body-util",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

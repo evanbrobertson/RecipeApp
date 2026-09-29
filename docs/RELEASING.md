@@ -29,7 +29,10 @@ Promote ──► retag sha-abc1234 as :stable and :3.1.0, tag v3.1.0 + GitHub R
 | `.github/workflows/pr.yml` | pull request to `master` | The checks, plus a Docker build (no push) only when `Dockerfile`, `.dockerignore`, `Cargo.toml`/`Cargo.lock`, `web/package.json`/`web/bun.lock` or `web/astro.config.mjs` change. A release build of the server (fat LTO, one codegen unit) takes several minutes, and code-only changes are already covered by the checks and by the master build, so most PRs skip it |
 | `.github/workflows/main.yml` | push to `master` (not docs-only) | Checks and image build in parallel; after both pass, `:main` moves to the new image, Sentry gets the release and a `dev` deploy, and Railway dev redeploys |
 | `.github/workflows/extension.yml` | push to `master` changing `extension/` | Releases the browser extension: see [Browser extension](#browser-extension) |
+| `.github/workflows/relay.yml` | push to `master` changing `crates/crumb-relay/`, `crates/crumb-fetch/` or the workflow; a `relay-v*` tag; manual | Releases the relay: see [Relay](#relay) |
 | `.github/workflows/promote.yml` | manual (Actions → Promote → Run workflow) | Input `channel` (`stable` or `beta`) and optional `sha` (default: latest `master`). A commit without an image (a docs-only push) falls back to its newest ancestor with one, and the commit's checks must have passed. Retags, tags, releases, deploys |
+
+`pr.yml` also builds the relay for ARM64 and builds its image (no push), each only when `crates/crumb-relay/`, `crates/crumb-fetch/`, `Cargo.toml`/`Cargo.lock` or the relay workflows change (the ARM build also when `scripts/relay/` does). The relay crates are workspace members, so fmt, clippy and the tests for them already run in the shared checks on every PR and master push.
 
 Master builds queue rather than cancel (concurrency group `main`); promotions run one at a time. Third-party actions are pinned to commit SHAs, and each job gets only the permissions it needs.
 
@@ -186,3 +189,16 @@ Main ignores pushes that change only `extension/`: nothing in the image changed.
 | `AMO_JWT_ISSUER`, `AMO_JWT_SECRET` | repository secrets | addons.mozilla.org API keys (Developer Hub → Manage API keys). Versions go to the listed channel with `extension/amo-metadata.json`; the add-on id is `crumb@evanbrobertson.github.io` |
 
 To release again by hand (a store upload that failed, say), run **Actions → Extension → Run workflow** on `master`. An existing GitHub Release is left as it is.
+
+## Relay
+
+The relay (`crates/crumb-relay/`, see [RELAY.md](RELAY.md)) is released like the extension, with its own versions: tags `relay-vX.Y.Z`, worked out by `scripts/release/version.sh` with `VERSION_TAG_PREFIX=relay-v VERSION_PATHS="crates/crumb-relay crates/crumb-fetch"`, so only commits that touch those two crates count (`feat:` a minor, and so on; `crumb-fetch` is included because the relay is built from it). The first release is the version in `crates/crumb-relay/Cargo.toml` (0.1.0); as with the extension, CI never commits a bump. Instead each build sets the release's version in `Cargo.toml` and the crate's `Cargo.lock` entry before compiling, so `/health` and the archive names report it. The app's `v*` tags and the relay's never see each other.
+
+A push to `master` that changes `crates/crumb-relay/`, `crates/crumb-fetch/`, `scripts/relay/` or `relay.yml` runs `relay.yml`:
+
+1. Works out the version; a push that changes nothing in the two crates since the last tag (only the workflow, say) releases nothing and builds nothing.
+2. Builds Linux binaries for x86-64, ARM64 and ARMv7 on Ubuntu 22.04 (`scripts/relay/cross-build.sh`, shared with the PR check).
+3. Tags `relay-vX.Y.Z` on that commit and makes a GitHub Release with the archives, their `.sha256` files and notes from the commits.
+4. Pushes the multi-arch image `ghcr.io/evanbrobertson/recipeapp-relay` as `:X.Y.Z` and `:latest`. As with `recipeapp`, check that the package is public.
+
+Pushing a `relay-vX.Y.Z` tag by hand releases exactly that version instead, and **Actions -> Relay -> Run workflow** only builds and keeps the binaries as a workflow artifact. An existing GitHub Release is left as it is. Main ignores pushes that change only `crates/crumb-relay/` (nothing in the server image changed); `crates/crumb-fetch/` still builds the server, which depends on it.
