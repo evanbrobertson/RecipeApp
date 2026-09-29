@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.crumb.core.InviteLink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,7 +30,7 @@ private val Context.sessionData: DataStore<Preferences> by preferencesDataStore(
  * The server address and session cookie. The password is never stored; the cookie is
  * encrypted with a key that lives in the Android Keystore and never leaves the device.
  */
-class SessionStore(private val context: Context) {
+class SessionStore(private val context: Context) : PendingStore {
     private val state = MutableStateFlow<Session?>(null)
     private val loaded = MutableStateFlow(false)
 
@@ -51,7 +52,7 @@ class SessionStore(private val context: Context) {
         loaded.value = true
     }
 
-    suspend fun signIn(server: HttpUrl, cookie: String?) {
+    override suspend fun signIn(server: HttpUrl, cookie: String?) {
         context.sessionData.edit {
             it[SERVER] = server.toString()
             it[COOKIE] = encrypt(cookie.orEmpty())
@@ -64,6 +65,28 @@ class SessionStore(private val context: Context) {
         context.sessionData.edit { it.remove(COOKIE) }
         state.value = null
     }
+
+    // What waits while the browser is up or a signed-out person signs in to join: encrypted like
+    // the cookie, since the verifier and an invite's token are secrets, and kept apart from the
+    // session so signing out (or in) leaves them alone.
+
+    override suspend fun savePendingSignIn(pending: PendingSignIn?) = keep(PENDING_SIGN_IN, pending?.encode())
+
+    override suspend fun loadPendingSignIn(): PendingSignIn? = recall(PENDING_SIGN_IN)?.let(PendingSignIn::decode)
+
+    override suspend fun savePendingInvite(invite: InviteLink?) = keep(PENDING_INVITE, invite?.let { "${it.server}\n${it.token}" })
+
+    override suspend fun loadPendingInvite(): InviteLink? {
+        val (server, token) = recall(PENDING_INVITE)?.split('\n', limit = 2)?.takeIf { it.size == 2 } ?: return null
+        return InviteLink(server, token)
+    }
+
+    private suspend fun keep(key: Preferences.Key<String>, value: String?) {
+        context.sessionData.edit { if (value == null) it.remove(key) else it[key] = encrypt(value) }
+    }
+
+    private suspend fun recall(key: Preferences.Key<String>): String? =
+        context.sessionData.data.first()[key]?.let { runCatching { decrypt(it) }.getOrNull() }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance(KEYSTORE).apply { load(null) }
@@ -95,6 +118,8 @@ class SessionStore(private val context: Context) {
     private companion object {
         val SERVER = stringPreferencesKey("server")
         val COOKIE = stringPreferencesKey("cookie")
+        val PENDING_SIGN_IN = stringPreferencesKey("pendingSignIn")
+        val PENDING_INVITE = stringPreferencesKey("pendingInvite")
         const val KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "crumb-session"
         const val TRANSFORM = "AES/GCM/NoPadding"

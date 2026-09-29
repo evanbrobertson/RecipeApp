@@ -62,13 +62,17 @@ data class AuthStatus(
 /** Which form the sign-in screen shows. */
 enum class SignInForm { Password, SignIn, SignUp, SetUp, Forgot }
 
-/** The forms a server in [status]'s mode offers to someone signed out; the first is the default. */
-fun signInForms(status: AuthStatus): List<SignInForm> = when {
+/**
+ * The forms a server in [status]'s mode offers to someone signed out; the first is the default.
+ * With an invite [invited], its own accounts also take a sign-up while sign-up is closed: an
+ * invite makes an account in its household regardless.
+ */
+fun signInForms(status: AuthStatus, invited: Boolean = false): List<SignInForm> = when {
     !status.hasAccounts -> listOf(SignInForm.Password)
     status.setupNeeded -> listOf(SignInForm.SetUp)
     else -> buildList {
         add(SignInForm.SignIn)
-        if (status.signupOpen) add(SignInForm.SignUp)
+        if (status.signupOpen || (invited && status.authMode == AuthMode.Accounts)) add(SignInForm.SignUp)
         // Only Better Auth can email a reset link
         if (status.authMode == AuthMode.Hosted) add(SignInForm.Forgot)
     }

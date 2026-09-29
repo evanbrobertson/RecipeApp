@@ -35,6 +35,15 @@
             <!-- Share → Crumb: a link or text from a browser or notes app, photos of a recipe
                  (up to six pages), or a file the importer reads (PDF, web page, text, JSON
                  backups and Mealie, Paprika, .zip) -->
+            <!-- The browser handing back a Google or Apple sign-in (app.crumb://signed-in?code=…)
+                 and the invite page's "Open in the app" (app.crumb://invite?server=…&token=…) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="app.crumb" android:host="signed-in" />
+                <data android:scheme="app.crumb" android:host="invite" />
+            </intent-filter>
             <intent-filter android:label="Save to Crumb">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

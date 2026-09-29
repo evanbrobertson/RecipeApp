@@ -3,6 +3,7 @@ package app.crumb.android
 import android.app.Application
 import android.os.Build
 import app.crumb.android.data.AccountApi
+import app.crumb.android.data.AppLinks
 import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.appUserAgent
 import app.crumb.android.data.Importer
@@ -52,6 +53,9 @@ class AppContainer(app: Application, val scope: CoroutineScope) {
 
     val api = CrumbApi(http) { session.current }
     val accounts = AccountApi(api)
+
+    /** Google and Apple sign-in through the browser, and invites waiting to be joined. */
+    val links = AppLinks(session, accounts, scope)
     val recipes = RecipeRepository(api, cache)
     val videoJobs = VideoJobs(api, LocalPendingJobs(app), scope)
     val importer = Importer(api, PhotoImport(app, api), app.contentResolver, videoJobs)
@@ -95,6 +99,7 @@ class CrumbApplication : Application(), SingletonImageLoader.Factory {
         KitchenTimers.createChannels(this)
         scope.launch {
             container.session.load()
+            container.links.load()
             container.cache.useServer(container.session.current?.server?.toString())
             container.session.session.collect { container.cache.useServer(it?.server?.toString()) }
         }

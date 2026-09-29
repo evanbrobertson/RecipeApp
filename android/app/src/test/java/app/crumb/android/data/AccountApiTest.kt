@@ -1,6 +1,8 @@
 package app.crumb.android.data
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
@@ -180,5 +182,136 @@ class AccountApiTest {
         server.enqueue(json("""{"id":"inv1"}"""))
         val link = api.invite(AuthMode.Hosted, "al@x.io")
         assertEquals("http://${server.hostName}:${server.port}/crumb/invite#inv1", link)
+    }
+
+    @Test
+    fun startingABrowserSignInSendsAPkceChallengeAndKeepsTheVerifier() = runTest {
+        server.enqueue(json("""{"url":"http://localhost:3200/app/sign-in?id=abc"}"""))
+        val started = api.startAppSignIn(server.url("/"), Provider.Google)
+        assertEquals("http://localhost:3200/app/sign-in?id=abc", started.url)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/auth/app/start", request.url.encodedPath)
+        assertNull(request.headers["Cookie"])
+        val body = CrumbJson.parseToJsonElement(request.body!!.utf8()).jsonObject
+        assertEquals("google", body["provider"]!!.jsonPrimitive.content)
+        // The server gets the challenge; only the app keeps the verifier that makes it
+        assertEquals(43, started.verifier.length)
+        assertEquals(app.crumb.core.appSignIn().challenge.length, body["challenge"]!!.jsonPrimitive.content.length)
+        assertFalse(request.body!!.utf8().contains(started.verifier))
+    }
+
+    @Test
+    fun aProviderTheServerDoesntOfferIsA404() = runTest {
+        server.enqueue(json("""{"statusCode":404,"message":"That sign-in isn't set up here"}""", 404))
+        try {
+            api.startAppSignIn(server.url("/"), Provider.Apple)
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(404, e.status)
+            assertEquals("That sign-in isn't set up here", e.message)
+        }
+    }
+
+    @Test
+    fun finishingABrowserSignInTradesTheCodeAndVerifierForTheSessionCookie() = runTest {
+        server.enqueue(withCookie("""{"ok":true}""", "crumb_session=9.sig; Path=/; HttpOnly"))
+        assertEquals("9.sig", api.finishAppSignIn(server.url("/"), "code_1", "verifier_1"))
+        val request = server.takeRequest()
+        assertEquals("/api/auth/app/redeem", request.url.encodedPath)
+        assertEquals("""{"code":"code_1","verifier":"verifier_1"}""", request.body!!.utf8())
+        assertNull(request.headers["Cookie"])
+
+        // Hosted sign-ins come back as Better Auth's cookie, kept the same way as its password one
+        server.enqueue(withCookie("""{"ok":true}""", "crumb.session_token=t.s; Path=/"))
+        assertEquals("crumb.session_token=t.s", api.finishAppSignIn(server.url("/"), "c", "v"))
+    }
+
+    @Test
+    fun anExpiredOrUsedCodeIsA410() = runTest {
+        server.enqueue(json("""{"statusCode":410,"message":"That sign-in has expired. Try again."}""", 410))
+        try {
+            api.finishAppSignIn(server.url("/"), "c", "v")
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(410, e.status)
+            assertEquals(InviteText.SIGN_IN_EXPIRED, InviteText.redeemFailure(e))
+        }
+    }
+
+    @Test
+    fun anAccountsInvitePreviewNeedsNoSession() = runTest {
+        session = Session(server.url("/"), "1.a")
+        server.enqueue(json("""{"householdName":"The Robertsons","invitedBy":"Evan"}"""))
+        val preview = api.previewInvite(AuthMode.Accounts, "tok_1")
+        assertEquals("Evan invited you to The Robertsons", preview.headline)
+        val request = server.takeRequest()
+        assertEquals("/api/auth/invite/preview", request.url.encodedPath)
+        assertEquals("""{"token":"tok_1"}""", request.body!!.utf8())
+    }
+
+    @Test
+    fun aHostedInvitePreviewReadsBetterAuthsInvitation() = runTest {
+        session = Session(server.url("/"), "crumb.session_token=t.s")
+        server.enqueue(json("""{"organizationName":"Home","inviterEmail":"al@x.io","email":"me@x.io"}"""))
+        val preview = api.previewInvite(AuthMode.Hosted, "inv1")
+        assertEquals("Home", preview.household)
+        assertEquals("me@x.io", preview.email)
+        val request = server.takeRequest()
+        assertEquals("/api/auth/organization/get-invitation", request.url.encodedPath)
+        assertEquals("inv1", request.url.queryParameter("id"))
+    }
+
+    @Test
+    fun anInviteThatIsGoneIsA410WithTheServersWords() = runTest {
+        session = Session(server.url("/"), "1.a")
+        server.enqueue(json("""{"statusCode":410,"message":"This invite has expired or was already used. Ask for a new one."}""", 410))
+        try {
+            api.previewInvite(AuthMode.Accounts, "old")
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(410, e.status)
+            assertEquals(InviteText.GONE, e.message)
+        }
+        // Hosted answers a missing invitation with anything from a 400 to a 404
+        session = Session(server.url("/"), "crumb.session_token=t.s")
+        server.enqueue(json("""{"message":"Invitation not found"}""", 400))
+        try {
+            api.previewInvite(AuthMode.Hosted, "old")
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(InviteText.GONE, e.message)
+        }
+    }
+
+    @Test
+    fun joiningSignedInPostsTheTokenAndHostedSwitchesToTheNewHousehold() = runTest {
+        session = Session(server.url("/"), "1.a")
+        server.enqueue(json("""{"ok":true}"""))
+        api.acceptInvite(AuthMode.Accounts, "tok_1")
+        val accounts = server.takeRequest()
+        assertEquals("/api/auth/invite/accept", accounts.url.encodedPath)
+        assertEquals("""{"token":"tok_1"}""", accounts.body!!.utf8())
+        assertEquals("crumb_session=1.a", accounts.headers["Cookie"])
+
+        session = Session(server.url("/"), "crumb.session_token=t.s")
+        server.enqueue(json("""{"member":{"organizationId":"org_9"}}"""))
+        server.enqueue(json("""{"ok":true}"""))
+        api.acceptInvite(AuthMode.Hosted, "inv1")
+        assertEquals("/api/auth/organization/accept-invitation", server.takeRequest().url.encodedPath)
+        val switch = server.takeRequest()
+        assertEquals("/api/auth/organization/set-active", switch.url.encodedPath)
+        assertTrue(switch.body!!.utf8().contains("org_9"))
+    }
+
+    @Test
+    fun anAccountsInviteCanMakeTheAccountAsItJoins() = runTest {
+        server.enqueue(withCookie("""{"ok":true}""", "crumb_session=4.z"))
+        val cookie = api.acceptInviteWithAccount(server.url("/"), "tok_1", " Sam ", "sam@example.com", "hunter22")
+        assertEquals("4.z", cookie)
+        val request = server.takeRequest()
+        assertEquals("/api/auth/invite/accept", request.url.encodedPath)
+        assertEquals("""{"token":"tok_1","name":"Sam","email":"sam@example.com","password":"hunter22"}""", request.body!!.utf8())
+        assertNull(request.headers["Cookie"])
     }
 }

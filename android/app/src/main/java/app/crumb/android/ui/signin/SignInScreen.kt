@@ -1,6 +1,9 @@
 package app.crumb.android.ui.signin
 
+import android.content.ActivityNotFoundException
+import android.net.Uri
 import android.security.NetworkSecurityPolicy
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -48,6 +52,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.crumb.android.R
 import app.crumb.android.data.AccountApi
+import app.crumb.android.data.AppLinks
+import app.crumb.android.data.InviteText
+import app.crumb.android.data.Provider
+import app.crumb.android.data.label
+import app.crumb.android.data.sameServer
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import app.crumb.android.data.AccountForms
 import app.crumb.android.data.ApiException
 import app.crumb.android.data.AuthMode
@@ -61,14 +71,20 @@ import app.crumb.android.ui.components.CardShape
 import app.crumb.android.ui.components.Btn
 import app.crumb.android.ui.components.BtnSize
 import app.crumb.android.ui.components.BtnStyle
+import app.crumb.android.ui.components.ControlShape
+import app.crumb.android.ui.components.CrumbInput
 import app.crumb.android.ui.components.CrumbText
+import app.crumb.android.ui.components.ToastTone
+import app.crumb.android.ui.components.Toaster
 import app.crumb.android.ui.components.PaperCard
 import app.crumb.android.ui.components.PrimaryButton
 import app.crumb.android.ui.crumbViewModel
 import app.crumb.android.ui.theme.Caveat
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.LightColors
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -87,17 +103,29 @@ data class SignInState(
     val form: SignInForm? = null,
     val checkEmail: String? = null,
     val resetSentTo: String? = null,
-) {
-    val forms: List<SignInForm> get() = status?.let(::signInForms).orEmpty()
-}
+    /** The provider whose browser sign-in is being started. */
+    val going: Provider? = null,
+)
 
 class SignInViewModel(
     private val api: CrumbApi,
     private val accounts: AccountApi,
     private val session: SessionStore,
+    private val links: AppLinks,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SignInState())
     val state = _state.asStateFlow()
+
+    /** The invite waiting for a sign-in, if any. */
+    val invite = links.invite
+
+    /** What went wrong coming back from the browser (an expired sign-in). */
+    val notice = links.notice
+
+    private val _browser = Channel<String>(Channel.BUFFERED)
+
+    /** Addresses to open in a Custom Tab. */
+    val browser = _browser.receiveAsFlow()
 
     val lastServer: String = session.lastServer?.trimEnd('/')?.removePrefix("https://").orEmpty()
 
@@ -105,6 +133,7 @@ class SignInViewModel(
 
     /** Checks the address and asks the server how it signs people in. */
     fun connect(serverInput: String) {
+        links.clearNotice()
         val server = CrumbApi.serverUrl(serverInput)
         if (server == null) {
             _state.value = SignInState(error = "That doesn't look like a web address.")
@@ -119,7 +148,7 @@ class SignInViewModel(
             _state.value = try {
                 api.health(server)
                 val status = accounts.status(server)
-                SignInState(server = server, status = status, form = signInForms(status).first())
+                SignInState(server = server, status = status, form = signInForms(status, invite.value != null).first())
             } catch (e: ApiException) {
                 SignInState(error = e.message)
             } catch (e: OfflineException) {
@@ -128,11 +157,17 @@ class SignInViewModel(
         }
     }
 
+    fun ignoreInvite() = links.dismissInvite()
+
+    /** A pasted invite link; false when it isn't one. */
+    fun pasteInvite(text: String): Boolean = links.offer(text)
+
     fun changeServer() {
         _state.value = SignInState()
     }
 
     fun show(form: SignInForm) {
+        links.clearNotice()
         _state.update { it.copy(form = form, error = null, checkEmail = null, resetSentTo = null) }
     }
 
@@ -145,8 +180,36 @@ class SignInViewModel(
         accounts.signIn(server, mode, email, password)
     }
 
+    /** Continue with Google or Apple: the server starts it, and the browser finishes it. */
+    fun continueWith(provider: Provider) {
+        val server = _state.value.server ?: return
+        if (_state.value.going != null) return
+        links.clearNotice()
+        _state.update { it.copy(going = provider, error = null) }
+        viewModelScope.launch {
+            try {
+                _browser.send(links.beginSignIn(server, provider))
+            } catch (e: ApiException) {
+                _state.update { it.copy(error = e.message) }
+            } catch (e: OfflineException) {
+                _state.update { it.copy(error = InviteText.OFFLINE) }
+            } finally {
+                // The browser is up (or it failed): the form is there to come back to
+                _state.update { it.copy(going = null) }
+            }
+        }
+    }
+
     fun signUp(name: String, email: String, password: String) =
         perform("Couldn't make the account.", AccountForms.signUp(name, email, password), onDone = { server ->
+            val waiting = invite.value
+            // Its own accounts join the invite's household as they sign up, even with sign-up closed
+            if (mode == AuthMode.Accounts && waiting != null && waiting.server.toHttpUrlOrNull()?.let { sameServer(it, server) } == true) {
+                val cookie = accounts.acceptInviteWithAccount(server, waiting.token, name, email, password)
+                links.dismissInvite()
+                session.signIn(server, cookie)
+                return@perform true
+            }
             val made = accounts.signUp(server, mode, name, email, password)
             if (made.verify) {
                 _state.update { it.copy(busy = false, checkEmail = email.trim()) }
@@ -217,10 +280,31 @@ class SignInViewModel(
 
 @Composable
 fun SignInScreen() {
-    val vm = crumbViewModel { SignInViewModel(it.api, it.accounts, it.session) }
+    val vm = crumbViewModel { SignInViewModel(it.api, it.accounts, it.session, it.links) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val invite by vm.invite.collectAsStateWithLifecycle()
+    val notice by vm.notice.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var address by rememberSaveable { mutableStateOf(vm.lastServer) }
     val colors = Crumb.colors
+
+    // An invite waiting for a sign-in: go to its server, so the form is the one that joins it
+    LaunchedEffect(invite) {
+        val server = invite?.server?.let(CrumbApi::serverUrl) ?: return@LaunchedEffect
+        if (vm.state.value.server?.let { sameServer(it, server) } == true) return@LaunchedEffect
+        address = server.label()
+        vm.connect(server.toString())
+    }
+    // Google and Apple finish in the browser, which hands back to this app
+    LaunchedEffect(Unit) {
+        vm.browser.collect { url ->
+            try {
+                CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
+            } catch (e: ActivityNotFoundException) {
+                Toaster.show("Couldn't open a browser", "Install one to sign in with Google or Apple.", ToastTone.Error)
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
         Column(
@@ -237,8 +321,9 @@ fun SignInScreen() {
             Text("Crumb", style = MaterialTheme.typography.displaySmall)
             PaperCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (invite != null) InviteWaiting(onIgnore = vm::ignoreInvite)
                     if (state.status == null) {
-                        AddressStep(address, { address = it }, state, onContinue = { vm.connect(address) })
+                        AddressStep(address, { address = it }, state, notice, onContinue = { vm.connect(address) })
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -250,8 +335,9 @@ fun SignInScreen() {
                             )
                             Btn("Change", vm::changeServer, style = BtnStyle.Ghost, size = BtnSize.Sm)
                         }
-                        FormStep(vm, state)
+                        FormStep(vm, state, invited = invite != null, notice = notice)
                     }
+                    PasteInvite(vm::pasteInvite)
                 }
             }
             Text(
@@ -264,7 +350,7 @@ fun SignInScreen() {
 }
 
 @Composable
-private fun AddressStep(address: String, onChange: (String) -> Unit, state: SignInState, onContinue: () -> Unit) {
+private fun AddressStep(address: String, onChange: (String) -> Unit, state: SignInState, notice: String?, onContinue: () -> Unit) {
     val go = { if (!state.busy && address.isNotBlank()) onContinue() }
     OutlinedTextField(
         value = address,
@@ -276,13 +362,58 @@ private fun AddressStep(address: String, onChange: (String) -> Unit, state: Sign
         keyboardActions = KeyboardActions(onGo = { go() }),
         modifier = Modifier.fillMaxWidth().testTag("server"),
     )
-    state.error?.let { ErrorText(it) }
+    (state.error ?: notice)?.let { ErrorText(it) }
     PrimaryButton(
         text = if (state.busy) "Connecting\u2026" else "Continue",
         onClick = go,
         enabled = !state.busy && address.isNotBlank(),
         modifier = Modifier.fillMaxWidth().testTag("continue"),
     )
+}
+
+/** Above the form when an invite is waiting for someone to sign in or up. */
+@Composable
+private fun InviteWaiting(onIgnore: () -> Unit) {
+    val colors = Crumb.colors
+    Column(
+        Modifier.fillMaxWidth().clip(ControlShape).background(colors.tint).padding(14.dp).testTag("invite-waiting"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("You've been invited to a household", style = CrumbText.rowTitle, color = colors.ink)
+        Text("Sign in, or make an account, to join it.", style = CrumbText.bodySmall, color = colors.inkMuted)
+        Btn("Ignore the invite", onIgnore, style = BtnStyle.Link, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+/** "Have an invite link?": a field for the link, for when it can't be opened from where it was sent. */
+@Composable
+private fun ColumnScope.PasteInvite(onPaste: (String) -> Boolean) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf(false) }
+    if (!open) {
+        Btn("Have an invite link?", { open = true }, style = BtnStyle.Link, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("have-invite"))
+        return
+    }
+    val go = {
+        if (onPaste(text)) {
+            open = false
+            text = ""
+            error = false
+        } else {
+            error = true
+        }
+    }
+    CrumbInput(
+        text,
+        { text = it; error = false },
+        placeholder = "Paste the invite link",
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go, autoCorrectEnabled = false),
+        keyboardActions = KeyboardActions(onGo = { go() }),
+        modifier = Modifier.testTag("invite-link"),
+    )
+    if (error) ErrorText(InviteText.NOT_AN_INVITE)
+    Btn("Use this invite", go, style = BtnStyle.Outline, enabled = text.isNotBlank(), modifier = Modifier.fillMaxWidth())
 }
 
 @Composable
@@ -292,7 +423,7 @@ private fun ErrorText(text: String) {
 
 /** The mode's form: what the web's LoginForm.svelte, and the reset page, show. */
 @Composable
-private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
+private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState, invited: Boolean, notice: String?) {
     val colors = Crumb.colors
     val form = state.form ?: return
     var name by rememberSaveable { mutableStateOf("") }
@@ -300,7 +431,7 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
     var password by rememberSaveable { mutableStateOf("") }
     var appPassword by rememberSaveable { mutableStateOf("") }
     val status = state.status
-    val forms = state.forms
+    val forms = signInForms(status ?: return, invited)
 
     if (state.checkEmail != null || state.resetSentTo != null) {
         Text("Check your email", style = CrumbText.rowTitle, color = colors.ink)
@@ -328,6 +459,8 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
         style = CrumbText.bodySmall,
         color = colors.inkMuted,
     )
+    // Google and Apple under the form on the two that sign a person in or make an account
+    val social = form == SignInForm.SignIn || form == SignInForm.SignUp
     val submit: () -> Unit = {
         if (!state.busy) when (form) {
             SignInForm.Password -> vm.signIn(password)
@@ -372,7 +505,7 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
         Field("Current app password", appPassword, { appPassword = it }, "app-password", KeyboardType.Password, ImeAction.Go, secret = true, onGo = submit)
         Text("The one this box used before accounts.", style = CrumbText.hint, color = colors.inkMuted)
     }
-    state.error?.let { ErrorText(it) }
+    (state.error ?: notice)?.let { ErrorText(it) }
     PrimaryButton(
         text = when {
             state.busy -> "Working\u2026"
@@ -384,6 +517,10 @@ private fun ColumnScope.FormStep(vm: SignInViewModel, state: SignInState) {
         enabled = !state.busy,
         modifier = Modifier.fillMaxWidth().testTag("sign-in"),
     )
+    if (social && status?.providers?.isNotEmpty() == true) {
+        val offered = status.providers.mapNotNull(Provider::of)
+        SocialButtons(offered, state.going, vm::continueWith)
+    }
     // Links between the forms this server offers
     if (form == SignInForm.SignIn && SignInForm.Forgot in forms) {
         Btn("Forgot your password?", { vm.show(SignInForm.Forgot) }, style = BtnStyle.Link, modifier = Modifier.align(Alignment.CenterHorizontally))

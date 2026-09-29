@@ -56,6 +56,7 @@ import app.crumb.android.data.CrumbApi
 import app.crumb.android.data.Device
 import app.crumb.android.data.Household
 import app.crumb.android.data.Member
+import app.crumb.android.data.InviteText
 import app.crumb.android.data.PendingInvite
 import app.crumb.android.data.SignInMethods
 import app.crumb.android.data.accountParts
@@ -549,6 +550,39 @@ private fun SignInMethodsCard(status: AuthStatus, methods: SignInMethods, state:
 
 // ─── Household ───
 
+/** "Have an invite link?": joins another household from a pasted link, through the same dialog an opened one gets. */
+@Composable
+private fun JoinWithLink() {
+    val links = AppContainerProvider.links
+    var open by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    if (!open) {
+        InfoRow(Lucide.Link, "Have an invite link?", "Paste it to join another household", onClick = { open = true })
+        return
+    }
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Field("Invite link", text, { text = it; error = null }, KeyboardType.Uri)
+        error?.let { Text(it, style = CrumbText.bodySmall, color = Crumb.colors.error) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
+            Btn("Cancel", { open = false; text = ""; error = null }, style = BtnStyle.Ghost)
+            Btn(
+                "Continue",
+                {
+                    if (links.offer(text)) {
+                        open = false
+                        text = ""
+                    } else {
+                        error = InviteText.NOT_AN_INVITE
+                    }
+                },
+                style = BtnStyle.Tile,
+                enabled = text.isNotBlank(),
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HouseholdCard(h: Household, state: AccountUiState, vm: AccountViewModel, restart: () -> Unit) {
@@ -680,6 +714,8 @@ private fun HouseholdCard(h: Household, state: AccountUiState, vm: AccountViewMo
                 )
             }
         }
+        Divider()
+        JoinWithLink()
         for (other in h.others) {
             Divider()
             InfoRow(

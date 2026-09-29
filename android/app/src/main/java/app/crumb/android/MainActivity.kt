@@ -11,6 +11,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.crumb.android.ui.theme.rememberDark
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import app.crumb.android.data.AppLink
 import app.crumb.android.data.Incoming
 import app.crumb.android.ui.CrumbApp
 import app.crumb.android.ui.theme.CrumbTheme
@@ -52,6 +53,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun receive(intent: Intent?) {
+        // The browser handing back a sign-in, or an invite: not something to put in Add
+        if (intent?.action == Intent.ACTION_VIEW) {
+            AppLink.parse(intent.dataString)?.let((application as CrumbApplication).container.links::handle)
+            return
+        }
         Incoming.from(intent, contentResolver)?.let { shared.value = it }
     }
 }

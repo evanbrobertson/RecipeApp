@@ -57,6 +57,7 @@ import app.crumb.android.ui.books.ShelfScreen
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.connect.ConnectScreen
 import app.crumb.android.ui.importer.ImportScreen
+import app.crumb.android.ui.invite.InviteDialogs
 import app.crumb.android.data.Incoming
 import app.crumb.android.data.JobEnd
 import app.crumb.android.ui.components.Toast
@@ -177,6 +178,14 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
         importShared(got, container.importer, crumbNav)
     }
 
+    // Something the browser or a pasted invite link got wrong (a sign-in that expired)
+    val notice by container.links.notice.collectAsStateWithLifecycle()
+    LaunchedEffect(notice) {
+        val text = notice ?: return@LaunchedEffect
+        Toaster.show(text, tone = ToastTone.Error)
+        container.links.clearNotice()
+    }
+
     // A video that lands while the Add box isn't on screen: a toast with a way to open it
     LaunchedEffect(Unit) {
         container.videoJobs.background.collect { end ->
@@ -209,6 +218,7 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
             containerColor = Crumb.colors.canvas,
             bottomBar = { if (showTabs) TabBar(nav) },
         ) { padding ->
+            InviteDialogs()
             Box(Modifier.fillMaxSize()) {
             // The tab bar's height is already taken off the screen here, so the keyboard's padding
             // (`imePadding` in a screen) must only count what rises above it, not the tab bar twice

@@ -23,7 +23,9 @@ import java.net.URLEncoder
  * (`AUTH_MODE=accounts`, `api/auth/...` answered by the Rust server) or the hosted edition's
  * Better Auth (the same paths, proxied). A port of crumb-client's `accounts.rs` and the web's
  * `lib/account.ts`; Google, Apple and passkeys need a browser, so signing in with them isn't
- * here (linked ones can be listed and unlinked). Ids are strings in either mode.
+ * here, but the browser's round trip is: [startAppSignIn] and [finishAppSignIn] (crumb-client's
+ * `start_app_sign_in` and `finish_app_sign_in`). Linked ones can be listed and unlinked. Ids are
+ * strings in either mode.
  *
  * A 401 from these is often "wrong password", not a lapsed session: only the screens that
  * load things treat it as being signed out.
@@ -52,6 +54,36 @@ class AccountApi(private val api: CrumbApi) {
             put("password", password)
         }
         return cookieOf(open(server, path, mode, body))
+    }
+
+    /**
+     * Signs in with Google or Apple (a [AuthStatus.providers] entry) through the browser, in either
+     * account mode: the [url] to open in a Custom Tab, and the [AppSignInStart.verifier] to keep
+     * until the browser comes back with a code for [finishAppSignIn]. A 404 is a provider this
+     * server doesn't offer.
+     */
+    suspend fun startAppSignIn(server: HttpUrl, provider: Provider): AppSignInStart {
+        val pair = app.crumb.core.appSignIn()
+        val body = buildJsonObject {
+            put("provider", provider.id)
+            put("challenge", pair.challenge)
+        }
+        val started = open(server, "api/auth/app/start", AuthMode.Accounts, body).use { res ->
+            CrumbJson.parseToJsonElement(res.body.string()).jsonObject["url"]?.text()
+        } ?: throw ApiException(502, "The server didn't start that sign-in. Try again.")
+        return AppSignInStart(started, pair.verifier)
+    }
+
+    /**
+     * Swaps the code the browser brought back for this phone's own session cookie. A 410 is a
+     * code that expired, was already used, or doesn't match the verifier.
+     */
+    suspend fun finishAppSignIn(server: HttpUrl, code: String, verifier: String): String {
+        val body = buildJsonObject {
+            put("code", code)
+            put("verifier", verifier)
+        }
+        return cookieOf(open(server, "api/auth/app/redeem", AuthMode.Accounts, body))
     }
 
     /** Accounts: makes the first account, which owns the recipe box already here. */
@@ -94,6 +126,20 @@ class AccountApi(private val api: CrumbApi) {
             put("redirectTo", "/reset-password")
         }
         open(server, "api/auth/request-password-reset", AuthMode.Hosted, body).close()
+    }
+
+    /**
+     * Accounts, signed out: joins by an invite's token with a new account (a name) or an
+     * existing one, even where sign-up is closed; returns the session cookie to keep.
+     */
+    suspend fun acceptInviteWithAccount(server: HttpUrl, token: String, name: String?, email: String, password: String): String {
+        val body = buildJsonObject {
+            put("token", token)
+            if (name != null) put("name", name.trim())
+            put("email", email.trim())
+            put("password", password)
+        }
+        return cookieOf(open(server, "api/auth/invite/accept", AuthMode.Accounts, body))
     }
 
     private suspend fun open(server: HttpUrl, path: String, mode: AuthMode, body: JsonObject): Response {
@@ -216,6 +262,32 @@ class AccountApi(private val api: CrumbApi) {
     suspend fun leave(mode: AuthMode, id: String) {
         if (hosted(mode)) call(post("api/auth/organization/leave", buildJsonObject { put("organizationId", id) }))
         else call(post("api/auth/household/leave"))
+    }
+
+    /**
+     * What an invite (its link's token) is for. Hosted, only once signed in. A token that
+     * can't be used any more, or never was one, is a 410 with the server's words.
+     */
+    suspend fun previewInvite(mode: AuthMode, token: String): InvitePreview = try {
+        if (!hosted(mode)) {
+            val found = json(post("api/auth/invite/preview", buildJsonObject { put("token", token) })).jsonObject
+            InvitePreview(found["householdName"]?.text().orEmpty(), found["invitedBy"]?.text(), found["email"]?.text())
+        } else {
+            val found = json(get("api/auth/organization/get-invitation?id=${segment(token)}")).jsonObject
+            InvitePreview(found["organizationName"]?.text().orEmpty(), found["inviterEmail"]?.text(), found["email"]?.text())
+        }
+    } catch (e: ApiException) {
+        if (e.status == 401 || e.status == 410) throw e
+        throw ApiException(410, InviteText.GONE)
+    }
+
+    /** Signed in: joins the invite's household and makes it the one in use. */
+    suspend fun acceptInvite(mode: AuthMode, token: String) {
+        if (!hosted(mode)) return call(post("api/auth/invite/accept", buildJsonObject { put("token", token) }))
+        val joined = json(post("api/auth/organization/accept-invitation", buildJsonObject { put("invitationId", token) })).jsonObject
+        val organization = (joined["member"] as? JsonObject)?.get("organizationId")?.text()
+            ?: throw ApiException(502, "The server didn't say which household you joined. Try again.")
+        switchTo(mode, organization)
     }
 
     suspend fun switchTo(mode: AuthMode, id: String) {
