@@ -8180,6 +8180,7 @@ async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
     assert_eq!(err["code"], "site_terms");
+    assert_eq!(err["site"], "Allrecipes");
     assert_eq!(err["statusCode"], 422);
     assert!(
         err["message"]
@@ -8214,6 +8215,7 @@ async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
         let data = page_data(&html);
         assert_eq!(data["preview"]["state"], "failed");
         assert_eq!(data["preview"]["code"], "site_terms");
+        assert_eq!(data["preview"]["site"], "Allrecipes");
         assert_eq!(data["preview"]["host"], "allrecipes.com");
     }
 

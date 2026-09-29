@@ -40,6 +40,10 @@ const IGNORE: &str = include_str!("../data/site-terms-ignore.toml");
 pub struct Entry {
     pub name: String,
     pub hosts: Vec<String>,
+    /// Image CDN hosts that serve the site's photos (and are otherwise nobody else's). The
+    /// server never downloads a photo from these either; a cook's browser is sent to load it.
+    #[serde(default)]
+    pub image_hosts: Vec<String>,
     pub clause: String,
     pub source: String,
     pub checked: String,
@@ -123,7 +127,9 @@ impl Refusal {
 
     /// 422 `site_terms`.
     pub fn error(&self) -> AppError {
-        AppError::new(422, self.message()).with_code(SITE_TERMS)
+        AppError::new(422, self.message())
+            .with_code(SITE_TERMS)
+            .with_site(&self.entry.name)
     }
 }
 
@@ -134,6 +140,21 @@ pub fn check(url: &str) -> Option<Refusal> {
         .iter()
         .find(|e| e.hosts.iter().any(|h| host_matches(&host, h)))
         .map(|entry| Refusal { entry, host })
+}
+
+/// Whether `url` is a photo the server must not download: it is on a listed site's own host,
+/// or on an image host listed for the site (`image_hosts`). Ask before any photo fetch. (A
+/// cook's browser may load it: the photo's link stays as it is.)
+pub fn photo_is_listed(url: &str) -> bool {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    entries().iter().any(|e| {
+        e.hosts
+            .iter()
+            .chain(&e.image_hosts)
+            .any(|h| host_matches(&host, h))
+    })
 }
 
 /// [`check`] as an error, for `?`.
@@ -228,6 +249,7 @@ struct Job {
 
 /// Queues terms checks for hosts imported from, one at a time. What it found is kept in
 /// `terms_checks` in `sites.db` (see [`Sites`]).
+#[derive(Default)]
 pub struct Flagger {
     tx: OnceLock<mpsc::Sender<Job>>,
     pending: Mutex<HashSet<String>>,
@@ -239,10 +261,7 @@ fn now() -> i64 {
 
 impl Flagger {
     pub fn new() -> Self {
-        Self {
-            tx: OnceLock::new(),
-            pending: Mutex::default(),
-        }
+        Self::default()
     }
 
     /// Whether `host` was checked recently enough to leave alone.
@@ -723,7 +742,7 @@ mod tests {
                 e.name
             );
             assert!(!e.hosts.is_empty());
-            for h in &e.hosts {
+            for h in e.hosts.iter().chain(&e.image_hosts) {
                 assert_eq!(h, &h.to_lowercase());
                 assert!(!h.starts_with("www.") && !h.contains('/'), "{h}");
             }
@@ -765,6 +784,56 @@ mod tests {
         );
         assert!(guard("https://example.com/x").is_ok());
         assert!(guard("https://bhg.com/x").is_err());
+    }
+
+    #[test]
+    fn photos_on_a_listed_site_are_not_downloaded() {
+        // The site's own hosts and subdomains (its CDN subdomains among them)
+        for url in [
+            "https://www.allrecipes.com/thmb/x.jpg",
+            "https://imagesvc.meredithcorp.allrecipes.com/x.jpg",
+            "https://www.seriouseats.com/thmb/y.jpg",
+        ] {
+            assert!(photo_is_listed(url), "{url}");
+        }
+        for url in [
+            "https://images.example/pie.jpg",
+            "https://notallrecipes.com/x.jpg",
+            "data:image/png;base64,AAAA",
+            "not a url",
+        ] {
+            assert!(!photo_is_listed(url), "{url}");
+        }
+        // A listed image host counts for the site that names it, and only as a photo host
+        let list: ListFile = toml::from_str(
+            r#"[[site]]
+name = "Food"
+hosts = ["food.test"]
+image_hosts = ["cdn.food-images.test"]
+clause = "no bots"
+source = "https://food.test/terms"
+checked = "2026-01-01""#,
+        )
+        .unwrap();
+        let entry = &list.site[0];
+        assert_eq!(entry.image_hosts, ["cdn.food-images.test"]);
+        assert!(
+            entry
+                .image_hosts
+                .iter()
+                .any(|h| host_matches("a.cdn.food-images.test", h))
+        );
+        // ...and an entry without the key has none
+        let plain: ListFile = toml::from_str(
+            r#"[[site]]
+name = "Food"
+hosts = ["food.test"]
+clause = "no bots"
+source = "https://food.test/terms"
+checked = "2026-01-01""#,
+        )
+        .unwrap();
+        assert!(plain.site[0].image_hosts.is_empty());
     }
 
     #[test]

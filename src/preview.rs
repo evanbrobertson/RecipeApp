@@ -174,9 +174,7 @@ async fn page(
     if params.go.is_none() {
         return waiting(&state, &url, "loading");
     }
-    if let Err(err) = crate::site_terms::guard(&url) {
-        return failed(&state, &url, &err);
-    }
+    // (`scrape_page` refuses a listed site too; this is the same answer, earlier.)
     match crate::scraper::scrape_page(&state, &url).await {
         // Another Crumb's shared cookbook: nothing to read here, but it saves whole
         Ok(scraped) if scraped.recipe.title.trim().is_empty() => add_page(&url),
@@ -270,6 +268,9 @@ fn failed(state: &AppState, url: &str, err: &AppError) -> Response {
     }});
     if let Some(code) = err.code {
         data["preview"]["code"] = code.into();
+    }
+    if let Some(site) = &err.site {
+        data["preview"]["site"] = site.as_str().into();
     }
     let title = "Couldn't read that recipe";
     html(state, status, |t| {

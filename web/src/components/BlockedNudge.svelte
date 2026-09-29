@@ -28,10 +28,13 @@
     ondismiss?: () => void
     /** `bot`: the site's bot check turned Crumb away. `terms`: its terms ask us not to fetch. */
     why?: "bot" | "terms"
+    /** With `terms`: the site's name as the server knows it ("Allrecipes"); else its host is said. */
+    name?: string
   }
-  let { url, onpaste, pasteHref = "/add", ondismiss, why = "bot" }: Props = $props()
+  let { url, onpaste, pasteHref = "/add", ondismiss, why = "bot", name }: Props = $props()
   const terms = $derived(why === "terms")
   const site = $derived.by(() => {
+    if (name) return name
     try {
       return new URL(url).hostname.replace(/^www\./, "")
     } catch {
