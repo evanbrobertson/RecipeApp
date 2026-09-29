@@ -168,18 +168,22 @@ pub fn logout_cookie(headers: &HeaderMap) -> HeaderValue {
 }
 
 /// `/s/` is share links (src/share.rs): a token gives one recipe, read-only.
-const PUBLIC_PREFIXES: [&str; 7] = [
+const PUBLIC_PREFIXES: [&str; 8] = [
     "/_astro/",
     // Accounts: signing in with Google or Apple, and where they send people back
     "/api/auth/social/",
+    // The native apps' Google and Apple sign-in (src/app_sign_in.rs)
+    "/api/auth/app/",
     "/fonts/",
     "/oauth/",
     "/.well-known/",
     "/mcp",
     "/s/",
 ];
-const PUBLIC_PATHS: [&str; 21] = [
+const PUBLIC_PATHS: [&str; 22] = [
     "/login",
+    // Where a native app's Google or Apple sign-in starts in the browser
+    "/app/sign-in",
     "/api/auth/login",
     // Accounts: first-run setup and sign-up (both refuse when they don't apply)
     "/setup",

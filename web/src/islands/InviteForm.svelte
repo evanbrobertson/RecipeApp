@@ -37,6 +37,12 @@
   )
   let checkEmail = $state(false)
 
+  /** On Android, the invite can be opened in the Crumb app (`crumb_core::app_link`). */
+  const appLink =
+    typeof navigator !== "undefined" && /Android/.test(navigator.userAgent)
+      ? `app.crumb://invite?${new URLSearchParams({ server: `${location.origin}/`, token })}`
+      : null
+
   const hosted = $derived(status?.mode === "hosted")
   const signedIn = $derived(!!status?.user)
   /** Self-hosted, a link that's used up or expired shows nothing else. */
@@ -201,5 +207,10 @@
         {tab === "new" ? "Create account and join" : "Sign in and join"}
       </button>
     </form>
+  {/if}
+  {#if appLink}
+    <p class="text-ink-muted mt-6 text-center text-sm">
+      Have the Crumb app? <a class="text-primary font-bold" href={appLink}>Open this invite in it</a>
+    </p>
   {/if}
 {/if}

@@ -1353,3 +1353,40 @@ async fn previews_a_link_before_it_is_saved() {
     let err = client.preview("nope").await.unwrap_err();
     assert!(matches!(err, Error::Api { status: 400, .. }), "{err:?}");
 }
+
+#[tokio::test]
+async fn apps_start_a_google_sign_in_in_the_browser() {
+    let server = Server::configured(|config| {
+        config.auth_mode = crumb::config::AuthMode::Accounts;
+        config.social = vec![crumb::social::Provider::google("g-client", "g-secret")];
+    })
+    .await;
+    let client = Client::new(&server.origin).unwrap();
+    let accounts = client.accounts(Mode::Accounts);
+
+    let started = accounts.start_app_sign_in("google").await.unwrap();
+    assert!(
+        started.url.starts_with(&format!(
+            "{}/app/sign-in?provider=google&id=",
+            server.origin
+        )),
+        "{}",
+        started.url
+    );
+    assert_eq!(started.verifier.len(), 43);
+    let other = accounts.start_app_sign_in("google").await.unwrap();
+    assert_ne!(other.verifier, started.verifier);
+
+    assert!(matches!(
+        accounts.start_app_sign_in("apple").await,
+        Err(Error::Api { status: 404, .. })
+    ));
+    // Without the browser's code, no session
+    assert!(matches!(
+        accounts
+            .finish_app_sign_in("made-up", &started.verifier)
+            .await,
+        Err(Error::Api { status: 410, .. })
+    ));
+    assert!(!client.auth_status().await.signed_in);
+}

@@ -85,6 +85,7 @@ src/
   accounts.rs     # AUTH_MODE=accounts: accounts.db (users, households, invites, sessions, identities, share index); account_api.rs
   social.rs       # Sign in with Google / Apple for AUTH_MODE=accounts (OIDC code flow; hosted uses Better Auth's)
   hosted.rs       # AUTH_MODE=hosted: asks the Better Auth service (auth/) who's signed in, proxies /api/auth/*
+  app_sign_in.rs  # Google/Apple sign-in for the native apps: /app/sign-in in the browser, then a one-time code to app.crumb://, PKCE
   recipes.rs      # Service layer shared by REST API and MCP
   api.rs          # /api/** handlers
   web.rs          # Static files + page-data injection for dynamic pages
@@ -151,6 +152,9 @@ web/src/
   `hosted` (Better Auth in `auth/`, households = organizations, mapped to local ids in `accounts.db`). The web
   talks to either through `web/src/lib/account.ts`; handlers get the signed-in user via `auth::session`/`SignedIn`.
   Account, household, connected apps and data settings live on `/more/account` (`AccountPage.svelte`), not More.
+  The native apps sign in with Google or Apple through the browser in either mode (`src/app_sign_in.rs`,
+  `crumb_core::app_link`): `POST /api/auth/app/start` → the `/app/sign-in` page → `app.crumb://signed-in?code=…` →
+  `POST /api/auth/app/redeem` with the PKCE verifier. The invite page offers `app.crumb://invite?server=…&token=…` on Android.
 - **API parity:** JSON is camelCase; errors are `{statusCode, statusMessage, message}`,
   plus a `code` only when a client can act on it (`site_blocked`: a recipe site's bot check turned the server away, so the web
   nudges toward the extension instead of showing an error; `site_terms`: the site's terms forbid automated fetching, and

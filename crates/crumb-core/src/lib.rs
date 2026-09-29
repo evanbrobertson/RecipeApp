@@ -2,6 +2,7 @@
 //! validation, the parsers that turn pasted text into them, and Try next ranking.
 
 pub mod add;
+pub mod app_link;
 pub mod books;
 pub mod categories;
 pub mod checks;
