@@ -1,6 +1,6 @@
 # crumb-relay (crates/crumb-relay): the small service that fetches pages for a Crumb server from
 # another network. Its own release stream, like the browser extension's: a push to master that
-# changes crates/crumb-relay/ or crates/crumb-fetch/ works out the next version from the
+# changes crates/crumb-relay/, crates/crumb-fetch/ or crates/crumb-work/ works out the next version from the
 # conventional commits touching them (tags `relay-vX.Y.Z`), builds for Linux on x86-64, 64-bit
 # ARM (Raspberry Pi 3/4/5 on a 64-bit OS) and 32-bit ARMv7 (a Pi on the 32-bit OS), tags and
 # attaches the binaries to a GitHub Release and pushes a multi-arch image to GHCR. A tag pushed
@@ -20,6 +20,8 @@ on:
     paths:
       - "crates/crumb-relay/**"
       - "crates/crumb-fetch/**"
+      - "crates/crumb-work/**"
+      - "data/site-terms.toml"
       - "scripts/relay/**"
       - ".github/workflows/relay.yml"
     tags: ["relay-v*"]

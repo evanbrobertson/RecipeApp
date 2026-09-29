@@ -249,6 +249,20 @@ impl Client {
         self.json(res, false).await
     }
 
+    /// `POST /api/recipes/preview`: reads a recipe link without saving it. The server
+    /// keeps the reading for a while, so [`Client::import`] of the same link saves it as
+    /// shown. A cooking video or shared cookbook answers [`Preview::Import`].
+    pub async fn preview(&self, url: &str) -> Result<Preview, Error> {
+        let res = self
+            .send(
+                self.http
+                    .post(self.endpoint("api/recipes/preview"))
+                    .json(&json!({ "url": url })),
+            )
+            .await?;
+        self.json(res, false).await
+    }
+
     /// `POST /api/recipes/import`: saves a link or pasted text. A cooking video waits in
     /// the server's queue; see [`Client::import_with_progress`] to hear how it's going.
     pub async fn import(&self, input: ImportInput) -> Result<Imported, Error> {

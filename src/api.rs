@@ -41,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/recipes/import", routing::post(import_recipe))
         .route("/api/preview", routing::post(preview_page))
+        .route("/api/recipes/preview", routing::post(crate::preview::api))
         .route("/api/import/jobs/{id}", routing::get(import_job))
         .route(
             "/api/recipes/import/photos",
@@ -48,6 +49,14 @@ pub fn routes() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(crate::photos::MAX_BODY_BYTES)),
         )
         .route("/api/recipes/bulk-delete", routing::post(bulk_delete))
+        .route("/api/trash", routing::get(list_trash).delete(empty_trash))
+        .route("/api/popular", routing::get(popular))
+        .route(
+            "/api/popular/opt-out",
+            routing::get(popular_setting).post(popular_opt_out),
+        )
+        .route("/api/trash/{id}", routing::delete(purge_trashed))
+        .route("/api/trash/{id}/restore", routing::post(restore_trashed))
         .route("/api/recipes/random", routing::get(random_recipe))
         .route("/api/suggestions", routing::get(suggestions))
         .route(
@@ -632,6 +641,80 @@ async fn delete_recipe(
         return Err(AppError::not_found("Recipe not found"));
     }
     Ok(Json(json!({"ok": true})))
+}
+
+/// Popular: `{enabled, optedOut, minHouseholds, items: [{url, host, title, households}]}`,
+/// links other households saved that this one hasn't (see `popular`).
+async fn popular(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let enabled = crate::popular::Popular::enabled(&state);
+    let opted_out = crate::popular::opted_out(&state.db.lock());
+    let items = crate::popular::for_household(&state).await;
+    Ok(Json(json!({
+        "enabled": enabled,
+        "optedOut": opted_out,
+        "minHouseholds": crate::popular::Popular::min_households(&state),
+        "items": items.iter().map(crate::popular::Link::to_json).collect::<Vec<_>>(),
+    })))
+}
+
+/// `{enabled, optedOut}` without counting anything: for the setting on More.
+async fn popular_setting(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    Ok(Json(json!({
+        "enabled": crate::popular::Popular::enabled(&state),
+        "optedOut": crate::popular::opted_out(&state.db.lock()),
+    })))
+}
+
+/// `{optedOut}`: whether this household's saved links count toward Popular.
+async fn popular_opt_out(
+    crate::Scoped(state): crate::Scoped,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
+    let out = json_body(&body)?
+        .get("optedOut")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| AppError::bad_request("optedOut: expected true or false"))?;
+    crate::popular::set_opted_out(&state.db.lock(), out)?;
+    state.popular.forget().await;
+    Ok(Json(json!({"optedOut": out})))
+}
+
+/// The trash: recipes deleted in the last 30 days, newest first (`trash::Trashed::to_json`).
+async fn list_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let list = crate::trash::list(&state.db.lock())?;
+    Ok(Json(Value::Array(
+        list.iter().map(crate::trash::Trashed::to_json).collect(),
+    )))
+}
+
+/// Puts a deleted recipe back: the recipe, with `isNew: false` when its link had been saved
+/// again meanwhile (that recipe is the answer, and the deleted copy is gone).
+async fn restore_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    let restored = crate::trash::restore(&state.db.lock(), id)?;
+    Ok(Json(match restored {
+        crate::trash::Restored::Back(r) => recipes::with_is_new(&r, true),
+        crate::trash::Restored::AlreadySaved(r) => recipes::with_is_new(&r, false),
+    }))
+}
+
+async fn purge_trashed(
+    crate::Scoped(state): crate::Scoped,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let id = id_param(&id, "id")?;
+    if !crate::trash::purge(&state.db.lock(), id)? {
+        return Err(AppError::not_found("That recipe isn't in the trash"));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn empty_trash(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let n = crate::trash::empty(&state.db.lock())?;
+    Ok(Json(json!({"deleted": n})))
 }
 
 async fn recipe_cookbooks(

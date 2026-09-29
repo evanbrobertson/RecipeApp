@@ -682,7 +682,7 @@ async fn oauth_flow_then_mcp_tools() {
         ))
         .await;
     let list: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 19);
 
     let (_, _, text) = t
         .send(rpc(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
@@ -892,7 +892,7 @@ async fn mcp_organising_tools() {
     let (msg, err) = call("delete_recipe", json!({"ids": [1, 99], "confirm": true})).await;
     assert!(err && msg.contains("No recipe with id 99"), "{msg}");
     let (msg, _) = call("delete_recipe", json!({"id": 2, "confirm": true})).await;
-    assert!(msg.starts_with("Deleted 1 recipe(s)"), "{msg}");
+    assert!(msg.starts_with("Moved 1 recipe(s) to the trash"), "{msg}");
     let (msg, _) = call("search_recipes", json!({})).await;
     assert!(msg.starts_with("1 recipe(s)"), "{msg}");
 }
@@ -7585,6 +7585,119 @@ async fn previews_are_behind_the_login() {
 }
 
 #[tokio::test]
+async fn the_apps_preview_a_link_as_json() {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let counter = hits.clone();
+    let origin = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Leek Soup",
+                        "recipeIngredient": ["2 leeks", "1 potato"],
+                        "recipeInstructions": ["Sweat the leeks.", "Simmer & blend."]})
+                ))
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let t = TestApp::new(None);
+    let url = format!("{site}/soup");
+    let hits = || hits.load(std::sync::atomic::Ordering::SeqCst);
+
+    // Read, tidied, not saved
+    let (status, res) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["status"], "ready");
+    assert_eq!(res["recipe"]["title"], "Leek Soup");
+    assert_eq!(res["recipe"]["url"], url);
+    assert_eq!(res["recipe"]["source"], "url");
+    assert!(res["recipe"].get("id").is_none() && res["recipe"].get("createdAt").is_none());
+    assert_eq!(res["recipe"]["ingredients"][0]["items"][0], "2 leeks");
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0, "{list}");
+    assert_eq!(hits(), 1);
+
+    // A second preview and the import both use the kept reading
+    let (_, again) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(again["status"], "ready");
+    let (status, saved) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["isNew"], true);
+    assert_eq!(hits(), 1);
+
+    // Now it's in the box
+    let (_, res) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(
+        res,
+        json!({"status": "saved", "id": saved["id"], "title": "Leek Soup"})
+    );
+
+    // A cooking video is imported, not previewed
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://www.youtube.com/watch?v=Xy_djhH3WE4"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res, json!({"status": "import"}));
+
+    // Not a link, and a page without a recipe
+    for body in [json!({"url": "nope"}), json!({}), json!({"url": 5})] {
+        let (status, res) = t.json("POST", "/api/recipes/preview", Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{res}");
+        assert_eq!(res["message"], "Please enter a valid URL");
+    }
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": format!("{site}/nothing")})),
+        )
+        .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(res["message"].as_str().unwrap().contains("404"), "{res}");
+
+    // A listed site is refused as the page refuses it
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://www.allrecipes.com/recipe/1/apple-pie/"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{res}");
+    assert_eq!(res["code"], "site_terms");
+}
+
+#[tokio::test]
+async fn the_apps_preview_is_behind_the_login() {
+    let t = TestApp::new(Some("pw"));
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://example.com/soup"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{res}");
+}
+
+#[tokio::test]
 async fn import_refuses_archive_bombs_and_oversized_uploads() {
     use std::io::Write;
     let t = TestApp::new(None);
@@ -8170,6 +8283,59 @@ async fn a_preview_shows_the_recipe_the_extension_read() {
 }
 
 #[tokio::test]
+async fn a_preview_shows_the_video_the_extension_read() {
+    let t = TestApp::new(None);
+    // Allrecipes: the Recipe's JSON-LD names JW Player's mp4
+    let url = "https://www.allrecipes.com/zing-noodles-11725006";
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    let ld = r#"[{"@type":["Recipe","NewsArticle"],"name":"Zing Noodles","recipeIngredient":["1 jar sauce","1 lb noodles"],
+        "recipeInstructions":[{"@type":"HowToStep","text":"Cook."}],
+        "video":{"@type":"VideoObject","contentUrl":"https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4",
+          "thumbnailUrl":"https://cdn.jwplayer.com/v2/media/9QcFPcvu/thumbnails/g43V12F6.jpg?width=1280"}}]"#;
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": {"jsonLd": [ld]}})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+
+    let (status, headers, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let preview = &page_data(&html)["preview"];
+    assert_eq!(
+        preview["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+    assert_eq!(preview["videoEmbed"]["provider"], "file");
+    // Played from its own site, once the cook presses Play
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(
+        csp.contains("media-src https:") && csp.contains("frame-src https:"),
+        "{csp}"
+    );
+
+    // Adding it keeps the video
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(
+        recipe["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+}
+
+#[tokio::test]
 async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
     let t = TestApp::new(None);
     let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
@@ -8251,4 +8417,112 @@ async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
         mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
     assert!(is_error, "{msg}");
     assert!(msg.contains("terms of service forbid"), "{msg}");
+}
+
+#[tokio::test]
+async fn a_deleted_recipe_waits_in_the_trash() {
+    let t = TestApp::new(None);
+    let (_, soup) = t
+        .json(
+            "POST",
+            "/api/recipes",
+            Some(json!({"title": "Soup", "url": "https://a.example/soup"})),
+        )
+        .await;
+    let id = soup["id"].as_i64().unwrap();
+    let (status, _) = t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, trash) = t.json("GET", "/api/trash", None).await;
+    assert_eq!(trash[0]["id"], id);
+    assert_eq!(trash[0]["title"], "Soup");
+    assert!(trash[0]["purgeAt"].as_str().unwrap() > trash[0]["deletedAt"].as_str().unwrap());
+
+    // Claude is told it's restorable, and can put it back (but has no way to empty the trash)
+    let (msg, is_error) = mcp_call(&t, "list_trash", json!({})).await;
+    assert!(!is_error && msg.contains("Soup"), "{msg}");
+    let (msg, is_error) = mcp_call(&t, "restore_recipe", json!({"id": id})).await;
+    assert!(!is_error && msg.starts_with("Restored \"Soup\""), "{msg}");
+    let (status, back) = t.json("GET", &format!("/api/recipes/{id}"), None).await;
+    assert_eq!((status, &back["title"]), (StatusCode::OK, &json!("Soup")));
+
+    let (msg, _) = mcp_call(&t, "delete_recipe", json!({"id": id, "confirm": true})).await;
+    assert!(msg.contains("to the trash"), "{msg}");
+    let (status, res) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!((status, &res["isNew"]), (StatusCode::OK, &json!(true)));
+
+    // Deleted for good: one, then all
+    t.json("DELETE", &format!("/api/recipes/{id}"), None).await;
+    let (status, _) = t.json("DELETE", &format!("/api/trash/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = t
+        .json("POST", &format!("/api/trash/{id}/restore"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, res) = t.json("DELETE", "/api/trash", None).await;
+    assert_eq!(res["deleted"], 0);
+}
+
+#[tokio::test]
+async fn popular_lists_links_enough_households_saved() {
+    let t = accounts_app(None, false);
+    let accounts = t.state.accounts.clone().unwrap();
+    let ids: Vec<i64> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|org| accounts.hosted_household(org, org, false).unwrap())
+        .collect();
+    let save = |household: i64, url: &str, title: &str| {
+        t.state
+            .for_household(household)
+            .unwrap()
+            .db
+            .lock()
+            .execute(
+                "INSERT INTO recipes (url, title, ingredients, instructions, created_at, updated_at)
+                 VALUES (?1, ?2, '[]', '[]', 1, 1)",
+                [url, title],
+            )
+            .unwrap();
+    };
+    // Three households saved the pie (one with its own title, one via a tracking link)
+    save(ids[0], "https://www.pies.example/apple-pie/", "Apple Pie");
+    save(
+        ids[1],
+        "https://pies.example/apple-pie?utm_source=feed",
+        "apple pie",
+    );
+    save(
+        ids[2],
+        "https://pies.example/apple-pie/#comments",
+        "Nana's pie",
+    );
+    // Two saved the soup: not enough
+    save(ids[0], "https://soup.example/leek-soup", "Leek Soup");
+    save(ids[1], "https://soup.example/leek-soup", "Leek Soup");
+    // A private address, however many have it, never counts
+    for &h in &ids[..3] {
+        save(h, "http://192.168.1.2/secret-stew", "Stew");
+    }
+
+    let home = t.state.for_household(1).unwrap();
+    let links = crumb::popular::for_household(&home).await;
+    assert_eq!(links.len(), 1, "{links:?}");
+    assert_eq!(links[0].host, "pies.example");
+    // Only two agree on a title, fewer than the three needed, so it comes from the link
+    assert_eq!(links[0].title, "Apple pie");
+    assert_eq!(links[0].households, 3);
+    assert!(!links[0].url.contains("utm_") && !links[0].url.contains('#'));
+
+    // A household that saved it doesn't see it
+    let theirs = t.state.for_household(ids[0]).unwrap();
+    assert!(crumb::popular::for_household(&theirs).await.is_empty());
+
+    // One opting out takes it below the line, once counted again
+    crumb::popular::set_opted_out(&t.state.for_household(ids[2]).unwrap().db.lock(), true).unwrap();
+    t.state.popular.forget().await;
+    assert!(crumb::popular::for_household(&home).await.is_empty());
 }

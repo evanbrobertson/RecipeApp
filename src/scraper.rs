@@ -142,13 +142,6 @@ pub async fn fetch_wreq(method: Method, url: &str) -> Fetched {
     }
 }
 
-static CHALLENGE_TITLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)just a moment|attention required|access denied|access to this page has been denied|verify you are human|are you a robot|not a robot|pardon our interruption|security check",
-    )
-    .unwrap()
-});
-
 static TITLE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
 
@@ -163,9 +156,7 @@ const CHALLENGE_MARKERS: [&str; 6] = [
 ];
 
 /// Whether a page title is a bot check ("Just a moment...") rather than the page.
-pub fn is_challenge_title(title: &str) -> bool {
-    CHALLENGE_TITLE.is_match(title)
-}
+pub use crumb_work::browser::is_challenge_title;
 
 /// Whether HTML is a bot check or block page. Only asked of pages with no recipe, so a
 /// false positive costs one retry, never a lost recipe.
@@ -807,6 +798,25 @@ fn site_key(url: &url::Url) -> Option<String> {
     Some(host.strip_prefix("www.").unwrap_or(&host).to_string())
 }
 
+/// The page after its scripts ran, in headless Chromium: a relay's when one works for the
+/// server (from a home connection, and off the server's CPU), else this server's.
+pub async fn render_page(state: &AppState, url: &str) -> Result<String, String> {
+    match state.relays.render(url).await {
+        Ok(html) => return Ok(html),
+        Err(crate::relay::NotDone::Nothing) => return Err("Blocked in a relay's browser".into()),
+        Err(crate::relay::NotDone::NoWorker) => {}
+    }
+    if !state.browser.available() {
+        return Err("Chromium isn't available".into());
+    }
+    state.browser.fetch(url).await
+}
+
+/// [`render_page`], for callers that only want the page.
+pub async fn render(state: &AppState, url: &str) -> Option<String> {
+    render_page(state, url).await.ok()
+}
+
 /// Scrapes a recipe page (see [`scrape_plan`] for the order it tries).
 pub async fn scrape_recipe(state: &AppState, url: &str) -> AppResult<RecipeFields> {
     let recipe = scrape_page(state, url).await?.recipe;
@@ -839,17 +849,17 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
         .map(|facts| Hint::from_facts(&facts, now))
         .unwrap_or_default();
 
-    let browser = state.browser.clone();
+    // Chromium is a step when this server has it or a relay may (it says so when asked)
+    let browser = state.browser.available() || !state.relays.is_empty();
     let result = scrape_plan(
         url,
-        Steps::from_env(browser.available(), !state.relays.is_empty()),
+        Steps::from_env(browser, !state.relays.is_empty()),
         &hint,
         |method, lead| {
-            let browser = browser.clone();
             let relays = state.relays.clone();
             async move {
                 match method {
-                    Method::Browser => match browser.fetch(url).await {
+                    Method::Browser => match render_page(state, url).await {
                         Ok(html) => Fetched::Page {
                             status: 200,
                             html,

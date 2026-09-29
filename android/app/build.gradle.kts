@@ -188,6 +188,9 @@ dependencies {
     implementation(libs.lucide)
     // Reads recipe photos on the phone when the server's Wee Chef can't (like the web's tesseract.js)
     implementation(libs.mlkit.text)
+    // Plays a recipe's own video file (the site players use the one WebView)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)

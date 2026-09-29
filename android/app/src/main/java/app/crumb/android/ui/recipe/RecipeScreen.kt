@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -422,7 +426,16 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
     scaledYield?.let { times += TimesEntry("Serves", Lucide.Users, it) }
     val hasIngredients = recipe.ingredients.any { it.items.isNotEmpty() }
 
-    LazyColumn(Modifier.fillMaxSize().testTag("recipe"), horizontalAlignment = Alignment.CenterHorizontally) {
+    val listState = rememberLazyListState()
+    val video = recipe.video?.takeIf { it.isNotBlank() }
+    val embed = remember(recipe.video, recipe.videoEmbed) { videoEmbedFor(recipe) }
+    val videoState = remember(recipe.id) { VideoState() }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    // The video card's item: after the hero, the header, the ingredients title, the "none listed"
+    // line when there is one, and each ingredient section
+    val videoIndex = 3 + (if (hasIngredients) 0 else 1) + recipe.ingredients.count { it.items.isNotEmpty() }
+
+    LazyColumn(Modifier.fillMaxSize().testTag("recipe").onGloballyPositioned { origin = it.positionInRoot() }, state = listState, horizontalAlignment = Alignment.CenterHorizontally) {
         item {
             if (hasHero) {
                 Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -530,6 +543,14 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
             }
         }
 
+        if (video != null) {
+            item(key = "video") {
+                RecipeVideoCard(
+                    video, embed, recipe.title, videoState,
+                    Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp),
+                )
+            }
+        }
         item {
             Text(
                 "Method",
@@ -649,6 +670,9 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
         }
 
         item { Box(Modifier.navigationBarsPadding().padding(bottom = 24.dp)) }
+    }
+    if (video != null && embed != null) {
+        RecipeVideoPlayer(videoState, embed, recipe.title, listState, videoIndex, "video", origin)
     }
 
     if (showShare) {

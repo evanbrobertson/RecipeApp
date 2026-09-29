@@ -31,8 +31,13 @@ fun fixText(flag: Flag): String {
 /** The recipe's fixed flags, in check order. */
 fun fixedFlags(checks: RecipeChecks?): List<Flag> = checks?.flags?.filter { it.state == "fixed" }.orEmpty()
 
-/** The recipe's review flags, in check order. */
-fun reviewFlags(checks: RecipeChecks?): List<Flag> = checks?.flags?.filter { it.state == "review" }.orEmpty()
+/** The recipe's review flags for lines of text, in check order (a dead photo link has its own row). */
+fun reviewFlags(checks: RecipeChecks?): List<Flag> = reviewFlags(checks?.flags.orEmpty())
+
+fun reviewFlags(flags: List<Flag>): List<Flag> = flags.filter { it.state == "review" && it.field != "image" }
+
+/** The review flag on a photo link the site refuses, shown as its own row. */
+fun photoFlag(checks: RecipeChecks?): Flag? = checks?.flags?.find { it.state == "review" && it.field == "image" }
 
 /** "Wee Chef tidied 2 things" (crumb-core `tidiedTitle`). */
 fun tidiedTitle(count: Int): String = app.crumb.core.tidiedTitle(count.toUInt())
@@ -56,7 +61,7 @@ fun newlyFixedCount(flags: List<Flag>, before: Set<Long>): Int =
  * and the photo's flag isn't a line to look at.
  */
 fun checkToast(checks: RecipeChecks, fixedBefore: Set<Long>): CheckToast {
-    val review = checks.flags.count { it.state == "review" && it.field != "image" }
+    val review = reviewFlags(checks.flags).size
     return checkDoneToast(checks.status, newlyFixedCount(checks.flags, fixedBefore).toUInt(), review.toUInt())
 }
 

@@ -169,8 +169,16 @@ fn bootstrap_sql() -> String {
   );
   CREATE UNIQUE INDEX IF NOT EXISTS shares_token_unique ON shares (token);
   CREATE UNIQUE INDEX IF NOT EXISTS shares_recipe_unique ON shares (recipe_id) WHERE recipe_id IS NOT NULL;
-  CREATE UNIQUE INDEX IF NOT EXISTS shares_cookbook_unique ON shares (cookbook_id) WHERE cookbook_id IS NOT NULL;",
-        recipes_table_sql("recipes")
+  CREATE UNIQUE INDEX IF NOT EXISTS shares_cookbook_unique ON shares (cookbook_id) WHERE cookbook_id IS NOT NULL;
+{}
+
+  -- The household's own settings for its box, by key (see src/popular.rs). Not in backups.
+  CREATE TABLE IF NOT EXISTS box_settings (
+    key text PRIMARY KEY NOT NULL,
+    value text NOT NULL
+  );",
+        recipes_table_sql("recipes"),
+        crate::trash::TABLE_SQL
     )
 }
 
@@ -334,13 +342,15 @@ fn migrate_data(conn: &mut Connection) -> rusqlite::Result<()> {
     tx.commit()
 }
 
-/// Empties a box of everything that's the household's: recipes, cookbooks, the cook log,
-/// checks and share links. For the home database when its household is deleted (its file
+/// Empties a box of everything that's the household's: recipes (and the trash), cookbooks,
+/// the cook log, checks and share links. For the home database when its household is deleted (its file
 /// stays: it also keeps the connector's clients and tokens, which aren't anyone's box).
 pub fn wipe_box(conn: &mut Connection) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     tx.execute_batch(
         "DELETE FROM shares;
+         DELETE FROM recipe_trash;
+         DELETE FROM box_settings;
          DELETE FROM recipe_flags;
          DELETE FROM recipe_checks;
          DELETE FROM recipe_events;
@@ -390,6 +400,7 @@ fn init(mut conn: Connection) -> anyhow_like::Result<Db> {
         "DELETE FROM recipe_events WHERE kind = 'viewed' AND created_at < ?1",
         [crate::model::now_secs() - VIEW_RETENTION_SECS],
     )?;
+    crate::trash::purge_expired(&conn, crate::model::now_secs())?;
     Ok(Db(Arc::new(Mutex::new(conn))))
 }
 

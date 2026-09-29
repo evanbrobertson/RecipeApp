@@ -32,6 +32,7 @@ import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.NunitoSans
 import com.composables.icons.lucide.ChefHat
 import com.composables.icons.lucide.Lucide
+import app.crumb.core.reviewText
 
 /**
  * The quiet note on a recipe page when Wee Chef tidied or flagged lines on import
@@ -50,7 +51,8 @@ fun WeeChefCard(
     val c = Crumb.colors
     val fixed = fixedFlags(checks)
     val review = reviewFlags(checks)
-    if (fixed.isEmpty() && review.isEmpty()) return
+    val photo = photoFlag(checks)
+    if (fixed.isEmpty() && review.isEmpty() && photo == null) return
     var open by rememberSaveable(checks.flags.size) { mutableStateOf(false) }
 
     Card(modifier.fillMaxWidth(), padding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
@@ -99,6 +101,25 @@ fun WeeChefCard(
                     fontSize = 15.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 10.dp),
+                )
+                LinkText("Edit", onClick = onEdit)
+            }
+        }
+        if (photo != null) {
+            val above = fixed.isNotEmpty() || review.isNotEmpty()
+            if (above) HorizontalDivider(color = c.line)
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (above) {
+                    Spacer(Modifier.width(18.dp))
+                } else {
+                    Icon(Lucide.ChefHat, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
+                }
+                Text(
+                    reviewText(photo.kind),
+                    color = c.ink,
+                    fontFamily = NunitoSans,
+                    fontSize = 15.sp,
                     modifier = Modifier.weight(1f).padding(start = 10.dp),
                 )
                 LinkText("Edit", onClick = onEdit)

@@ -13,6 +13,21 @@ data class Section(
     val items: List<String> = emptyList(),
 )
 
+/** How the recipe page plays its `video` in place (crumb-core `VideoEmbed`, sent as `videoEmbed`). */
+@Serializable
+data class VideoEmbed(
+    /** `youtube`, `vimeo`, `tiktok`, `instagram`, `dailymotion`, `jwplayer` or `file`. */
+    val provider: String,
+    /** "YouTube", "Vimeo", … ("Video" for a file). */
+    val label: String,
+    /** The iframe's address, or the file itself for `file`. */
+    val embedUrl: String,
+    val watchUrl: String,
+    val thumbnail: String? = null,
+    /** Shorts, TikTok, Reels: 9:16. */
+    val vertical: Boolean = false,
+)
+
 @Serializable
 data class Recipe(
     val id: Long,
@@ -21,6 +36,8 @@ data class Recipe(
     val source: String = "manual",
     val description: String? = null,
     val image: String? = null,
+    /** A cooking video's link; [videoEmbed] says how to play it. */
+    val video: String? = null,
     val author: String? = null,
     val prepTime: String? = null,
     val cookTime: String? = null,
@@ -31,6 +48,8 @@ data class Recipe(
     val ingredients: List<Section> = emptyList(),
     val instructions: List<Section> = emptyList(),
     val notes: String? = null,
+    /** Null when [video] is on a site that can't play in place (link to it instead). */
+    val videoEmbed: VideoEmbed? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val freezeTime: String? = null,
@@ -88,7 +107,7 @@ data class ImportResult(
     val title: String,
     val isNew: Boolean,
     val cookbook: ImportedCookbook? = null,
-    /** The page's photo link was dead, so it was saved without one. */
+    /** The site's photo link didn't work, so the recipe was saved without one. */
     val droppedPhoto: Boolean = false,
     /** A cooking video Wee Chef watched in the server's queue. */
     val fromVideo: Boolean = false,
@@ -123,6 +142,7 @@ data class RecipeFields(
     val description: String? = null,
     val url: String? = null,
     val image: String? = null,
+    val video: String? = null,
     val author: String? = null,
     val prepTime: String? = null,
     val cookTime: String? = null,

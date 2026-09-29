@@ -123,7 +123,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           files=$(git diff --name-only "$BASE...$HEAD")
-          if grep -qE '^crates/crumb-(relay|fetch)/|^Cargo\.(toml|lock)$|^scripts/relay/|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
+          if grep -qE '^crates/crumb-(relay|fetch|work)/|^data/site-terms\.toml$|^Cargo\.(toml|lock)$|^scripts/relay/|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -164,7 +164,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           files=$(git diff --name-only "$BASE...$HEAD")
-          if grep -qE '^crates/crumb-(relay|fetch)/|^Cargo\.(toml|lock)$|^\.dockerignore$|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
+          if grep -qE '^crates/crumb-(relay|fetch|work)/|^data/site-terms\.toml$|^Cargo\.(toml|lock)$|^\.dockerignore$|^\.github/workflows/(pr|relay)\.yml$' <<<"$files"; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"

@@ -1287,6 +1287,14 @@ impl Accounts {
             .optional()?)
     }
 
+    /// Every household's id (both account modes), for what reads across boxes (Popular).
+    pub fn household_ids(&self) -> AppResult<Vec<HouseholdId>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT id FROM households ORDER BY id")?;
+        let ids = stmt.query_map([], |r| r.get(0))?;
+        Ok(ids.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Renames the signed-in owner's household.
     pub fn rename_household(&self, signed: &Session, name: &str) -> AppResult<String> {
         require_owner(signed)?;
