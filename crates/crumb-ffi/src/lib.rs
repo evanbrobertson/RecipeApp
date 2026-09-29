@@ -1369,6 +1369,53 @@ pub fn trash_empty(count: u32) -> String {
     crumb_core::trash::empty_trash(count)
 }
 
+/// A new Google or Apple sign-in's secret: keep `verifier`, send `challenge` to
+/// `POST /api/auth/app/start`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AppSignIn {
+    pub verifier: String,
+    pub challenge: String,
+}
+
+/// A fresh verifier and its PKCE challenge.
+#[uniffi::export]
+pub fn app_sign_in() -> AppSignIn {
+    let made = crumb_core::app_link::AppSignIn::new();
+    AppSignIn {
+        verifier: made.verifier,
+        challenge: made.challenge,
+    }
+}
+
+/// The apps' URL scheme, `app.crumb`.
+#[uniffi::export]
+pub fn app_scheme() -> String {
+    crumb_core::app_link::APP_SCHEME.to_string()
+}
+
+/// The code from an `app.crumb://signed-in?code=…` link, for `POST /api/auth/app/redeem`.
+#[uniffi::export]
+pub fn signed_in_code(link: String) -> Option<String> {
+    crumb_core::app_link::signed_in_code(&link)
+}
+
+/// An invite: the server it's for (a base URL ending in "/") and its token.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InviteLink {
+    pub server: String,
+    pub token: String,
+}
+
+/// An invite from a pasted web link (`https://…/invite#token`) or the invite page's
+/// `app.crumb://invite?…` link.
+#[uniffi::export]
+pub fn invite_link(text: String) -> Option<InviteLink> {
+    crumb_core::app_link::invite_link(&text).map(|i| InviteLink {
+        server: i.server,
+        token: i.token,
+    })
+}
+
 #[cfg(test)]
 mod tests {
 

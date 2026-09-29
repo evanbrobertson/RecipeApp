@@ -200,6 +200,14 @@ pub struct InviteLink {
     pub url: String,
 }
 
+/// A Google or Apple sign-in started for an app: open `url` in the browser and keep
+/// `verifier` for [`Accounts::finish_app_sign_in`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSignInStart {
+    pub url: String,
+    pub verifier: String,
+}
+
 /// `POST /api/account/email`: the new address, and whether it must be confirmed first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmailChange {
@@ -348,6 +356,36 @@ impl Accounts<'_> {
         self.attempt(
             self.req(Method::POST, path)
                 .json(&json!({ "email": email, "password": password })),
+        )
+        .await
+    }
+
+    /// Signs in with Google or Apple (a [`Status::providers`] entry) through the browser, in
+    /// either account mode: the browser comes back as an `app.crumb://signed-in?code=…` link
+    /// (`crumb_core::app_link::signed_in_code`) for [`Accounts::finish_app_sign_in`].
+    pub async fn start_app_sign_in(&self, provider: &str) -> Result<AppSignInStart, Error> {
+        #[derive(Deserialize)]
+        struct Started {
+            url: String,
+        }
+        let pair = crumb_core::app_link::AppSignIn::new();
+        let started: Started = self
+            .client
+            .fetch(self.req(Method::POST, "api/auth/app/start").json(&json!({
+                "provider": provider, "challenge": pair.challenge,
+            })))
+            .await?;
+        Ok(AppSignInStart {
+            url: started.url,
+            verifier: pair.verifier,
+        })
+    }
+
+    /// Swaps the code the browser brought back for this client's own session.
+    pub async fn finish_app_sign_in(&self, code: &str, verifier: &str) -> Result<(), Error> {
+        self.attempt(
+            self.req(Method::POST, "api/auth/app/redeem")
+                .json(&json!({ "code": code, "verifier": verifier })),
         )
         .await
     }

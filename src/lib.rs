@@ -5,6 +5,7 @@ pub use crumb_core::{categories, fractions, markdown, model, suggest, text_parse
 pub mod account_api;
 pub mod accounts;
 pub mod api;
+pub mod app_sign_in;
 pub mod auth;
 pub use crumb_work::browser;
 pub mod checks;
@@ -78,6 +79,8 @@ pub struct AppState {
     pub queued: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Unknown share tokens asked for, per client address (see `share::Misses`).
     pub share_misses: Arc<share::Misses>,
+    /// The native apps' Google and Apple sign-ins in progress (see `app_sign_in`).
+    pub app_sign_ins: Arc<app_sign_in::AppSignIns>,
     /// Sign-in attempts per client address and account (see [`throttle`]).
     pub logins: Arc<throttle::Throttle>,
     /// OAuth client registrations and similar counted actions.
@@ -161,6 +164,7 @@ impl AppState {
             checks: Arc::default(),
             queued: home.queued,
             share_misses: Arc::default(),
+            app_sign_ins: Arc::default(),
             logins: Arc::default(),
             rates: Arc::default(),
             video_jobs,
@@ -231,6 +235,7 @@ pub fn app(state: AppState) -> Router {
         .merge(api::routes())
         .merge(account_api::routes())
         .merge(social::routes())
+        .merge(app_sign_in::routes())
         // Hosted: the rest of /api/auth/* is Better Auth's
         .route("/api/auth/{*rest}", axum::routing::any(hosted::proxy))
         .merge(oauth::routes())
