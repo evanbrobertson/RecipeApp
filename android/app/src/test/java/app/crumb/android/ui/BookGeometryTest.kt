@@ -5,21 +5,21 @@ import app.crumb.android.ui.books.BookLean
 import app.crumb.android.ui.books.bookColor
 import app.crumb.android.ui.books.bookLean
 import app.crumb.android.ui.books.bookSize
-import app.crumb.android.ui.books.seeded
+import app.crumb.core.seeded
 import app.crumb.android.ui.books.spineBand
 import app.crumb.android.ui.books.stackBooks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** Expected values come from running web/src/lib/books.ts on the same books. */
+/** Expected values come from running web/src/lib/books.ts on the same books; core is pinned to them too. */
 class BookGeometryTest {
     private val books = (1L..7L).map { CookbookListItem(id = it, name = "Book $it", recipeCount = it * 3) }
 
     @Test fun seededMatchesTheWeb() {
-        assertEquals(0.461531434383, seeded(1), 1e-9)
-        assertEquals(0.520363897638, seeded(2), 1e-9)
-        assertEquals(0.001548065542, seeded(3), 1e-9)
+        assertEquals(0.461531434383, seeded(1, 0), 1e-9)
+        assertEquals(0.520363897638, seeded(2, 0), 1e-9)
+        assertEquals(0.001548065542, seeded(3, 0), 1e-9)
     }
 
     @Test fun sizesAndLeansMatchTheWeb() {

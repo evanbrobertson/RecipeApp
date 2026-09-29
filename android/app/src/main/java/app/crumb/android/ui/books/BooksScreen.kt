@@ -229,7 +229,7 @@ fun BookColorPicker(value: String, onChange: (String) -> Unit) {
                         .size(26.dp, 40.dp)
                         .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
                         .background(look.cloth)
-                        .border(1.dp, c.ink.copy(alpha = if (look.outlined) 0.22f else 0.16f), RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
+                        .border(1.dp, c.ink.copy(alpha = if (look.outlined) EdgeAlpha else 0.16f), RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
                 )
                 if (selected) {
                     Box(

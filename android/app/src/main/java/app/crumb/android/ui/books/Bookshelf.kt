@@ -203,7 +203,7 @@ fun Spine(book: CookbookListItem, towerLen: Dp, atFoot: Boolean, pulled: Boolean
                 // A faint hairline keeps dark covers visible on a dark shelf; cream gets a firmer edge
                 val px = 1.dp.toPx()
                 drawRoundRect(
-                    if (look.outlined) Color(0x381C2B22) else hairline,
+                    look.edge?.copy(alpha = EdgeAlpha) ?: hairline,
                     topLeft = Offset(px / 2, px / 2),
                     size = Size(this.size.width - px, this.size.height - px),
                     cornerRadius = CornerRadius(3.dp.toPx()),

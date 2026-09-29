@@ -198,7 +198,7 @@ private fun Cover(book: CookbookListItem, look: BookLook, open: Float, fade: Flo
                     .drawBehind {
                         drawRect(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.22f), 0.07f to Color.Transparent))
                     }
-                    .then(if (look.outlined) Modifier.border(1.dp, Color(0x381C2B22), RoundedCornerShape(16.dp)) else Modifier)
+                    .then(look.edge?.let { Modifier.border(1.dp, it.copy(alpha = EdgeAlpha), RoundedCornerShape(16.dp)) } ?: Modifier)
                     .padding(28.dp),
             ) {
                 // A foil frame with a second hairline 5dp outside it
