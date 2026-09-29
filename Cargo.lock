@@ -1004,6 +1004,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "url",
 ]
 
 [[package]]
