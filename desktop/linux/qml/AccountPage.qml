@@ -42,7 +42,7 @@ Item {
     }
 
     function day(secs) {
-        return Qt.locale().toString(new Date(secs * 1000), "d MMM yyyy")
+        return Core.dateLabel(secs * 1000, -new Date(secs * 1000).getTimezoneOffset())
     }
 
     function toast(t) {
