@@ -6,7 +6,7 @@
  * A YouTube video goes to Crumb's Add page instead, with what this browser read of it (see
  * youtube.ts): held in session storage for that one tab until its content script takes it.
  */
-import { addVideoUrl, crumbOrigin, load, previewUrl, readable, save } from "./crumb"
+import { addVideoUrl, crumbOrigin, load, mayOfferItself, previewUrl, readable, save } from "./crumb"
 import type { Message, ReadVideo, Waiting } from "./messages"
 import { videoId, type VideoReading } from "./youtube"
 
@@ -82,7 +82,10 @@ async function handle(message: Message, sender: chrome.runtime.MessageSender): P
       // Only the page the cook is on can name itself, and only its own origin
       const origin = crumbOrigin(message.origin)
       const from = sender.tab?.url ? new URL(sender.tab.url).origin : null
-      if (origin && origin === from) await save({ crumb: origin })
+      // Never replaces a Crumb that's already set: changing it is for the settings page
+      if (origin && origin === from && mayOfferItself(origin) && !(await load()).crumb) {
+        await save({ crumb: origin })
+      }
       return
     }
     case "settings":

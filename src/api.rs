@@ -18,7 +18,10 @@ use crate::model::{
 use crate::recipes::{self, CookbookPatch, EventKind, ImportSummary};
 use crate::suggestions;
 
-const MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
+/// One file: a Crumb backup is about 10 KB a recipe; a Paprika export with photos is the big case.
+const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
+/// Everything one import request may carry; the body limit is a little over it for the framing.
+const MAX_UPLOAD_BYTES: usize = 2 * MAX_FILE_BYTES;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -29,7 +32,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/export", routing::get(export))
         .route(
             "/api/import/files",
-            routing::post(import_files).layer(DefaultBodyLimit::max(10 * MAX_FILE_BYTES)),
+            routing::post(import_files)
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024 * 1024)),
         )
         .route(
             "/api/recipes",
@@ -125,12 +129,13 @@ async fn health(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
 
 async fn login(
     crate::Scoped(state): crate::Scoped,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
     let body = json_body(&body)?;
     if state.config.accounts() || state.config.hosted() {
-        return crate::account_api::log_in(&state, &headers, &body).await;
+        return crate::account_api::log_in(&state, &ip, &headers, &body).await;
     }
     let password = body
         .get("password")
@@ -140,11 +145,11 @@ async fn login(
     if !state.config.auth_enabled() {
         return Ok(Json(json!({"ok": true})).into_response());
     }
+    let attempt = state.login_attempt(&ip, "password")?;
     if !auth::check_password(&state.config, password) {
-        // Slow down guessing
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         return Err(AppError::new(401, "Incorrect password"));
     }
+    state.login_succeeded(&attempt);
     let mut res = Json(json!({"ok": true})).into_response();
     if let Some(cookie) = auth::login_cookie(&state.config, &headers) {
         res.headers_mut().append(header::SET_COOKIE, cookie);
@@ -320,8 +325,12 @@ async fn import_files(
     crate::Scoped(state): crate::Scoped,
     mut multipart: Multipart,
 ) -> AppResult<Json<Vec<ImportSummary>>> {
+    // Streamed: each file is checked while it arrives, so an oversized one is dropped as soon as
+    // it crosses the limit instead of being held whole first.
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    while let Some(field) = multipart
+    let mut results = Vec::new();
+    let mut total = 0usize;
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?
@@ -329,23 +338,36 @@ async fn import_files(
         let Some(name) = field.file_name().map(String::from) else {
             continue;
         };
-        let data = field
-            .bytes()
+        let mut data = Vec::new();
+        let mut too_big = false;
+        while let Some(chunk) = field
+            .chunk()
             .await
-            .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?;
-        if !data.is_empty() {
-            files.push((name, data.to_vec()));
+            .map_err(|e| AppError::bad_request(format!("Invalid upload ({e})")))?
+        {
+            total += chunk.len();
+            if total > MAX_UPLOAD_BYTES {
+                return Err(AppError::bad_request("Upload is over 50 MB"));
+            }
+            if !too_big {
+                if data.len() + chunk.len() > MAX_FILE_BYTES {
+                    too_big = true;
+                    data = Vec::new();
+                } else {
+                    data.extend_from_slice(&chunk);
+                }
+            }
+        }
+        if too_big {
+            results.push(ImportSummary::failed(&name, "File is over 25 MB"));
+        } else if !data.is_empty() {
+            files.push((name, data));
         }
     }
-    if files.is_empty() {
+    if files.is_empty() && results.is_empty() {
         return Err(AppError::bad_request("No files uploaded"));
     }
-    let mut results = Vec::new();
     for (name, data) in files {
-        if data.len() > MAX_FILE_BYTES {
-            results.push(ImportSummary::failed(&name, "File is over 50 MB"));
-            continue;
-        }
         results.push(recipes::import_file(&state, &name, data).await);
     }
     Ok(Json(results))

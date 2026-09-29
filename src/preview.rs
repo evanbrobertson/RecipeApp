@@ -42,6 +42,8 @@ pub const TEMPLATE: &str = "shell/preview/index.html";
 const KEEP: Duration = Duration::from_secs(30 * 60);
 /// Scrapes kept at once, across households; the oldest go first.
 const MAX_KEPT: usize = 64;
+/// Scrapes one household may have kept, so one box can't push everyone else's out.
+const MAX_KEPT_PER_HOUSEHOLD: usize = 8;
 
 type Key = (HouseholdId, String);
 
@@ -57,6 +59,21 @@ fn kept() -> std::sync::MutexGuard<'static, HashMap<Key, (Instant, Scraped)>> {
 
 fn keep(state: &AppState, url: &str, scraped: &Scraped) {
     let mut map = kept();
+    let key = (state.household, url.to_string());
+    // A household over its own share loses its own oldest first
+    while !map.contains_key(&key)
+        && map.keys().filter(|(h, _)| *h == state.household).count() >= MAX_KEPT_PER_HOUSEHOLD
+    {
+        let Some(oldest) = map
+            .iter()
+            .filter(|((h, _), _)| *h == state.household)
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
     while map.len() >= MAX_KEPT {
         let Some(oldest) = map
             .iter()
@@ -67,10 +84,7 @@ fn keep(state: &AppState, url: &str, scraped: &Scraped) {
         };
         map.remove(&oldest);
     }
-    map.insert(
-        (state.household, url.to_string()),
-        (Instant::now(), scraped.clone()),
-    );
+    map.insert(key, (Instant::now(), scraped.clone()));
 }
 
 fn peek(state: &AppState, url: &str) -> Option<Scraped> {
@@ -298,5 +312,34 @@ mod tests {
         assert!(trusted(&with("same-origin")));
         assert!(!trusted(&with("same-site")));
         assert!(!trusted(&with("cross-site")));
+    }
+
+    #[test]
+    fn one_household_cannot_push_out_anothers_kept_scrape() {
+        let home = AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            crate::config::Config::default(),
+            crate::browser::Browser::disabled(),
+        );
+        let mut other = home.clone();
+        other.household = 7_777;
+        let scraped = Scraped {
+            recipe: crate::model::RecipeFields::default(),
+            crumb: None,
+        };
+        keep(&other, "https://other.test/mine", &scraped);
+        for i in 0..MAX_KEPT * 2 {
+            keep(&home, &format!("https://flood.test/{i}"), &scraped);
+        }
+        assert!(peek(&other, "https://other.test/mine").is_some());
+        let mine = kept().keys().filter(|(h, _)| *h == home.household).count();
+        assert_eq!(mine, MAX_KEPT_PER_HOUSEHOLD);
+        // Its own newest are the ones kept
+        assert!(peek(&home, &format!("https://flood.test/{}", MAX_KEPT * 2 - 1)).is_some());
+        assert!(peek(&home, "https://flood.test/0").is_none());
+        take(&other, "https://other.test/mine");
+        for i in 0..MAX_KEPT * 2 {
+            take(&home, &format!("https://flood.test/{i}"));
+        }
     }
 }

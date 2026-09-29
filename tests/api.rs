@@ -7413,3 +7413,424 @@ async fn previews_are_behind_the_login() {
     let to = headers[header::LOCATION].to_str().unwrap();
     assert!(to.starts_with("/login?next=%2Fpreview%3Furl%3D"), "{to}");
 }
+
+#[tokio::test]
+async fn import_refuses_archive_bombs_and_oversized_uploads() {
+    use std::io::Write;
+    let t = TestApp::new(None);
+    let upload = |name: &str, data: Vec<u8>| {
+        let boundary = "XBOMB";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend(data);
+        body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
+        Request::builder()
+            .method("POST")
+            .uri("/api/import/files")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    };
+    // 30 MB of zeros, a few KB gzipped: over the per-file cap once unpacked
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    e.write_all(&vec![0u8; 30 * 1024 * 1024]).unwrap();
+    let bomb = e.finish().unwrap();
+    assert!(bomb.len() < 1_000_000);
+    let (status, _, text) = t.send(upload("bomb.txt.gz", bomb)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert!(results[0]["error"].as_str().is_some(), "{text}");
+
+    // A file over 25 MB is refused while it streams in, and says so
+    let (status, _, text) = t
+        .send(upload("big.txt", vec![b'a'; 26 * 1024 * 1024]))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(results[0]["error"], "File is over 25 MB");
+
+    // More than the whole request may carry is a 4xx before anything is imported
+    let (status, _, _) = t
+        .send(upload("huge.txt", vec![b'a'; 60 * 1024 * 1024]))
+        .await;
+    assert!(status.is_client_error(), "{status}");
+}
+
+fn login_request(password: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "password": password }).to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn password_guesses_back_off_even_in_parallel() {
+    let t = TestApp::new(Some("secret"));
+    // A burst of parallel wrong guesses: only the free tries get an answer, the rest wait
+    let replies = futures_util::future::join_all(
+        (0..30).map(|i| t.send(login_request(&format!("guess{i}")))),
+    )
+    .await;
+    let wrong = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::UNAUTHORIZED)
+        .count();
+    let limited = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(wrong, 5, "only the free tries are checked");
+    assert_eq!(limited, 25);
+    // Backing off means even the right password waits its turn
+    let (status, _, text) = t.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{text}");
+    assert!(text.contains("Try again in"), "{text}");
+}
+
+#[tokio::test]
+async fn a_good_password_clears_the_count() {
+    let t = TestApp::new(Some("secret"));
+    for _ in 0..4 {
+        let (status, _, _) = t.send(login_request("nope")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(t.send(login_request("secret")).await.0, StatusCode::OK);
+    for _ in 0..4 {
+        assert_eq!(
+            t.send(login_request("nope")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}
+
+fn consent_query(client_id: &str, redirect: &str) -> String {
+    serde_urlencoded::to_string([
+        ("client_id", client_id),
+        ("redirect_uri", redirect),
+        ("state", "s"),
+        (
+            "code_challenge",
+            "abcabcabcabcabcabcabcabcabcabcabcabcabcabcabc",
+        ),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ])
+    .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_password_guesses_share_the_login_limit() {
+    let t = TestApp::new(Some("secret"));
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "Claude", "redirect_uris": ["https://claude.ai/cb"]})),
+        )
+        .await;
+    let q = consent_query(
+        client["client_id"].as_str().unwrap(),
+        "https://claude.ai/cb",
+    );
+    let post = |password: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/authorize")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!("{q}&action=allow&password={password}")))
+            .unwrap()
+    };
+    for _ in 0..5 {
+        let (status, _, html) = t.send(post("nope")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Incorrect password"));
+    }
+    // The login form's own attempts count too
+    assert_eq!(
+        t.send(login_request("nope")).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    let (_, _, html) = t.send(post("secret")).await;
+    assert!(html.contains("Try again in"), "{html}");
+}
+
+#[tokio::test]
+async fn session_cookies_depend_on_the_servers_secret() {
+    let a = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![1; 32];
+    });
+    let b = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![2; 32];
+    });
+    let (status, headers, _) = a.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    let pair = headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let with_cookie = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, pair.clone())
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(a.send(with_cookie("/api/recipes")).await.0, StatusCode::OK);
+    assert_eq!(
+        b.send(with_cookie("/api/recipes")).await.0,
+        StatusCode::UNAUTHORIZED,
+        "same password, other secret: not a valid session"
+    );
+}
+
+#[tokio::test]
+async fn oauth_registration_is_limited_and_pruned() {
+    let t = TestApp::new(Some("secret"));
+    let register = |name: &str| {
+        t.json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": name, "redirect_uris": ["https://a.example/cb"]})),
+        )
+    };
+    // Old clients nobody connected are dropped when new ones register; used ones stay
+    {
+        let conn = t.state.db.lock();
+        let now = crumb::model::now_secs();
+        for (id, age) in [("stale", 30 * 86400), ("fresh", 60), ("used", 30 * 86400)] {
+            conn.execute(
+                "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, 'x', '[]', ?2)",
+                rusqlite::params![id, now - age],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO oauth_tokens (hash, kind, client_id, expires_at, created_at) VALUES ('h', 'access', 'used', ?1, ?2)",
+            rusqlite::params![now + 1000, now],
+        )
+        .unwrap();
+    }
+    assert_eq!(register("one").await.0, StatusCode::CREATED);
+    let ids: Vec<String> = {
+        let conn = t.state.db.lock();
+        let mut stmt = conn
+            .prepare("SELECT id FROM oauth_clients ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert!(ids.contains(&"fresh".to_string()) && ids.contains(&"used".to_string()));
+    assert!(!ids.contains(&"stale".to_string()), "{ids:?}");
+
+    // Ten an hour from one address
+    for _ in 0..9 {
+        assert_eq!(register("more").await.0, StatusCode::CREATED);
+    }
+    assert_eq!(register("too many").await.0, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn the_consent_screen_does_not_let_a_name_pose_as_claude() {
+    let t = TestApp::new(Some("secret"));
+    let screen = async |name: &str, redirect: &str| {
+        let (_, client) = t
+            .json(
+                "POST",
+                "/oauth/register",
+                Some(json!({"client_name": name, "redirect_uris": [redirect]})),
+            )
+            .await;
+        let q = consent_query(client["client_id"].as_str().unwrap(), redirect);
+        t.send(get(&format!("/oauth/authorize?{q}"))).await.2
+    };
+    let html = screen("Claude", "https://attacker.example/cb").await;
+    assert!(
+        html.contains("Connect an app at <code>attacker.example</code>?"),
+        "{html}"
+    );
+    assert!(html.contains("calling itself"));
+    assert!(!html.contains("Connect Claude?"));
+    let html = screen("Claude", "https://claude.ai/api/mcp/auth_callback").await;
+    assert!(html.contains("Connect Claude?"));
+}
+
+#[tokio::test]
+async fn state_changes_from_other_sites_are_refused() {
+    let t = TestApp::new(None);
+    let post = |extra: &[(&str, &str)]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/recipes/bulk-delete")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::HOST, "crumb.test");
+        for (k, v) in extra {
+            req = req.header(*k, *v);
+        }
+        req.body(Body::from(r#"{"ids":[1]}"#)).unwrap()
+    };
+    for site in ["cross-site", "same-site"] {
+        let (status, _, body) = t.send(post(&[("sec-fetch-site", site)])).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{site}: {body}");
+    }
+    // No Fetch Metadata: the Origin has to be this site's
+    let (status, _, _) = t.send(post(&[("origin", "https://evil.example")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = t.send(post(&[("origin", "null")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // This site's own pages, browsers that only send Origin, and non-browser clients pass
+    for extra in [
+        vec![("sec-fetch-site", "same-origin")],
+        vec![("origin", "http://crumb.test")],
+        vec![],
+    ] {
+        let (status, _, body) = t.send(post(&extra)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{extra:?}: {body}");
+    }
+    // Reads are never refused, and the protocol endpoints take other origins' calls
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/recipes")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::from(
+                    r#"{"redirect_uris":["https://claude.ai/cb"],"client_name":"c"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn mcp_checks_a_browsers_origin() {
+    let t = TestApp::with_config(|c| c.site_url = Some("https://crumb.example".into()));
+    let call = |origin: Option<&str>| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        req.body(Body::from(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        ))
+        .unwrap()
+    };
+    let (status, _, _) = t.send(call(Some("https://evil.example"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    for ok in [
+        None,
+        Some("https://crumb.example"),
+        Some("https://claude.ai"),
+    ] {
+        let (status, _, body) = t.send(call(ok)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{ok:?}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn shell_templates_stay_hidden_however_the_path_is_spelled() {
+    let t = TestApp::new(None);
+    for path in [
+        "/shell/preview/index.html",
+        "/%73hell/preview/index.html",
+        "/%53HELL/preview/index.html",
+        "/shell%2Fpreview/index.html",
+    ] {
+        let (status, _, body) = t.send(get(path)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!body.contains("previewBoot"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn app_pages_carry_a_csp_that_allows_only_their_own_scripts() {
+    let t = TestApp::new(None);
+    let (status, headers, _) = t.send(get("/add")).await;
+    assert_eq!(status, StatusCode::OK);
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+    assert!(csp.contains("object-src 'none'") && csp.contains("frame-ancestors 'none'"));
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[tokio::test]
+async fn hsts_is_sent_over_https_only() {
+    let t = TestApp::with_config(|c| c.trust_proxy_headers = true);
+    let (_, headers, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/health")
+                .header("x-forwarded-proto", "https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert!(
+        headers[header::STRICT_TRANSPORT_SECURITY]
+            .to_str()
+            .unwrap()
+            .starts_with("max-age=")
+    );
+    let (_, headers, _) = t.send(get("/api/health")).await;
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[test]
+fn the_public_origin_ignores_forwarded_headers_unless_a_proxy_is_trusted() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("host", "real.example".parse().unwrap());
+    headers.insert("x-forwarded-host", "evil.example".parse().unwrap());
+    headers.insert("x-forwarded-proto", "https".parse().unwrap());
+    let mut config = Config::default();
+    assert_eq!(config.public_origin(&headers), "http://real.example");
+    config.trust_proxy_headers = true;
+    assert_eq!(config.public_origin(&headers), "https://evil.example");
+    config.site_url = Some("https://fixed.example/".into());
+    assert_eq!(config.public_origin(&headers), "https://fixed.example");
+}
+
+#[test]
+fn accounts_modes_refuse_to_start_without_a_fixed_address() {
+    use crumb::config::AuthMode;
+    let mut config = Config::default();
+    assert!(config.check().is_ok(), "password mode only warns");
+    config.auth_mode = AuthMode::Accounts;
+    assert!(config.check().unwrap_err().contains("SITE_URL"));
+    config.auth_mode = AuthMode::Hosted;
+    assert!(config.check().is_err());
+    config.site_url = Some("https://recipes.example".into());
+    assert!(config.check().is_ok());
+    config.site_url = None;
+    config.railway_domain = Some("app.up.railway.app".into());
+    assert!(config.check().is_ok());
+}

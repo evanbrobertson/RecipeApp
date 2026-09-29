@@ -6,7 +6,7 @@
  * On YouTube it reads the video's page for Crumb (see youtube.ts), and asks when a video says
  * it's a recipe. On the Crumb tab opened for a video, it hands that page what was read.
  */
-import { load, save, siteOf } from "./crumb"
+import { load, mayOfferItself, save, siteOf } from "./crumb"
 import { isRecipeItemType, recipeInJsonLd, type Found } from "./detect"
 import { send, type ReadVideo, type VideoForCrumb, type Waiting } from "./messages"
 import { showToast } from "./toast"
@@ -37,15 +37,20 @@ function isCrumbApp(): boolean {
   return document.querySelector('meta[name="application-name"][content="Crumb"]') !== null
 }
 
+/**
+ * Any page can say it is a Crumb, so this only asks: the full address is shown, and it's saved
+ * only if the cook says it's theirs. Once a Crumb is set, only the settings page changes it.
+ */
 function offerConnect() {
   const origin = location.origin
+  if (!mayOfferItself(origin)) return
   showToast({
-    title: "Use this Crumb with the extension?",
-    detail: location.host,
-    timeoutMs: TOAST_MS,
+    title: "Is this your Crumb?",
+    detail: origin,
+    note: "Only say yes if this is your own Crumb. Recipes you read will be sent to this address.",
     actions: [
       {
-        label: "Use this Crumb",
+        label: "Yes, use this address",
         primary: true,
         run: () => void send({ type: "connect", origin }),
       },
@@ -154,7 +159,8 @@ async function main() {
   const settings = await load()
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) return onYouTube(settings)
   if (!settings.crumb) {
-    if (isCrumbApp()) offerConnect()
+    // A recipe page that calls itself a Crumb is not offered: nothing but a fake would
+    if (isCrumbApp() && !recipeOnPage()) offerConnect()
     // Until a Crumb is set, recipe pages still offer (and the click opens the settings)
   } else if (location.origin === settings.crumb) {
     return handOverVideo()

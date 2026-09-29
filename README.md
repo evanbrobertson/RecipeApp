@@ -372,7 +372,7 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `HOSTED_HOME_OWNER` | No         | Hosted: the email whose household gets the recipes already in `DATABASE_PATH` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | No | Accounts: Sign in with Google (hosted: set on the auth service) |
 | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` | No | Accounts: Sign in with Apple (hosted: set on the auth service) |
-| `SITE_URL`          | No         | Public URL. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically         |
+| `SITE_URL`          | Accounts, hosted | Public URL; the server won't start without it in those modes. On Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically |
 | `DATABASE_PATH`     | No         | SQLite file. Defaults to the Railway volume, or `.data/recipes.db` locally    |
 | `ANTHROPIC_API_KEY` | No         | Turns on Wee Chef (reads pasted text, files and photos, writes "Try next" blurbs and ideas) |
 | `OPENAI_API_KEY`    | No         | The same with OpenAI instead                                                  |
@@ -390,6 +390,8 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `HOST` / `PORT`     | No         | Listen address, default `0.0.0.0:3000`                                        |
 | `CHROMIUM_PATH`     | No         | Chromium for the scraping fallback (set in the Docker image; auto-detected)   |
 | `BROWSER_SCRAPING`  | No         | Set to `off` to disable the headless browser fallback                         |
+| `BROWSER_NO_SANDBOX` | No        | Set to `1` if Chromium can't start sandboxed on your host (the log says so); off by default |
+| `CRUMB_RUN_AS_ROOT` | No         | Docker only: `1` skips the entrypoint's drop to the unprivileged `crumb` user |
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |

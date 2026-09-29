@@ -30,6 +30,20 @@ export function crumbOrigin(raw: string): string | null {
   }
 }
 
+/**
+ * Whether a page may offer itself as the cook's Crumb: over HTTPS, or a local one for
+ * development. A page can only claim to be a Crumb, so the cook confirms it (see content.ts).
+ */
+export function mayOfferItself(origin: string): boolean {
+  try {
+    const url = new URL(origin)
+    if (url.protocol === "https:") return true
+    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
 /** The Crumb page that reads `page` and offers to add it (src/preview.rs). */
 export function previewUrl(crumb: string, page: string): string {
   return `${crumb}/preview?url=${encodeURIComponent(page)}`

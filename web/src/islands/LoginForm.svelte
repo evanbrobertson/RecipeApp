@@ -3,7 +3,7 @@
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
 import { onMount, tick } from "svelte"
   import SocialButtons from "../components/SocialButtons.svelte"
-  import { type Status, accounts as client, authStatus, socialError } from "../lib/account"
+  import { type Status, accounts as client, authStatus, safeNext, socialError } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
 
   /**
@@ -68,10 +68,9 @@ import { onMount, tick } from "svelte"
     passkeys!.signIn().then(signedIn, failed)
   }
 
-  /** Where to go once signed in: only same-origin paths ("//host" would be an open redirect). */
+  /** Where to go once signed in: only paths on this origin (see safeNext). */
   function nextPath() {
-    const target = new URLSearchParams(location.search).get("next") ?? "/"
-    return target.startsWith("/") && !target.startsWith("//") ? target : "/"
+    return safeNext(new URLSearchParams(location.search).get("next"))
   }
 
   function goNext() {

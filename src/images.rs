@@ -254,14 +254,15 @@ enum Failure {
 }
 
 /// The answer for a photo that couldn't be made: the original link, for a browser to load
-/// itself, or a 404.
-fn unavailable(failure: Failure, image: &str) -> Response {
+/// itself, or a 404. Only signed-in requests are sent on: a share page's photo is public, and
+/// its creator chooses the link, so it must not redirect visitors to wherever that points.
+fn unavailable(failure: Failure, image: &str, caching: Caching) -> Response {
     let original = url::Url::parse(image)
         .ok()
         .filter(|u| matches!(u.scheme(), "http" | "https"))
         .and_then(|u| HeaderValue::from_str(u.as_str()).ok());
     match (failure, original) {
-        (Failure::Elsewhere, Some(location)) => {
+        (Failure::Elsewhere, Some(location)) if caching == Caching::Private => {
             let mut res = StatusCode::TEMPORARY_REDIRECT.into_response();
             let h = res.headers_mut();
             h.insert(header::LOCATION, location);
@@ -408,7 +409,7 @@ pub async fn serve_photo(
     let name = format!("{source}-{}", variant.file_suffix());
 
     if let Some(failure) = images.failed_recently(&source) {
-        return unavailable(failure, &image);
+        return unavailable(failure, &image, caching);
     }
     let read_cached = || async {
         match images.cached_path(&name) {
@@ -426,7 +427,7 @@ pub async fn serve_photo(
         return image_response(bytes, &key, variant, current, caching);
     }
     if let Some(failure) = images.failed_recently(&source) {
-        return unavailable(failure, &image);
+        return unavailable(failure, &image, caching);
     }
 
     let Ok(_permit) = images.work.acquire().await else {
@@ -451,7 +452,7 @@ pub async fn serve_photo(
             {
                 tracing::warn!("[img] recipe {id}: couldn't flag its photo: {e:?}");
             }
-            return unavailable(failure, &image);
+            return unavailable(failure, &image, caching);
         }
     };
     if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
@@ -474,7 +475,7 @@ pub async fn serve_photo(
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
             images.record_failure(source, elsewhere);
-            unavailable(elsewhere, &image)
+            unavailable(elsewhere, &image, caching)
         }
     }
 }
@@ -907,16 +908,26 @@ mod tests {
     #[test]
     fn a_photo_a_browser_may_get_is_sent_to_the_original() {
         let photo = "https://example.com/wp-content/uploads/crepes.jpg";
-        let res = unavailable(Failure::Elsewhere, photo);
+        let res = unavailable(Failure::Elsewhere, photo, Caching::Private);
         assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(res.headers()[header::LOCATION], photo);
         assert_eq!(
-            unavailable(Failure::Gone, photo).status(),
+            unavailable(Failure::Gone, photo, Caching::Private).status(),
             StatusCode::NOT_FOUND
         );
         let embedded = "data:image/png;base64,AAAA";
         assert_eq!(
-            unavailable(Failure::Elsewhere, embedded).status(),
+            unavailable(Failure::Elsewhere, embedded, Caching::Private).status(),
+            StatusCode::NOT_FOUND
+        );
+        // A public share page's photo never redirects
+        assert_eq!(
+            unavailable(Failure::Elsewhere, photo, Caching::Public).status(),
+            StatusCode::NOT_FOUND
+        );
+        let ftp = "ftp://example.com/a.jpg";
+        assert_eq!(
+            unavailable(Failure::Elsewhere, ftp, Caching::Private).status(),
             StatusCode::NOT_FOUND
         );
     }

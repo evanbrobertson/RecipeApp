@@ -109,6 +109,25 @@ export function authStatus(): Promise<Status> {
   return status
 }
 
+/**
+ * A path on this site to go to after signing in, or "/". Parsed the way the browser will read it
+ * (so "/\\host" and "/<TAB>/host", which become "//host", are caught) and required to stay on
+ * this origin.
+ */
+export function safeNext(target: string | null | undefined): string {
+  if (!target || !target.startsWith("/")) return "/"
+  for (const ch of target) {
+    const code = ch.codePointAt(0)!
+    if (code < 0x20 || code === 0x7f || ch === "\\") return "/"
+  }
+  try {
+    const u = new URL(target, location.origin)
+    return u.origin === location.origin ? u.pathname + u.search + u.hash : "/"
+  } catch {
+    return "/"
+  }
+}
+
 const secs = (date: string | number | Date) => Math.floor(new Date(date).getTime() / 1000)
 
 export interface Accounts {
@@ -499,7 +518,7 @@ const hosted: Accounts = {
       return made.url
     }
     // Back to the invite page to accept, signed in (it reads the invite from the fragment)
-    const callbackURL = to.intent === "invite" ? `/invite#${to.invite}` : (to.next ?? "/")
+    const callbackURL = to.intent === "invite" ? `/invite#${to.invite}` : safeNext(to.next)
     const made = await api<Started>("/api/auth/sign-in/social", {
       method: "POST",
       body: { provider, callbackURL, errorCallbackURL: "/login" },

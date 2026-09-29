@@ -106,7 +106,14 @@ ARG CRUMB_VERSION=""
 ENV SENTRY_RELEASE=$CRUMB_VERSION
 COPY --from=server /app/target/release/crumb /usr/local/bin/crumb
 COPY --from=web /web/dist /app/web
+# The server and Chromium (which opens attacker-chosen pages) run as an unprivileged user, never
+# root. The entrypoint starts as root only to hand a volume that's still root-owned to `crumb`,
+# then drops privileges (scripts/docker-entrypoint.sh). /app/.data is the default data directory.
+RUN useradd --system --uid 10001 --create-home --home-dir /home/crumb --shell /usr/sbin/nologin crumb \
+    && mkdir -p /app/.data && chown crumb:crumb /app/.data
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENV HOME=/home/crumb
 EXPOSE 3000
 # tini as PID 1 reaps Chromium's orphaned helper processes
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["crumb"]

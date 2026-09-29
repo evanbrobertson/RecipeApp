@@ -13,6 +13,8 @@ export interface ToastAction {
 export interface ToastOptions {
   title: string
   detail?: string
+  /** A sentence of explanation under the detail. */
+  note?: string
   actions: ToastAction[]
   /** Gone after this long unless the pointer or focus is on it. */
   timeoutMs?: number
@@ -54,6 +56,7 @@ const STYLE = `
   grid-column: 2; margin: 0; color: var(--muted); font-size: 14px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.note { grid-column: 2 / -1; margin: 0; color: var(--muted); font-size: 14px; }
 .close {
   grid-row: 1; grid-column: 3; display: grid; place-items: center;
   width: 32px; height: 32px; margin: -8px -8px 0 0; padding: 0; border: 0; border-radius: 999px;
@@ -117,6 +120,12 @@ export function showToast(options: ToastOptions) {
     detail.textContent = options.detail
     detail.title = options.detail
     card.append(detail)
+  }
+  if (options.note) {
+    const note = document.createElement("p")
+    note.className = "note"
+    note.textContent = options.note
+    card.append(note)
   }
   const actions = document.createElement("div")
   actions.className = "actions"
