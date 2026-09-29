@@ -589,7 +589,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
                         }
                         Text(
                             notes,
-                            style = CrumbText.hand.copy(fontSize = 26.sp, lineHeight = 30.sp),
+                            style = CrumbText.note,
                             color = c.ink,
                             modifier = Modifier.padding(top = 8.dp),
                         )

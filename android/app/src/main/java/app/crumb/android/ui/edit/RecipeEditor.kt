@@ -166,7 +166,7 @@ fun RecipeEditor(
                     { draft = draft.copy(notes = it) },
                     minLines = 3,
                     placeholder = "Less sugar next time…",
-                    textStyle = CrumbText.hand.copy(fontSize = 24.sp, lineHeight = 30.sp),
+                    textStyle = CrumbText.note,
                 )
                 VSpace(16.dp)
                 EditorLabel("Nutrition")

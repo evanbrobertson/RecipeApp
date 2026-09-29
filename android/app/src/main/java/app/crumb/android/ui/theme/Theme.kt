@@ -132,6 +132,9 @@ val NunitoSans = FontFamily(nunito(400), nunito(600), nunito(700), nunito(800))
 val DmSerif = FontFamily(Font(R.font.dm_serif_display))
 val Caveat = FontFamily(Font(R.font.caveat))
 
+/** The cook's notes (`--font-note`): Kalam, with the web's Latin subset. */
+val Kalam = FontFamily(Font(R.font.kalam))
+
 private val Body = TextStyle(fontFamily = NunitoSans)
 private val Serif = TextStyle(fontFamily = DmSerif, fontWeight = FontWeight.Normal)
 

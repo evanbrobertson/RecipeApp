@@ -57,6 +57,7 @@ import kotlin.math.sqrt
 import app.crumb.android.ui.theme.Caveat
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.DmSerif
+import app.crumb.android.ui.theme.Kalam
 import app.crumb.android.ui.theme.NunitoSans
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
@@ -83,6 +84,9 @@ object CrumbText {
     val hint = TextStyle(fontFamily = NunitoSans, fontSize = 13.sp, lineHeight = 18.sp)
     /** Handwriting: greetings and the cook's own notes, nothing else. */
     val hand = TextStyle(fontFamily = Caveat, fontWeight = FontWeight.Bold)
+
+    /** `.note-hand`: the cook's notes, on the recipe page and in the editor. */
+    val note = TextStyle(fontFamily = Kalam, fontWeight = FontWeight.Normal, fontSize = 21.sp, lineHeight = 31.5.sp)
 }
 
 enum class BtnStyle { Primary, Tile, Soft, Neutral, Outline, Ghost, Danger, Link }
