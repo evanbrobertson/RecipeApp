@@ -3,7 +3,7 @@ import type { CaptionSource, VideoRead, VideoReading } from "./youtube"
 
 /** What the content script asks the background for (it can't open tabs itself). */
 export type Message =
-  /** Read `url` in Crumb, in a new tab beside this one; `video` is what was read of a YouTube video. */
+  /** Read `url` in Crumb: a recipe in this tab, a video in a new one beside it (`video` is what was read of it). */
   | { type: "read"; url: string; video?: VideoReading }
   /** Use the Crumb at `origin` (the page the cook is on). */
   | { type: "connect"; origin: string }
