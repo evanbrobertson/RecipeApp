@@ -427,6 +427,8 @@ pub async fn start_link(state: &AppState, raw_url: &str) -> AppResult<Started> {
     }
     // A cooking video: its caption, or what's said and shown in it
     if crate::video::is_video_url(&url) {
+        // (a video site could be listed: its downloader is a fetch like any other)
+        crate::site_terms::guard(&url)?;
         return state.video_jobs.submit(state, &url).map(Started::Queued);
     }
     import_page(state, &url).await.map(Started::Done)
@@ -438,9 +440,8 @@ async fn import_page(state: &AppState, url: &str) -> AppResult<Imported> {
     let scraped = match crate::preview::take(state, url) {
         Some(scraped) => scraped,
         None => {
-            // A site whose terms forbid automated fetching: nothing is fetched. The cook's
-            // own browser can read it (the extension's `page`, taken above).
-            crate::site_terms::guard(url)?;
+            // A site whose terms forbid automated fetching is refused inside `scrape_page`.
+            // The cook's own browser can read it (the extension's `page`, taken above).
             crate::scraper::scrape_page(state, url).await?
         }
     };
@@ -763,7 +764,6 @@ pub async fn refresh_from_source(
             "Recipes from videos can't be refreshed from the video. Edit the recipe instead.",
         ));
     }
-    crate::site_terms::guard(&url)?;
     let mut scraped = crate::scraper::scrape_recipe(state, &url).await?;
     crate::checks::tidy(&mut scraped, crate::checks::TidyScope::Scrape);
 

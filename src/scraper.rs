@@ -814,8 +814,11 @@ pub async fn scrape_page(state: &AppState, url: &str) -> AppResult<Scraped> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(AppError::bad_request("Only http(s) links are supported."));
     }
-    // SITE TERMS: a check that the site's terms allow automated fetching goes here, first,
-    // before any network use (a site that forbids it stops the import; nothing below runs).
+    // SITE TERMS: the one place that guarantees no scrape of a listed host goes out: import,
+    // refresh, preview and MCP all come through here, and nothing below runs for a site whose
+    // terms forbid automated fetching (no page, API, relay, archive or browser). The extension's
+    // `page` never reaches this function.
+    crate::site_terms::guard(url)?;
     check_public(state, &parsed).await?;
 
     let started = std::time::Instant::now();
