@@ -1332,6 +1332,43 @@ pub fn device_name(agent: Option<String>) -> String {
     client::device_name(agent.as_deref())
 }
 
+/// How long a recipe in the trash has left: "12 days left", or "Goes for good today".
+/// Unix milliseconds.
+#[uniffi::export]
+pub fn trash_days_left(purge_at_ms: i64, now_ms: i64) -> String {
+    crumb_core::trash::days_left(purge_at_ms, now_ms)
+}
+
+/// The single delete's confirmation ("It goes to the trash, …").
+#[uniffi::export]
+pub fn trash_delete_one() -> String {
+    crumb_core::trash::DELETE_ONE.to_string()
+}
+
+/// The bulk delete's confirmation: "3 recipes will go to the trash, …".
+#[uniffi::export]
+pub fn trash_delete_many(count: u32) -> String {
+    crumb_core::trash::delete_many(count)
+}
+
+/// The toast after deleting: "Moved 3 recipes to the trash".
+#[uniffi::export]
+pub fn trash_moved(count: u32) -> String {
+    crumb_core::trash::moved_to_trash(count)
+}
+
+/// The toast after Undo: "Put back" or "Put back 3 recipes".
+#[uniffi::export]
+pub fn trash_put_back(count: u32) -> String {
+    crumb_core::trash::put_back(count)
+}
+
+/// "Empty the trash?"'s body.
+#[uniffi::export]
+pub fn trash_empty(count: u32) -> String {
+    crumb_core::trash::empty_trash(count)
+}
+
 #[cfg(test)]
 mod tests {
 
