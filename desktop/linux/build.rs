@@ -35,8 +35,6 @@ fn main() {
     .qt_module("Quick")
     .file("src/palette.rs")
     .file("src/session.rs")
-    .file("src/recipes.rs")
-    .file("src/recipe.rs")
     .file("src/smoke.rs")
     .file("src/core_bridge.rs")
     .file("src/store.rs")

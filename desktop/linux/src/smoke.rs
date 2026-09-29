@@ -13,6 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use core::pin::Pin;
 
+use crumb_core::model::{Recipe, Section};
+use serde_json::json;
+
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 
@@ -58,6 +61,64 @@ fn arg(name: &str) -> Option<String> {
 /// screenshot and quit. For comparing each screen with the web.
 pub fn shot() -> Option<String> {
     arg("shot")
+}
+
+/// The built-in recipe `--smoke-page recipe` renders, with a local hero (no network).
+pub fn fixture_recipe() -> Recipe {
+    Recipe {
+        id: 1,
+        url: Some("https://food.example/lemon-cake".to_string()),
+        source: "url".to_string(),
+        title: "Lemon Drizzle Cake".to_string(),
+        description: Some("A bright, tender loaf with a sharp lemon soak.".to_string()),
+        image: Some("qrc:/img/fixture.png".to_string()),
+        author: Some("Crumb".to_string()),
+        prep_time: Some("PT15M".to_string()),
+        cook_time: Some("PT45M".to_string()),
+        total_time: Some("PT1H".to_string()),
+        freeze_time: None,
+        recipe_yield: Some("8 slices".to_string()),
+        recipe_category: Some("Dessert".to_string()),
+        recipe_cuisine: Some("British".to_string()),
+        ingredients: vec![
+            Section {
+                name: Some("Cake".to_string()),
+                items: vec![
+                    "225 g unsalted butter, softened".to_string(),
+                    "225 g caster sugar".to_string(),
+                    "4 large eggs".to_string(),
+                    "2 lemons, zested".to_string(),
+                ],
+            },
+            Section {
+                name: Some("Drizzle".to_string()),
+                items: vec![
+                    "1 lemon, juiced".to_string(),
+                    "85 g caster sugar".to_string(),
+                ],
+            },
+        ],
+        instructions: vec![Section {
+            name: None,
+            items: vec![
+                "Heat the oven to 180°C and line a loaf tin.".to_string(),
+                "Cream the butter and sugar, then beat in the eggs one at a time.".to_string(),
+                "Fold in the flour and zest and bake for 45 minutes.".to_string(),
+                "Spoon the lemon juice and sugar over the warm cake.".to_string(),
+            ],
+        }],
+        nutrition: Some(json!({
+            "calories": "320 kcal",
+            "fatContent": "18 g",
+            "proteinContent": "5 g",
+        })),
+        notes: Some("It gets better the next day.".to_string()),
+        video: None,
+        video_embed: None,
+        original_url: None,
+        created_at: 0,
+        updated_at: 0,
+    }
 }
 
 /// Records a failed smoke assertion on the Rust side, alongside the Qt message handler.

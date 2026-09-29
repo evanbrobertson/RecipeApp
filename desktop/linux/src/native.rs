@@ -1,5 +1,5 @@
-//! Rust bindings to `src/native.cpp` (fonts, colour scheme, clipboard, links and the photo
-//! loader's session).
+//! Rust bindings to `src/native.cpp` (fonts, colour scheme, and the photo loader's session
+//! and icons).
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -21,12 +21,6 @@ pub mod qobject {
         #[rust_name = "prefers_dark"]
         fn crumbPrefersDark() -> bool;
 
-        #[rust_name = "set_clipboard_text"]
-        fn crumbSetClipboardText(text: &QString);
-
-        #[rust_name = "open_url"]
-        fn crumbOpenUrl(url: &QString) -> bool;
-
         #[rust_name = "install_network"]
         fn crumbInstallNetwork(engine: Pin<&mut QQmlApplicationEngine>);
 
@@ -36,6 +30,5 @@ pub mod qobject {
 }
 
 pub use qobject::{
-    add_application_font, application_font_family, install_network, open_url, prefers_dark,
-    set_clipboard_text, set_photo_session,
+    add_application_font, application_font_family, install_network, prefers_dark, set_photo_session,
 };

@@ -516,7 +516,7 @@ impl qobject::Api {
     }
 
     pub fn smoke_recipe(&self) -> QString {
-        let recipe = crate::recipe::fixture_recipe();
+        let recipe = crate::smoke::fixture_recipe();
         serde_json::to_string(&recipe)
             .map(|json| QString::from(&json))
             .unwrap_or_default()

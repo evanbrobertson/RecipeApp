@@ -11,8 +11,6 @@ mod fonts;
 mod native;
 mod network;
 mod palette;
-mod recipe;
-mod recipes;
 mod runtime;
 mod session;
 mod smoke;
