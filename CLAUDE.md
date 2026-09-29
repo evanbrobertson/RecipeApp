@@ -191,7 +191,7 @@ web/src/
   only the recipe (JSON-LD, else the recipe card, plus `og:image`/`og:title`, 512 KB max) in the cook's browser and the
   preview page (`via=extension`) posts it as `page` to `/api/preview` (or `/api/recipes/import`); the server parses it
   (`scraper::page::FromPage`), saves it under the link, never a URL from the payload, and scrapes only if it held no
-  recipe. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
+  recipe. The native apps use `POST /api/recipes/preview` `{url}` (`preview::api`, `Client::preview`) instead: `{status: "saved", id, title}`, `{status: "import"}` (video or shared cookbook) or `{status: "ready", recipe}`, keeping the scrape the same way. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
   `extension/`, released by `.github/workflows/extension.yml`.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.

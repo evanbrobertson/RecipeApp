@@ -7585,6 +7585,119 @@ async fn previews_are_behind_the_login() {
 }
 
 #[tokio::test]
+async fn the_apps_preview_a_link_as_json() {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    let counter = hits.clone();
+    let origin = axum::Router::new().route(
+        "/soup",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Leek Soup",
+                        "recipeIngredient": ["2 leeks", "1 potato"],
+                        "recipeInstructions": ["Sweat the leeks.", "Simmer & blend."]})
+                ))
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, origin).await.unwrap() });
+    let t = TestApp::new(None);
+    let url = format!("{site}/soup");
+    let hits = || hits.load(std::sync::atomic::Ordering::SeqCst);
+
+    // Read, tidied, not saved
+    let (status, res) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["status"], "ready");
+    assert_eq!(res["recipe"]["title"], "Leek Soup");
+    assert_eq!(res["recipe"]["url"], url);
+    assert_eq!(res["recipe"]["source"], "url");
+    assert!(res["recipe"].get("id").is_none() && res["recipe"].get("createdAt").is_none());
+    assert_eq!(res["recipe"]["ingredients"][0]["items"][0], "2 leeks");
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0, "{list}");
+    assert_eq!(hits(), 1);
+
+    // A second preview and the import both use the kept reading
+    let (_, again) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(again["status"], "ready");
+    let (status, saved) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["isNew"], true);
+    assert_eq!(hits(), 1);
+
+    // Now it's in the box
+    let (_, res) = t
+        .json("POST", "/api/recipes/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(
+        res,
+        json!({"status": "saved", "id": saved["id"], "title": "Leek Soup"})
+    );
+
+    // A cooking video is imported, not previewed
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://www.youtube.com/watch?v=Xy_djhH3WE4"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res, json!({"status": "import"}));
+
+    // Not a link, and a page without a recipe
+    for body in [json!({"url": "nope"}), json!({}), json!({"url": 5})] {
+        let (status, res) = t.json("POST", "/api/recipes/preview", Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{res}");
+        assert_eq!(res["message"], "Please enter a valid URL");
+    }
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": format!("{site}/nothing")})),
+        )
+        .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(res["message"].as_str().unwrap().contains("404"), "{res}");
+
+    // A listed site is refused as the page refuses it
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://www.allrecipes.com/recipe/1/apple-pie/"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{res}");
+    assert_eq!(res["code"], "site_terms");
+}
+
+#[tokio::test]
+async fn the_apps_preview_is_behind_the_login() {
+    let t = TestApp::new(Some("pw"));
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/preview",
+            Some(json!({"url": "https://example.com/soup"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{res}");
+}
+
+#[tokio::test]
 async fn import_refuses_archive_bombs_and_oversized_uploads() {
     use std::io::Write;
     let t = TestApp::new(None);
