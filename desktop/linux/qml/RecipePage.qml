@@ -334,7 +334,7 @@ Item {
     Modal {
         id: deleteModal
         title: "Delete this recipe?"
-        description: "It goes to the trash, where you can put it back for 30 days."
+        description: Core.trashDeleteOne()
         footer: [
             CrumbButton {
                 text: "Cancel"

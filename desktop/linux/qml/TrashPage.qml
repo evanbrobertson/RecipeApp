@@ -84,7 +84,7 @@ Item {
         readonly property int count: page.items ? page.items.length : 0
 
         title: "Empty the trash?"
-        description: Core.plural(count, "recipe") + " will be deleted for good. This can't be undone."
+        description: Core.emptyTrash(count)
         footer: [
             CrumbButton {
                 kind: "ghost"

@@ -195,7 +195,7 @@ Item {
     function restore(ids) {
         var next = function (i) {
             if (i === ids.length) {
-                ApplicationWindow.window.toast({ "title": ids.length === 1 ? "Put back" : "Put back " + ids.length + " recipes" })
+                ApplicationWindow.window.toast({ "title": Core.putBack(ids.length) })
                 page.load()
                 return
             }
@@ -218,7 +218,7 @@ Item {
             page.busy = false
             page.forgetViewed(ids)
             ApplicationWindow.window.toast({
-                "title": "Moved " + Core.plural(ids.length, "recipe") + " to the trash",
+                "title": Core.movedToTrash(ids.length),
                 "tone": "success",
                 "action": { "label": "Undo", "onselect": function () { page.restore(ids) } }
             })
@@ -704,8 +704,7 @@ Item {
     Modal {
         id: deleteModal
         title: "Delete recipes?"
-        description: Core.plural(page.selectedCount, "recipe") + " will go to the trash, where you can put "
-            + (page.selectedCount === 1 ? "it" : "them") + " back for 30 days."
+        description: Core.trashDeleteMany(page.selectedCount)
         footer: [
             CrumbButton {
                 kind: "ghost"

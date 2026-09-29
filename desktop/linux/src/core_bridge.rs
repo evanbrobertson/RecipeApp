@@ -7,7 +7,7 @@
 
 use crumb_core::model::Recipe;
 use crumb_core::{add, books, checks, client, editor, embed, format, home, ingredients, prep};
-use crumb_core::{categories, recipe_page};
+use crumb_core::{categories, recipe_page, trash};
 use cxx_qt_lib::QString;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -256,10 +256,31 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "dateLabel"]
         fn date_label(self: &Core, ms: f64, offset_minutes: i32) -> QString;
+        // ─── Trash ───
         /// "12 days left" / "Goes for good today": a trashed recipe's time left.
         #[qinvokable]
         #[cxx_name = "trashLeft"]
         fn trash_left(self: &Core, purge_ms: f64, now_ms: f64) -> QString;
+        /// The single delete's confirmation.
+        #[qinvokable]
+        #[cxx_name = "trashDeleteOne"]
+        fn trash_delete_one(self: &Core) -> QString;
+        /// The bulk delete's confirmation.
+        #[qinvokable]
+        #[cxx_name = "trashDeleteMany"]
+        fn trash_delete_many(self: &Core, n: i32) -> QString;
+        /// "Moved 3 recipes to the trash".
+        #[qinvokable]
+        #[cxx_name = "movedToTrash"]
+        fn moved_to_trash(self: &Core, n: i32) -> QString;
+        /// "Put back", or "Put back 3 recipes".
+        #[qinvokable]
+        #[cxx_name = "putBack"]
+        fn put_back(self: &Core, n: i32) -> QString;
+        /// "3 recipes will be deleted for good. This can't be undone."
+        #[qinvokable]
+        #[cxx_name = "emptyTrash"]
+        fn empty_trash(self: &Core, n: i32) -> QString;
 
         // ─── Add box ───
         /// `{mode, summary}`: mode is auto, link, text or scratch.
@@ -487,7 +508,22 @@ impl qobject::Core {
     }
 
     pub fn trash_left(&self, purge_ms: f64, now_ms: f64) -> QString {
-        q(home::trash_left(purge_ms as i64, now_ms as i64))
+        q(trash::days_left(purge_ms as i64, now_ms as i64))
+    }
+    pub fn trash_delete_one(&self) -> QString {
+        q(trash::DELETE_ONE.to_string())
+    }
+    pub fn trash_delete_many(&self, n: i32) -> QString {
+        q(trash::delete_many(n.max(0) as u32))
+    }
+    pub fn moved_to_trash(&self, n: i32) -> QString {
+        q(trash::moved_to_trash(n.max(0) as u32))
+    }
+    pub fn put_back(&self, n: i32) -> QString {
+        q(trash::put_back(n.max(0) as u32))
+    }
+    pub fn empty_trash(&self, n: i32) -> QString {
+        q(trash::empty_trash(n.max(0) as u32))
     }
 
     pub fn detect(&self, text: QString) -> QString {
