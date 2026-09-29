@@ -24,3 +24,4 @@ pub mod staples;
 pub mod suggest;
 pub mod sun;
 pub mod text_parser;
+pub mod trash;
