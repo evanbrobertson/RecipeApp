@@ -824,6 +824,12 @@ pub fn date_label(ms: i64, offset_minutes: i32) -> String {
     home::date_label(ms, offset_minutes)
 }
 
+/// How long a recipe has left in the trash ("12 days left", "Goes for good today").
+#[uniffi::export]
+pub fn trash_left(purge_ms: i64, now_ms: i64) -> String {
+    home::trash_left(purge_ms, now_ms)
+}
+
 /// How a recipe got into the box ("from a link"), from its `source`; null when unknown.
 #[uniffi::export]
 pub fn source_label(source: String) -> Option<String> {
@@ -1476,6 +1482,7 @@ mod tests {
         assert_eq!(book_look(Some("cream".into())).bands.len(), 2);
 
         assert_eq!(date_label(0, 0), "Jan 1, 1970");
+        assert_eq!(trash_left(86_400_000 * 3, 0), "3 days left");
         assert_eq!(
             cook_progress(Some(2), Some(8)),
             Some(CookProgress { step: 3, of: 8 })
