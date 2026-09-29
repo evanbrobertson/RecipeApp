@@ -43,6 +43,33 @@ pub fn fix_text(
     }
 }
 
+/// A field's name in the review list, one and many: "step", "steps".
+fn field_noun(field: &str) -> (&'static str, &'static str) {
+    match field {
+        "ingredients" => ("ingredient", "ingredients"),
+        "instructions" => ("step", "steps"),
+        "notes" => ("note", "notes"),
+        "totalTime" => ("time", "times"),
+        "image" => ("broken photo link", "broken photo links"),
+        _ => ("thing", "things"),
+    }
+}
+
+/// What a recipe in the review list has to look at, most first: "2 steps · 1 ingredient".
+/// `fields` is the check's suggestions per field, in the server's order (ties keep it).
+pub fn review_summary(fields: &[(String, u32)]) -> String {
+    let mut sorted: Vec<&(String, u32)> = fields.iter().collect();
+    sorted.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    sorted
+        .into_iter()
+        .map(|(field, n)| {
+            let (one, many) = field_noun(field);
+            format!("{n} {}", if *n == 1 { one } else { many })
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Why a flagged line might need a look: “Sauce:” {looks like a section heading}.
 pub fn review_text(kind: &str) -> &'static str {
     match kind {
@@ -53,11 +80,13 @@ pub fn review_text(kind: &str) -> &'static str {
         "merged" => "might be two ingredients on one line",
         "step" => "looks like a step, not an ingredient",
         "ingredient" => "looks like an ingredient, not a step",
+        // A photo link the site refuses: the flag's text is the link, so this stands alone
+        "dead_photo" => "The photo link doesn't work any more",
         _ => "might need a look",
     }
 }
 
-fn plural(n: u32, one: &str) -> String {
+pub fn plural(n: u32, one: &str) -> String {
     if n == 1 {
         format!("{n} {one}")
     } else {
@@ -123,6 +152,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn review_summaries_put_the_most_first() {
+        let fields = [
+            ("ingredients".to_string(), 1),
+            ("instructions".to_string(), 2),
+            ("image".to_string(), 1),
+            ("mystery".to_string(), 3),
+        ];
+        assert_eq!(
+            review_summary(&fields),
+            "3 things · 2 steps · 1 ingredient · 1 broken photo link"
+        );
+        assert_eq!(review_summary(&[]), "");
+    }
+
+    #[test]
     fn quotes_shorten_long_lines() {
         assert_eq!(quote(" Sauce: ", 48), "“Sauce:”");
         assert_eq!(quote("abcdefghij", 5), "“abcd…”");
@@ -152,6 +196,10 @@ mod tests {
             "might be two ingredients on one line"
         );
         assert_eq!(review_text("new"), "might need a look");
+        assert_eq!(
+            review_text("dead_photo"),
+            "The photo link doesn't work any more"
+        );
     }
 
     #[test]

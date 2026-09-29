@@ -365,6 +365,17 @@ pub async fn proxy(State(state): State<AppState>, req: Request) -> Response {
         return AppError::not_found("Not found").into_response();
     }
     let ip = crate::share::client_ip(&req, state.config.trust_proxy_headers);
+    // Password guesses count against the client's address here too, on top of Better Auth's own
+    // limit; a successful sign-in clears it
+    let sign_in = req.method() == Method::POST && req.uri().path().starts_with("/api/auth/sign-in");
+    let throttle_key = format!("ip:{ip}");
+    if sign_in
+        && let Err(err) = state
+            .logins
+            .attempt(&[(&throttle_key, crate::throttle::IP_FREE)])
+    {
+        return err.into_response();
+    }
     let (parts, body) = req.into_parts();
     let path = parts
         .uri
@@ -392,6 +403,9 @@ pub async fn proxy(State(state): State<AppState>, req: Request) -> Response {
     };
     if parts.method != Method::GET {
         hosted.forget();
+    }
+    if sign_in && res.status().is_success() {
+        state.logins.clear(&[&throttle_key]);
     }
     relay(res).await
 }

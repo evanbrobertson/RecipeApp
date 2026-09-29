@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path as UrlPath, Query};
@@ -254,14 +254,15 @@ enum Failure {
 }
 
 /// The answer for a photo that couldn't be made: the original link, for a browser to load
-/// itself, or a 404.
-fn unavailable(failure: Failure, image: &str) -> Response {
+/// itself, or a 404. Only signed-in requests are sent on: a share page's photo is public, and
+/// its creator chooses the link, so it must not redirect visitors to wherever that points.
+fn unavailable(failure: Failure, image: &str, caching: Caching) -> Response {
     let original = url::Url::parse(image)
         .ok()
         .filter(|u| matches!(u.scheme(), "http" | "https"))
         .and_then(|u| HeaderValue::from_str(u.as_str()).ok());
     match (failure, original) {
-        (Failure::Elsewhere, Some(location)) => {
+        (Failure::Elsewhere, Some(location)) if caching == Caching::Private => {
             let mut res = StatusCode::TEMPORARY_REDIRECT.into_response();
             let h = res.headers_mut();
             h.insert(header::LOCATION, location);
@@ -395,6 +396,11 @@ pub async fn serve_photo(
     else {
         return not_found();
     };
+    // A photo hosted by a site whose terms forbid automated fetching is never downloaded here:
+    // the cook's browser loads it from the original
+    if crate::site_terms::photo_is_listed(&image) {
+        return unavailable(Failure::Elsewhere, &image, caching);
+    }
     let key = image_key(&image);
     let current = v.is_some_and(|v| v == key);
     let images = &state.images;
@@ -408,7 +414,7 @@ pub async fn serve_photo(
     let name = format!("{source}-{}", variant.file_suffix());
 
     if let Some(failure) = images.failed_recently(&source) {
-        return unavailable(failure, &image);
+        return unavailable(failure, &image, caching);
     }
     let read_cached = || async {
         match images.cached_path(&name) {
@@ -426,7 +432,7 @@ pub async fn serve_photo(
         return image_response(bytes, &key, variant, current, caching);
     }
     if let Some(failure) = images.failed_recently(&source) {
-        return unavailable(failure, &image);
+        return unavailable(failure, &image, caching);
     }
 
     let Ok(_permit) = images.work.acquire().await else {
@@ -438,7 +444,7 @@ pub async fn serve_photo(
     } else {
         Failure::Gone
     };
-    let original = match load_source(&state.http, &image, page_url.as_deref()).await {
+    let original = match load_source(state, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
@@ -451,7 +457,7 @@ pub async fn serve_photo(
             {
                 tracing::warn!("[img] recipe {id}: couldn't flag its photo: {e:?}");
             }
-            return unavailable(failure, &image);
+            return unavailable(failure, &image, caching);
         }
     };
     if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
@@ -474,14 +480,37 @@ pub async fn serve_photo(
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
             images.record_failure(source, elsewhere);
-            unavailable(elsewhere, &image)
+            unavailable(elsewhere, &image, caching)
         }
     }
 }
 
+/// The `reqwest` client of the image fallback for links the cook supplied: it connects only to
+/// public addresses, whether the link names one or a redirect does (the wreq clients do the
+/// same, see `crumb_fetch::guard`).
+pub(crate) fn guarded_http() -> &'static reqwest::Client {
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .dns_resolver(Arc::new(crate::scraper::PublicResolver))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 10 {
+                    attempt.error("too many redirects")
+                } else if crumb_fetch::check_target(attempt.url()).is_err() {
+                    attempt.error("redirected to a private address")
+                } else {
+                    attempt.follow()
+                }
+            }))
+            .build()
+            .expect("HTTP client")
+    });
+    &CLIENT
+}
+
 /// The original image bytes, from a `data:` URI or over HTTP.
 async fn load_source(
-    http: &reqwest::Client,
+    state: &AppState,
     image: &str,
     referer: Option<&str>,
 ) -> Result<Vec<u8>, LoadError> {
@@ -495,6 +524,18 @@ async fn load_source(
             "unsupported image URL scheme {}",
             parsed.scheme()
         )));
+    }
+    // A listed site's photos are never downloaded (callers skip them; this is the backstop)
+    if crate::site_terms::photo_is_listed(image) {
+        return Err(LoadError::passing(
+            "the photo is on a site whose terms forbid automated fetching",
+        ));
+    }
+    // A photo link is the recipe site's to name, so it can name anything: never the server's
+    // own network
+    let allow_private = state.config.scrape_allow_private;
+    if !allow_private && crumb_fetch::check_resolved(&parsed).await.is_err() {
+        return Err(LoadError::dead("the image link points somewhere private"));
     }
     // What a browser on the recipe's page would send; some CDNs refuse hotlinks without it
     let referer = referer.filter(|r| r.starts_with("http"));
@@ -510,6 +551,11 @@ async fn load_source(
             ),
         }
     }
+    let http = if allow_private {
+        &state.http
+    } else {
+        guarded_http()
+    };
     load_with_reqwest(http, parsed, referer).await
 }
 
@@ -683,11 +729,11 @@ async fn load_with_reqwest(
 /// Whether a new recipe's photo link is dead, fetched as the resizer would. Only a link the
 /// site itself refuses counts (see [`LoadError::dead`]); a slow or failing site gets the
 /// benefit of the doubt. An embedded photo is never dead here: it was read when kept.
-pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<&str>) -> bool {
-    if image.starts_with("data:") {
+pub async fn photo_is_dead(state: &AppState, image: &str, referer: Option<&str>) -> bool {
+    if image.starts_with("data:") || crate::site_terms::photo_is_listed(image) {
         return false;
     }
-    match load_source(http, image, referer).await {
+    match load_source(state, image, referer).await {
         Ok(_) => false,
         Err(err) => {
             tracing::info!(
@@ -702,8 +748,11 @@ pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<
 
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
 /// None when it can't be had or isn't a JPEG, PNG or WebP.
-pub async fn fetch_to_embed(http: &reqwest::Client, url: &str) -> Option<String> {
-    match load_source(http, url, None).await {
+pub async fn fetch_to_embed(state: &AppState, url: &str) -> Option<String> {
+    if crate::site_terms::photo_is_listed(url) {
+        return None;
+    }
+    match load_source(state, url, None).await {
         Ok(bytes) => embed(&bytes),
         Err(err) => {
             tracing::info!(
@@ -907,18 +956,58 @@ mod tests {
     #[test]
     fn a_photo_a_browser_may_get_is_sent_to_the_original() {
         let photo = "https://example.com/wp-content/uploads/crepes.jpg";
-        let res = unavailable(Failure::Elsewhere, photo);
+        let res = unavailable(Failure::Elsewhere, photo, Caching::Private);
         assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(res.headers()[header::LOCATION], photo);
         assert_eq!(
-            unavailable(Failure::Gone, photo).status(),
+            unavailable(Failure::Gone, photo, Caching::Private).status(),
             StatusCode::NOT_FOUND
         );
         let embedded = "data:image/png;base64,AAAA";
         assert_eq!(
-            unavailable(Failure::Elsewhere, embedded).status(),
+            unavailable(Failure::Elsewhere, embedded, Caching::Private).status(),
             StatusCode::NOT_FOUND
         );
+        // A public share page's photo never redirects
+        assert_eq!(
+            unavailable(Failure::Elsewhere, photo, Caching::Public).status(),
+            StatusCode::NOT_FOUND
+        );
+        let ftp = "ftp://example.com/a.jpg";
+        assert_eq!(
+            unavailable(Failure::Elsewhere, ftp, Caching::Private).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn a_listed_sites_photo_is_sent_to_the_original_and_never_fetched() {
+        let photo = "https://www.allrecipes.com/thmb/pie.jpg";
+        // The resizer's answer for a linked photo it must not touch: the browser loads it
+        let res = unavailable(Failure::Elsewhere, photo, Caching::Private);
+        assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(res.headers()[header::LOCATION], photo);
+        // A public share page still never redirects visitors, listed or not
+        assert_eq!(
+            unavailable(Failure::Elsewhere, photo, Caching::Public).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn save_time_checks_and_embedding_skip_a_listed_sites_photo() {
+        let state = crate::AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            crate::config::Config::default(),
+            crate::browser::Browser::disabled(),
+        );
+        let photo = "https://www.allrecipes.com/thmb/pie.jpg";
+        // Not fetched, so never found dead and never embedded
+        assert!(!photo_is_dead(&state, photo, None).await);
+        assert!(fetch_to_embed(&state, photo).await.is_none());
+        // The backstop is a refusal that isn't "dead"
+        let err = load_source(&state, photo, None).await.unwrap_err();
+        assert!(!err.dead);
     }
 
     #[test]

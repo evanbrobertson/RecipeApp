@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::AppState;
+use crate::error::AppError;
 use crate::households::HouseholdId;
 use crate::model::{Recipe, now_secs};
 use crate::scraper::Scraped;
@@ -42,6 +43,8 @@ pub const TEMPLATE: &str = "shell/preview/index.html";
 const KEEP: Duration = Duration::from_secs(30 * 60);
 /// Scrapes kept at once, across households; the oldest go first.
 const MAX_KEPT: usize = 64;
+/// Scrapes one household may have kept, so one box can't push everyone else's out.
+const MAX_KEPT_PER_HOUSEHOLD: usize = 8;
 
 type Key = (HouseholdId, String);
 
@@ -55,8 +58,25 @@ fn kept() -> std::sync::MutexGuard<'static, HashMap<Key, (Instant, Scraped)>> {
     map
 }
 
-fn keep(state: &AppState, url: &str, scraped: &Scraped) {
+/// Keeps a scrape for the import that follows: what a preview showed, or what the cook's
+/// browser read from the page (`scraper::page`).
+pub fn keep(state: &AppState, url: &str, scraped: &Scraped) {
     let mut map = kept();
+    let key = (state.household, url.to_string());
+    // A household over its own share loses its own oldest first
+    while !map.contains_key(&key)
+        && map.keys().filter(|(h, _)| *h == state.household).count() >= MAX_KEPT_PER_HOUSEHOLD
+    {
+        let Some(oldest) = map
+            .iter()
+            .filter(|((h, _), _)| *h == state.household)
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
     while map.len() >= MAX_KEPT {
         let Some(oldest) = map
             .iter()
@@ -67,10 +87,7 @@ fn keep(state: &AppState, url: &str, scraped: &Scraped) {
         };
         map.remove(&oldest);
     }
-    map.insert(
-        (state.household, url.to_string()),
-        (Instant::now(), scraped.clone()),
-    );
+    map.insert(key, (Instant::now(), scraped.clone()));
 }
 
 fn peek(state: &AppState, url: &str) -> Option<Scraped> {
@@ -94,6 +111,9 @@ pub fn routes() -> Router<AppState> {
 struct Params {
     url: Option<String>,
     go: Option<String>,
+    /// `extension`: the extension opened this tab and is about to hand over the page as it
+    /// read it (see [`waiting`]).
+    via: Option<String>,
 }
 
 /// Whether the request came from Crumb or the browser itself, not from another site.
@@ -135,12 +155,26 @@ async fn page(
     if let Some(scraped) = peek(&state, &url) {
         return ready(&state, &url, &scraped);
     }
+    // A site whose terms forbid automated fetching isn't fetched; the extension's handover
+    // (`via=extension`) is kept above and below, so it still works
+    if params.via.as_deref() != Some("extension")
+        && let Some(refusal) = crate::site_terms::check(&url)
+    {
+        return failed(&state, &url, &refusal.error());
+    }
     if !trusted(&headers) {
         return waiting(&state, &url, "ask");
+    }
+    // The extension read the recipe in the cook's browser and hands it over from this page
+    // (`POST /api/preview`), then reloads with `go=1`: nothing is scraped meanwhile. If it
+    // could hand nothing over, that reload scrapes as usual.
+    if params.go.is_none() && params.via.as_deref() == Some("extension") {
+        return waiting(&state, &url, "handover");
     }
     if params.go.is_none() {
         return waiting(&state, &url, "loading");
     }
+    // (`scrape_page` refuses a listed site too; this is the same answer, earlier.)
     match crate::scraper::scrape_page(&state, &url).await {
         // Another Crumb's shared cookbook: nothing to read here, but it saves whole
         Ok(scraped) if scraped.recipe.title.trim().is_empty() => add_page(&url),
@@ -148,7 +182,7 @@ async fn page(
             keep(&state, &url, &scraped);
             ready(&state, &url, &scraped)
         }
-        Err(err) => failed(&state, &url, err.status, &err.message),
+        Err(err) => failed(&state, &url, &err),
     }
 }
 
@@ -226,11 +260,18 @@ fn waiting(state: &AppState, url: &str, step: &str) -> Response {
 }
 
 /// The scrape didn't give a recipe: why, with the page's own link.
-fn failed(state: &AppState, url: &str, status: StatusCode, message: &str) -> Response {
+fn failed(state: &AppState, url: &str, err: &AppError) -> Response {
+    let (status, message) = (err.status, err.message.as_str());
     let host = share::host_of(url).unwrap_or_default();
-    let data = json!({"preview": {
+    let mut data = json!({"preview": {
         "state": "failed", "url": url, "host": host, "message": message,
     }});
+    if let Some(code) = err.code {
+        data["preview"]["code"] = code.into();
+    }
+    if let Some(site) = &err.site {
+        data["preview"]["site"] = site.as_str().into();
+    }
     let title = "Couldn't read that recipe";
     html(state, status, |t| {
         let mut page = share::start_page(t, title, "", &data);
@@ -298,5 +339,35 @@ mod tests {
         assert!(trusted(&with("same-origin")));
         assert!(!trusted(&with("same-site")));
         assert!(!trusted(&with("cross-site")));
+    }
+
+    #[test]
+    fn one_household_cannot_push_out_anothers_kept_scrape() {
+        let home = AppState::new(
+            crate::db::open_in_memory().unwrap(),
+            crate::config::Config::default(),
+            crate::browser::Browser::disabled(),
+        );
+        let mut other = home.clone();
+        other.household = 7_777;
+        let scraped = Scraped {
+            recipe: crate::model::RecipeFields::default(),
+            crumb: None,
+            api: None,
+        };
+        keep(&other, "https://other.test/mine", &scraped);
+        for i in 0..MAX_KEPT * 2 {
+            keep(&home, &format!("https://flood.test/{i}"), &scraped);
+        }
+        assert!(peek(&other, "https://other.test/mine").is_some());
+        let mine = kept().keys().filter(|(h, _)| *h == home.household).count();
+        assert_eq!(mine, MAX_KEPT_PER_HOUSEHOLD);
+        // Its own newest are the ones kept
+        assert!(peek(&home, &format!("https://flood.test/{}", MAX_KEPT * 2 - 1)).is_some());
+        assert!(peek(&home, "https://flood.test/0").is_none());
+        take(&other, "https://other.test/mine");
+        for i in 0..MAX_KEPT * 2 {
+            take(&home, &format!("https://flood.test/{i}"));
+        }
     }
 }

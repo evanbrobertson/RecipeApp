@@ -3,12 +3,23 @@
  * clicks. On a recipe page (see detect.ts) it asks "Read this recipe in Crumb?"; on a Crumb
  * page, before any Crumb is set, it offers to use that one.
  *
- * On YouTube it reads the video's page for Crumb (see youtube.ts), and asks when a video says
- * it's a recipe. On the Crumb tab opened for a video, it hands that page what was read.
+ * When the cook clicks (the background asks), it reads the recipe on the page for Crumb (see
+ * page.ts): only the recipe, never anything else. On YouTube it reads the video's page for
+ * Crumb instead (see youtube.ts), and asks when a video says it's a recipe. On the Crumb tab
+ * opened for a video or a recipe, it hands that page what was read.
  */
-import { load, save, siteOf } from "./crumb"
+import { load, mayOfferItself, save, siteOf } from "./crumb"
 import { isRecipeItemType, recipeInJsonLd, type Found } from "./detect"
-import { send, type ReadVideo, type VideoForCrumb, type Waiting } from "./messages"
+import {
+  send,
+  type PageForCrumb,
+  type ReadPage,
+  type ReadVideo,
+  type VideoForCrumb,
+  type Waiting,
+} from "./messages"
+import { readRecipe } from "./page"
+import { termsNote } from "./terms"
 import { showToast } from "./toast"
 import { looksLikeRecipe, peekVideo, readVideo, videoId } from "./youtube"
 
@@ -37,15 +48,20 @@ function isCrumbApp(): boolean {
   return document.querySelector('meta[name="application-name"][content="Crumb"]') !== null
 }
 
+/**
+ * Any page can say it is a Crumb, so this only asks: the full address is shown, and it's saved
+ * only if the cook says it's theirs. Once a Crumb is set, only the settings page changes it.
+ */
 function offerConnect() {
   const origin = location.origin
+  if (!mayOfferItself(origin)) return
   showToast({
-    title: "Use this Crumb with the extension?",
-    detail: location.host,
-    timeoutMs: TOAST_MS,
+    title: "Is this your Crumb?",
+    detail: origin,
+    note: "Only say yes if this is your own Crumb. Recipes you read will be sent to this address.",
     actions: [
       {
-        label: "Use this Crumb",
+        label: "Yes, use this address",
         primary: true,
         run: () => void send({ type: "connect", origin }),
       },
@@ -59,6 +75,8 @@ function offerRead(found: Found, title = "Read this recipe in Crumb?") {
   showToast({
     title,
     detail: found.name || document.title,
+    // A site whose terms forbid automated fetching: say why Crumb reads it from here
+    note: termsNote(location.hostname) ?? undefined,
     timeoutMs: TOAST_MS,
     actions: [
       {
@@ -81,8 +99,33 @@ function offerRead(found: Found, title = "Read this recipe in Crumb?") {
 const VIDEO_WAIT_MS = 20_000
 const VIDEO_ASK_MS = 400
 
-/** On the Crumb tab opened for a video: hands the Add page what was read of it. */
-async function handOverVideo() {
+/**
+ * Answers the background's request for the recipe on this page, when the cook clicks. Only the
+ * top frame, only the extension's own background, and only the recipe (see page.ts).
+ */
+function answerReadPage() {
+  chrome.runtime.onMessage.addListener((message: ReadPage, sender, reply) => {
+    if (message?.type !== "readPage" || sender.id !== chrome.runtime.id) return false
+    // The toolbar button was clicked: on a site whose terms forbid automated fetching, say
+    // why Crumb reads the recipe from this page (the prompt may not have been shown)
+    const note = termsNote(location.hostname)
+    if (note)
+      showToast({
+        title: "Reading this recipe for Crumb",
+        note,
+        timeoutMs: 6000,
+        actions: [{ label: "OK", run: () => {} }],
+      })
+    reply(readRecipe(document))
+    return false
+  })
+}
+
+/**
+ * On the Crumb tab opened for a video or a recipe: hands the page what was read of it. The
+ * Add page takes a video (`crumb:video`), the preview page a recipe (`crumb:page`).
+ */
+async function handOver() {
   if (new URLSearchParams(location.search).get("via") !== "extension") return
   const until = Date.now() + VIDEO_WAIT_MS
   let waiting: Waiting | null = null
@@ -97,18 +140,21 @@ async function handOverVideo() {
   }
   // Still reading after all that: the page is told it couldn't be read, not left waiting
   const url = waiting?.url ?? new URLSearchParams(location.search).get("url") ?? ""
-  const message: VideoForCrumb = {
-    type: "crumb:video",
-    url,
-    video: waiting?.video ?? null,
-    captions: waiting?.captions ?? "none",
-  }
+  const isPage = (waiting?.kind ?? (location.pathname === "/preview" ? "page" : "video")) === "page"
+  const message: VideoForCrumb | PageForCrumb = isPage
+    ? { type: "crumb:page", url, page: waiting?.page ?? null }
+    : {
+        type: "crumb:video",
+        url,
+        video: waiting?.video ?? null,
+        captions: waiting?.captions ?? "none",
+      }
   const post = () => window.postMessage(message, location.origin)
   post()
   // The page may not be listening yet: it asks when it is
+  const want = isPage ? "crumb:want-page" : "crumb:want-video"
   window.addEventListener("message", (e) => {
-    if (e.source === window && e.origin === location.origin && e.data?.type === "crumb:want-video")
-      post()
+    if (e.source === window && e.origin === location.origin && e.data?.type === want) post()
   })
 }
 
@@ -151,13 +197,17 @@ function onYouTube(settings: Awaited<ReturnType<typeof load>>) {
 
 async function main() {
   if (window.top !== window) return
+  // Tells a Crumb page the extension is here (web/src/lib/extension.ts), so it can nudge
+  if (isCrumbApp())
+    document.documentElement.dataset.crumbExtension = chrome.runtime.getManifest().version
   const settings = await load()
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) return onYouTube(settings)
   if (!settings.crumb) {
-    if (isCrumbApp()) offerConnect()
+    // A recipe page that calls itself a Crumb is not offered: nothing but a fake would
+    if (isCrumbApp() && !recipeOnPage()) offerConnect()
     // Until a Crumb is set, recipe pages still offer (and the click opens the settings)
   } else if (location.origin === settings.crumb) {
-    return handOverVideo()
+    return handOver()
   }
   if (!settings.prompt || settings.muted.includes(siteOf(location.hostname))) return
   if (isCrumbApp()) return
@@ -169,4 +219,5 @@ async function main() {
   }, LOOK_AGAIN_MS)
 }
 
+if (window.top === window) answerReadPage()
 void main()

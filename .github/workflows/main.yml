@@ -13,6 +13,12 @@ on:
       - "site/**"
       # The browser extension ships from extension.yml, not in the image
       - "extension/**"
+      # The relay ships from relay.yml, not in the image. crates/crumb-fetch/ is not listed:
+      # the server depends on it
+      - "crates/crumb-relay/**"
+      - ".github/workflows/relay.yml"
+      - "scripts/relay/**"
+      - "docs/RELAY.md"
       - "LICENSE"
   workflow_dispatch:
 

@@ -117,6 +117,15 @@ impl Client {
             .await
     }
 
+    /// `GET /api/recipes/{id}/cooked`: how often it's been cooked, and when last.
+    pub async fn cook_stats(&self, id: i64) -> Result<CookStats, Error> {
+        self.fetch(
+            self.http
+                .get(self.endpoint(&format!("api/recipes/{id}/cooked"))),
+        )
+        .await
+    }
+
     /// `DELETE /api/recipes/{id}/cooked?event=`: takes back a "Cooked it" (the event from
     /// [`Client::cooked`]; without one, the latest cook).
     pub async fn undo_cooked(&self, id: i64, event: Option<i64>) -> Result<CookStats, Error> {
@@ -204,6 +213,9 @@ impl Client {
         Ok(crate::Imported {
             recipe: self.recipe(saved.id).await?,
             is_new: saved.is_new,
+            from_video: false,
+            dropped_photo: false,
+            cookbook: None,
         })
     }
 }

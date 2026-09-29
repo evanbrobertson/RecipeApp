@@ -1,0 +1,3994 @@
+{
+  "bookColor": [
+    {
+      "input": "forest",
+      "output": "forest"
+    },
+    {
+      "input": "tile",
+      "output": "tile"
+    },
+    {
+      "input": "sage",
+      "output": "sage"
+    },
+    {
+      "input": "butter",
+      "output": "butter"
+    },
+    {
+      "input": "clay",
+      "output": "clay"
+    },
+    {
+      "input": "cream",
+      "output": "cream"
+    },
+    {
+      "input": "Forest",
+      "output": "forest"
+    },
+    {
+      "input": "tomato",
+      "output": "clay"
+    },
+    {
+      "input": "olive",
+      "output": "tile"
+    },
+    {
+      "input": "purple",
+      "output": "tile"
+    },
+    {
+      "input": "",
+      "output": "tile"
+    },
+    {
+      "input": null,
+      "output": "tile"
+    }
+  ],
+  "bookPalette": [
+    {
+      "input": "forest",
+      "output": {
+        "cloth": "#1C2B22",
+        "shade": "#111a15",
+        "foil": "#F3DA8B",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#A9C4AE"
+        ]
+      }
+    },
+    {
+      "input": "tile",
+      "output": {
+        "cloth": "#2F6B4F",
+        "shade": "#224f3a",
+        "foil": "#FFFDF8",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": "sage",
+      "output": {
+        "cloth": "#A9C4AE",
+        "shade": "#8aa890",
+        "foil": "#1C2B22",
+        "border": "none",
+        "bands": [
+          "#1C2B22",
+          "#2F6B4F"
+        ]
+      }
+    },
+    {
+      "input": "butter",
+      "output": {
+        "cloth": "#F3DA8B",
+        "shade": "#d9bd67",
+        "foil": "#1C2B22",
+        "border": "none",
+        "bands": [
+          "#1C2B22",
+          "#A55A40"
+        ]
+      }
+    },
+    {
+      "input": "clay",
+      "output": {
+        "cloth": "#A55A40",
+        "shade": "#7e412d",
+        "foil": "#FFF8EA",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": "cream",
+      "output": {
+        "cloth": "#F8F3E6",
+        "shade": "#ddd5c1",
+        "foil": "#1C2B22",
+        "border": "inset 0 0 0 1px rgb(28 43 34 / 0.22)",
+        "bands": [
+          "#2F6B4F",
+          "#A55A40"
+        ]
+      }
+    },
+    {
+      "input": "Forest",
+      "output": {
+        "cloth": "#1C2B22",
+        "shade": "#111a15",
+        "foil": "#F3DA8B",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#A9C4AE"
+        ]
+      }
+    },
+    {
+      "input": "tomato",
+      "output": {
+        "cloth": "#A55A40",
+        "shade": "#7e412d",
+        "foil": "#FFF8EA",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": "olive",
+      "output": {
+        "cloth": "#2F6B4F",
+        "shade": "#224f3a",
+        "foil": "#FFFDF8",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": "purple",
+      "output": {
+        "cloth": "#2F6B4F",
+        "shade": "#224f3a",
+        "foil": "#FFFDF8",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": "",
+      "output": {
+        "cloth": "#2F6B4F",
+        "shade": "#224f3a",
+        "foil": "#FFFDF8",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    },
+    {
+      "input": null,
+      "output": {
+        "cloth": "#2F6B4F",
+        "shade": "#224f3a",
+        "foil": "#FFFDF8",
+        "border": "none",
+        "bands": [
+          "#F3DA8B",
+          "#F8F3E6"
+        ]
+      }
+    }
+  ],
+  "seeded": [
+    {
+      "input": {
+        "id": 1,
+        "salt": 0
+      },
+      "output": 0.46153143438277766
+    },
+    {
+      "input": {
+        "id": 1,
+        "salt": 3
+      },
+      "output": 0.04076510583399795
+    },
+    {
+      "input": {
+        "id": 1,
+        "salt": 7
+      },
+      "output": 0.06284178228816018
+    },
+    {
+      "input": {
+        "id": 1,
+        "salt": 11
+      },
+      "output": 0.09597313386620954
+    },
+    {
+      "input": {
+        "id": 2,
+        "salt": 0
+      },
+      "output": 0.5203638976381626
+    },
+    {
+      "input": {
+        "id": 2,
+        "salt": 3
+      },
+      "output": 0.1297574681811966
+    },
+    {
+      "input": {
+        "id": 2,
+        "salt": 7
+      },
+      "output": 0.8037247593747452
+    },
+    {
+      "input": {
+        "id": 2,
+        "salt": 11
+      },
+      "output": 0.583561028339318
+    },
+    {
+      "input": {
+        "id": 3,
+        "salt": 0
+      },
+      "output": 0.0015480655420105904
+    },
+    {
+      "input": {
+        "id": 3,
+        "salt": 3
+      },
+      "output": 0.27905427688529016
+    },
+    {
+      "input": {
+        "id": 3,
+        "salt": 7
+      },
+      "output": 0.17584637316758744
+    },
+    {
+      "input": {
+        "id": 3,
+        "salt": 11
+      },
+      "output": 0.21519710699794814
+    },
+    {
+      "input": {
+        "id": 7,
+        "salt": 0
+      },
+      "output": 0.8179652458347846
+    },
+    {
+      "input": {
+        "id": 7,
+        "salt": 3
+      },
+      "output": 0.060736314713722095
+    },
+    {
+      "input": {
+        "id": 7,
+        "salt": 7
+      },
+      "output": 0.2833798475621734
+    },
+    {
+      "input": {
+        "id": 7,
+        "salt": 11
+      },
+      "output": 0.24561268425895832
+    },
+    {
+      "input": {
+        "id": 42,
+        "salt": 0
+      },
+      "output": 0.7831035747658461
+    },
+    {
+      "input": {
+        "id": 42,
+        "salt": 3
+      },
+      "output": 0.9199631135270465
+    },
+    {
+      "input": {
+        "id": 42,
+        "salt": 7
+      },
+      "output": 0.6806281521858182
+    },
+    {
+      "input": {
+        "id": 42,
+        "salt": 11
+      },
+      "output": 0.33193922649661545
+    },
+    {
+      "input": {
+        "id": 99,
+        "salt": 0
+      },
+      "output": 0.6951582247274928
+    },
+    {
+      "input": {
+        "id": 99,
+        "salt": 3
+      },
+      "output": 0.3734548423672095
+    },
+    {
+      "input": {
+        "id": 99,
+        "salt": 7
+      },
+      "output": 0.650176853116136
+    },
+    {
+      "input": {
+        "id": 99,
+        "salt": 11
+      },
+      "output": 0.2922945785103366
+    },
+    {
+      "input": {
+        "id": 1234,
+        "salt": 0
+      },
+      "output": 0.6119419987662695
+    },
+    {
+      "input": {
+        "id": 1234,
+        "salt": 3
+      },
+      "output": 0.6986232604103861
+    },
+    {
+      "input": {
+        "id": 1234,
+        "salt": 7
+      },
+      "output": 0.12055735281319357
+    },
+    {
+      "input": {
+        "id": 1234,
+        "salt": 11
+      },
+      "output": 0.9558343567478005
+    },
+    {
+      "input": {
+        "id": 98765,
+        "salt": 0
+      },
+      "output": 0.8838318563211942
+    },
+    {
+      "input": {
+        "id": 98765,
+        "salt": 3
+      },
+      "output": 0.14251015864465444
+    },
+    {
+      "input": {
+        "id": 98765,
+        "salt": 7
+      },
+      "output": 0.8338796672906028
+    },
+    {
+      "input": {
+        "id": 98765,
+        "salt": 11
+      },
+      "output": 0.2769084597530309
+    }
+  ],
+  "bookSize": [
+    {
+      "input": {
+        "id": 10,
+        "name": "Weeknights",
+        "color": "forest",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.9015090862292345,
+        "title": 104
+      }
+    },
+    {
+      "input": {
+        "id": 11,
+        "name": "Nan's",
+        "color": "tile",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.9731454535899684,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 12,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.9997043452598154,
+        "title": 279
+      }
+    },
+    {
+      "input": {
+        "id": 13,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8953517578914761,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 20,
+        "name": "Nan's",
+        "color": "tile",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.9446311033982784,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 21,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.9045834154635668,
+        "title": 279
+      }
+    },
+    {
+      "input": {
+        "id": 22,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8623879260476678,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 23,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8594942069053649,
+        "title": 43
+      }
+    },
+    {
+      "input": {
+        "id": 30,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.9509801293449709,
+        "title": 303
+      }
+    },
+    {
+      "input": {
+        "id": 31,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.8740613949112593,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 32,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8460380891151726,
+        "title": 67
+      }
+    },
+    {
+      "input": {
+        "id": 33,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8776473349379376,
+        "title": 128
+      }
+    },
+    {
+      "input": {
+        "id": 70,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.8810322367944172,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 71,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.9352222863212227,
+        "title": 43
+      }
+    },
+    {
+      "input": {
+        "id": 72,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8418093893351033,
+        "title": 128
+      }
+    },
+    {
+      "input": {
+        "id": 73,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8669200914679095,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 420,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.9508612420386634,
+        "title": 43
+      }
+    },
+    {
+      "input": {
+        "id": 421,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.8841051398869604,
+        "title": 128
+      }
+    },
+    {
+      "input": {
+        "id": 422,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8871845006197691,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 423,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.9521110574738122,
+        "title": 303
+      }
+    },
+    {
+      "input": {
+        "id": 990,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.8747271560830995,
+        "title": 104
+      }
+    },
+    {
+      "input": {
+        "id": 991,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.957488137758337,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 992,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.853704188875854,
+        "title": 303
+      }
+    },
+    {
+      "input": {
+        "id": 993,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8860671207471751,
+        "title": 181
+      }
+    },
+    {
+      "input": {
+        "id": 12340,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.8642362502682954,
+        "title": 90
+      }
+    },
+    {
+      "input": {
+        "id": 12341,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.9462545766215771,
+        "title": 279
+      }
+    },
+    {
+      "input": {
+        "id": 12342,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8933242171723396,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 12343,
+        "name": "🍝",
+        "color": "butter",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.9312284498964436,
+        "title": 67
+      }
+    },
+    {
+      "input": {
+        "id": 987650,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 0
+      },
+      "output": {
+        "thickness": 38,
+        "length": 0.9776364769879728,
+        "title": 303
+      }
+    },
+    {
+      "input": {
+        "id": 987651,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 1
+      },
+      "output": {
+        "thickness": 39,
+        "length": 0.8499147498863749,
+        "title": 157
+      }
+    },
+    {
+      "input": {
+        "id": 987652,
+        "name": "🍝",
+        "color": "butter",
+        "recipeCount": 9
+      },
+      "output": {
+        "thickness": 45,
+        "length": 0.8427815858321264,
+        "title": 67
+      }
+    },
+    {
+      "input": {
+        "id": 987653,
+        "name": "Weeknights",
+        "color": "clay",
+        "recipeCount": 40
+      },
+      "output": {
+        "thickness": 50,
+        "length": 0.8653495956188999,
+        "title": 128
+      }
+    }
+  ],
+  "bookLean": [
+    {
+      "input": {
+        "book": {
+          "id": 10,
+          "name": "Weeknights",
+          "color": "forest",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1.3,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 10,
+          "name": "Weeknights",
+          "color": "forest",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.3,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 11,
+          "name": "Nan's",
+          "color": "tile",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 2.3,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 11,
+          "name": "Nan's",
+          "color": "tile",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.6,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.1,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.3,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 13,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.9,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 13,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.2,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 20,
+          "name": "Nan's",
+          "color": "tile",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.3,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 20,
+          "name": "Nan's",
+          "color": "tile",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.1,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 21,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.9,
+        "nudge": -1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 21,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.5,
+        "nudge": -1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 22,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.7,
+        "nudge": -2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 22,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.2,
+        "nudge": -2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 23,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.6,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 23,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.2,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 30,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 30,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "sage",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.2,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 31,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.4,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 31,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.1,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 32,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.8,
+        "nudge": 4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 32,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.4,
+        "nudge": 4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 33,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -2.4,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 33,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.6,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 70,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.4,
+        "nudge": 1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 70,
+          "name": "Crème brûlée & co",
+          "color": "butter",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.3,
+        "nudge": 1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 71,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.4,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 71,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.1,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 72,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 72,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.3,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 73,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.6,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 73,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.4,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 420,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.8,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 420,
+          "name": "🍝",
+          "color": "clay",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.2,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 421,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.5,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 421,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.1,
+        "nudge": 2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 422,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.3,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 422,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.1,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 423,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.6,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 423,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.1,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 990,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.8,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 990,
+          "name": "Weeknights",
+          "color": "cream",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.2,
+        "nudge": -6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 991,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.6,
+        "nudge": 6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 991,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.2,
+        "nudge": 6
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 992,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -1.9,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 992,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.5,
+        "nudge": -3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 993,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 2.2,
+        "nudge": -7
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 993,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.5,
+        "nudge": -7
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12340,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -2,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12340,
+          "name": "Nan's",
+          "color": "forest",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.5,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12341,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 2.1,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12341,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.5,
+        "nudge": 3
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12342,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": -0.7,
+        "nudge": -1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12342,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": -0.2,
+        "nudge": -1
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12343,
+          "name": "🍝",
+          "color": "butter",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1.6,
+        "nudge": 0
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 12343,
+          "name": "🍝",
+          "color": "butter",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.4,
+        "nudge": 0
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987650,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 0
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1.4,
+        "nudge": -2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987650,
+          "name": "Baking Bible of Sunday Afternoons",
+          "color": "tile",
+          "recipeCount": 0
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.3,
+        "nudge": -2
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987651,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 1
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 0.7,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987651,
+          "name": "Crème brûlée & co",
+          "color": "sage",
+          "recipeCount": 1
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.2,
+        "nudge": -5
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987652,
+          "name": "🍝",
+          "color": "butter",
+          "recipeCount": 9
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1.6,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987652,
+          "name": "🍝",
+          "color": "butter",
+          "recipeCount": 9
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.4,
+        "nudge": -4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987653,
+          "name": "Weeknights",
+          "color": "clay",
+          "recipeCount": 40
+        },
+        "atFoot": false
+      },
+      "output": {
+        "tilt": 1.5,
+        "nudge": 4
+      }
+    },
+    {
+      "input": {
+        "book": {
+          "id": 987653,
+          "name": "Weeknights",
+          "color": "clay",
+          "recipeCount": 40
+        },
+        "atFoot": true
+      },
+      "output": {
+        "tilt": 0.4,
+        "nudge": 4
+      }
+    }
+  ],
+  "spineBands": [
+    {
+      "input": {
+        "id": 10,
+        "name": "Weeknights",
+        "color": "forest",
+        "recipeCount": 0
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 11,
+        "name": "Nan's",
+        "color": "tile",
+        "recipeCount": 1
+      },
+      "output": "#F8F3E6"
+    },
+    {
+      "input": {
+        "id": 12,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 9
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 13,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 40
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 20,
+        "name": "Nan's",
+        "color": "tile",
+        "recipeCount": 0
+      },
+      "output": "#F8F3E6"
+    },
+    {
+      "input": {
+        "id": 21,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 1
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 22,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 9
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 23,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 40
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 30,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "sage",
+        "recipeCount": 0
+      },
+      "output": "#2F6B4F"
+    },
+    {
+      "input": {
+        "id": 31,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 1
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 32,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 9
+      },
+      "output": "#F8F3E6"
+    },
+    {
+      "input": {
+        "id": 33,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 40
+      },
+      "output": "#2F6B4F"
+    },
+    {
+      "input": {
+        "id": 70,
+        "name": "Crème brûlée & co",
+        "color": "butter",
+        "recipeCount": 0
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 71,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 1
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 72,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 9
+      },
+      "output": "#A55A40"
+    },
+    {
+      "input": {
+        "id": 73,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 40
+      },
+      "output": "#A9C4AE"
+    },
+    {
+      "input": {
+        "id": 420,
+        "name": "🍝",
+        "color": "clay",
+        "recipeCount": 0
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 421,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 1
+      },
+      "output": "#2F6B4F"
+    },
+    {
+      "input": {
+        "id": 422,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 9
+      },
+      "output": "#A9C4AE"
+    },
+    {
+      "input": {
+        "id": 423,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 40
+      },
+      "output": "#F8F3E6"
+    },
+    {
+      "input": {
+        "id": 990,
+        "name": "Weeknights",
+        "color": "cream",
+        "recipeCount": 0
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 991,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 1
+      },
+      "output": "#F3DA8B"
+    },
+    {
+      "input": {
+        "id": 992,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 9
+      },
+      "output": "#F3DA8B"
+    },
+    {
+      "input": {
+        "id": 993,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 40
+      },
+      "output": "#2F6B4F"
+    },
+    {
+      "input": {
+        "id": 12340,
+        "name": "Nan's",
+        "color": "forest",
+        "recipeCount": 0
+      },
+      "output": "#F3DA8B"
+    },
+    {
+      "input": {
+        "id": 12341,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 1
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 12342,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 9
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 12343,
+        "name": "🍝",
+        "color": "butter",
+        "recipeCount": 40
+      },
+      "output": "#A55A40"
+    },
+    {
+      "input": {
+        "id": 987650,
+        "name": "Baking Bible of Sunday Afternoons",
+        "color": "tile",
+        "recipeCount": 0
+      },
+      "output": "#F8F3E6"
+    },
+    {
+      "input": {
+        "id": 987651,
+        "name": "Crème brûlée & co",
+        "color": "sage",
+        "recipeCount": 1
+      },
+      "output": null
+    },
+    {
+      "input": {
+        "id": 987652,
+        "name": "🍝",
+        "color": "butter",
+        "recipeCount": 9
+      },
+      "output": "#A55A40"
+    },
+    {
+      "input": {
+        "id": 987653,
+        "name": "Weeknights",
+        "color": "clay",
+        "recipeCount": 40
+      },
+      "output": "#F3DA8B"
+    }
+  ],
+  "stackBooks": [
+    {
+      "input": {
+        "books": [],
+        "towers": 1
+      },
+      "output": [
+        []
+      ]
+    },
+    {
+      "input": {
+        "books": [],
+        "towers": 2
+      },
+      "output": [
+        []
+      ]
+    },
+    {
+      "input": {
+        "books": [],
+        "towers": 3
+      },
+      "output": [
+        []
+      ]
+    },
+    {
+      "input": {
+        "books": [],
+        "towers": 4
+      },
+      "output": [
+        []
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 1
+      },
+      "output": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 2
+      },
+      "output": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 3
+      },
+      "output": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 4
+      },
+      "output": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          }
+        ],
+        "towers": 1
+      },
+      "output": [
+        [
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          }
+        ],
+        "towers": 2
+      },
+      "output": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          }
+        ],
+        "towers": 3
+      },
+      "output": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          }
+        ],
+        "towers": 4
+      },
+      "output": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 1
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 2
+      },
+      "output": [
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 3
+      },
+      "output": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          4
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          }
+        ],
+        "towers": 4
+      },
+      "output": [
+        [
+          0,
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          4
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 1
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 2
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        [
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 3
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          8,
+          9,
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 4
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5,
+          6
+        ],
+        [
+          7,
+          8,
+          9
+        ],
+        [
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          },
+          {
+            "id": 70,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 0
+          },
+          {
+            "id": 71,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 1
+          },
+          {
+            "id": 72,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 9
+          },
+          {
+            "id": 73,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 40
+          },
+          {
+            "id": 420,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 0
+          },
+          {
+            "id": 421,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 1
+          },
+          {
+            "id": 422,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 9
+          },
+          {
+            "id": 423,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 40
+          },
+          {
+            "id": 990,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 0
+          },
+          {
+            "id": 991,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 1
+          },
+          {
+            "id": 992,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 9
+          },
+          {
+            "id": 993,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 40
+          },
+          {
+            "id": 12340,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 12341,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12342,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 12343,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 987650,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 987651,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 987652,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 987653,
+            "name": "Weeknights",
+            "color": "clay",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 1
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          },
+          {
+            "id": 70,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 0
+          },
+          {
+            "id": 71,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 1
+          },
+          {
+            "id": 72,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 9
+          },
+          {
+            "id": 73,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 40
+          },
+          {
+            "id": 420,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 0
+          },
+          {
+            "id": 421,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 1
+          },
+          {
+            "id": 422,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 9
+          },
+          {
+            "id": 423,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 40
+          },
+          {
+            "id": 990,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 0
+          },
+          {
+            "id": 991,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 1
+          },
+          {
+            "id": 992,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 9
+          },
+          {
+            "id": 993,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 40
+          },
+          {
+            "id": 12340,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 12341,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12342,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 12343,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 987650,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 987651,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 987652,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 987653,
+            "name": "Weeknights",
+            "color": "clay",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 2
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          },
+          {
+            "id": 70,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 0
+          },
+          {
+            "id": 71,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 1
+          },
+          {
+            "id": 72,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 9
+          },
+          {
+            "id": 73,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 40
+          },
+          {
+            "id": 420,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 0
+          },
+          {
+            "id": 421,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 1
+          },
+          {
+            "id": 422,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 9
+          },
+          {
+            "id": 423,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 40
+          },
+          {
+            "id": 990,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 0
+          },
+          {
+            "id": 991,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 1
+          },
+          {
+            "id": 992,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 9
+          },
+          {
+            "id": 993,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 40
+          },
+          {
+            "id": 12340,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 12341,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12342,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 12343,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 987650,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 987651,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 987652,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 987653,
+            "name": "Weeknights",
+            "color": "clay",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 3
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21
+        ],
+        [
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      ]
+    },
+    {
+      "input": {
+        "books": [
+          {
+            "id": 10,
+            "name": "Weeknights",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 11,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 13,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 20,
+            "name": "Nan's",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 21,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 22,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 23,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 40
+          },
+          {
+            "id": 30,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "sage",
+            "recipeCount": 0
+          },
+          {
+            "id": 31,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 1
+          },
+          {
+            "id": 32,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 9
+          },
+          {
+            "id": 33,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 40
+          },
+          {
+            "id": 70,
+            "name": "Crème brûlée & co",
+            "color": "butter",
+            "recipeCount": 0
+          },
+          {
+            "id": 71,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 1
+          },
+          {
+            "id": 72,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 9
+          },
+          {
+            "id": 73,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 40
+          },
+          {
+            "id": 420,
+            "name": "🍝",
+            "color": "clay",
+            "recipeCount": 0
+          },
+          {
+            "id": 421,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 1
+          },
+          {
+            "id": 422,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 9
+          },
+          {
+            "id": 423,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 40
+          },
+          {
+            "id": 990,
+            "name": "Weeknights",
+            "color": "cream",
+            "recipeCount": 0
+          },
+          {
+            "id": 991,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 1
+          },
+          {
+            "id": 992,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 9
+          },
+          {
+            "id": 993,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 40
+          },
+          {
+            "id": 12340,
+            "name": "Nan's",
+            "color": "forest",
+            "recipeCount": 0
+          },
+          {
+            "id": 12341,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 1
+          },
+          {
+            "id": 12342,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 9
+          },
+          {
+            "id": 12343,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 40
+          },
+          {
+            "id": 987650,
+            "name": "Baking Bible of Sunday Afternoons",
+            "color": "tile",
+            "recipeCount": 0
+          },
+          {
+            "id": 987651,
+            "name": "Crème brûlée & co",
+            "color": "sage",
+            "recipeCount": 1
+          },
+          {
+            "id": 987652,
+            "name": "🍝",
+            "color": "butter",
+            "recipeCount": 9
+          },
+          {
+            "id": 987653,
+            "name": "Weeknights",
+            "color": "clay",
+            "recipeCount": 40
+          }
+        ],
+        "towers": 4
+      },
+      "output": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        [
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      ]
+    }
+  ],
+  "ingredientColor": [
+    {
+      "input": "plain flour",
+      "output": "#faf5e8"
+    },
+    {
+      "input": "Unsalted Butter",
+      "output": "#faf5e8"
+    },
+    {
+      "input": "olive oil",
+      "output": "#d2a24c"
+    },
+    {
+      "input": "red pepper",
+      "output": "#b8543a"
+    },
+    {
+      "input": "black peppercorns",
+      "output": "#eed27a"
+    },
+    {
+      "input": "peppers",
+      "output": "#b8543a"
+    },
+    {
+      "input": "fresh basil",
+      "output": "#6a9a72"
+    },
+    {
+      "input": "dark chocolate",
+      "output": "#6e4a36"
+    },
+    {
+      "input": "sweet potato",
+      "output": "#d9854f"
+    },
+    {
+      "input": "garlic",
+      "output": "#eadcb6"
+    },
+    {
+      "input": "blueberries",
+      "output": "#6c4b6b"
+    },
+    {
+      "input": "ice water",
+      "output": "#c7dedc"
+    },
+    {
+      "input": "brown sugar",
+      "output": "#faf5e8"
+    },
+    {
+      "input": "soy sauce",
+      "output": "#d2a24c"
+    },
+    {
+      "input": "chilli flakes",
+      "output": "#b8543a"
+    },
+    {
+      "input": "chili",
+      "output": "#b8543a"
+    },
+    {
+      "input": "saffron",
+      "output": "#d8bf9a"
+    },
+    {
+      "input": "",
+      "output": "#d8bf9a"
+    }
+  ],
+  "jobProgress": [
+    {
+      "input": {
+        "status": "queued",
+        "position": null
+      },
+      "output": "Up next…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 1
+      },
+      "output": "Up next…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 2
+      },
+      "output": "Queued (2nd)…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 3
+      },
+      "output": "Queued (3rd)…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 11
+      },
+      "output": "Queued (11th)…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 22
+      },
+      "output": "Queued (22nd)…"
+    },
+    {
+      "input": {
+        "status": "queued",
+        "position": 103
+      },
+      "output": "Queued (103rd)…"
+    },
+    {
+      "input": {
+        "status": "running",
+        "position": null
+      },
+      "output": "Watching the video… this can take a minute or two"
+    }
+  ]
+}

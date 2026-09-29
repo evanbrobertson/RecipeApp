@@ -160,6 +160,15 @@ pub struct Config {
     pub open_signup: bool,
     /// With accounts, where `accounts.db` is (next to the database). None = in memory.
     pub accounts_db: Option<PathBuf>,
+    /// Where `sites.db` is (next to the database): what worked the last time a recipe was
+    /// read from each host, and when Wee Chef last looked at its terms (see `src/sites.rs`,
+    /// `site_terms`). None = in memory.
+    pub sites_db: Option<PathBuf>,
+    /// `SCRAPE_SITE_MEMORY=off`: don't remember (or use) how each site was read last time.
+    pub scrape_site_memory: bool,
+    /// Whether a link to a private address may be fetched. Off, always, outside the tests:
+    /// they serve recipes from `127.0.0.1`.
+    pub scrape_allow_private: bool,
     /// Hosted: the auth service's internal URL (`AUTH_SERVICE_URL`), e.g.
     /// `http://crumb-auth.railway.internal:3100`.
     pub auth_service_url: Option<String>,
@@ -174,6 +183,9 @@ pub struct Config {
     pub social: Vec<crate::social::Provider>,
     /// Password for the web UI and the Claude connector. None = no auth (local dev only).
     pub app_password: Option<String>,
+    /// Random bytes mixed into the password-mode session key (`session.secret` beside the
+    /// database), so a session cookie can't be used to guess the password offline.
+    pub session_secret: Vec<u8>,
     /// The AI API, when a key is configured.
     pub llm: Option<LlmConfig>,
     /// Model for "Try next" blurbs; defaults to the provider's model.
@@ -206,9 +218,25 @@ pub struct Config {
     /// Threads per whisper.cpp run (`WHISPER_THREADS`); default the cores split between
     /// the workers.
     pub whisper_threads: Option<usize>,
+    /// `SCRAPE_RELAYS`: base URLs of `crumb-relay`s, asked for a page when the server's own
+    /// fetches were both blocked (see `src/relay.rs`).
+    pub scrape_relays: Vec<String>,
+    /// `SCRAPE_RELAY_TOKEN`: the bearer token the relays were started with.
+    pub scrape_relay_token: Option<String>,
+    /// `SCRAPE_RELAY_PROXY`: a proxy to reach the relays through (`socks5h://...` for a
+    /// Tailscale sidecar in userspace mode). None = directly.
+    pub scrape_relay_proxy: Option<String>,
     /// Where households other than the home one keep their databases (`households/` next
     /// to the database). None = in memory.
     pub households_dir: Option<PathBuf>,
+    /// `TERMS_CHECK=off` turns Wee Chef's terms-of-service check off.
+    pub terms_check: bool,
+    /// `TERMS_ISSUES_TOKEN`: a GitHub token that may write issues, for the check's suggestions.
+    pub terms_issues_token: Option<String>,
+    /// `TERMS_ISSUES_REPO`: the repository (`owner/name`) those issues go to.
+    pub terms_issues_repo: String,
+    /// GitHub's API. Not an env var: tests point it at a stub.
+    pub github_api: String,
     pub host: String,
     pub port: u16,
 }
@@ -219,11 +247,20 @@ impl Default for Config {
             auth_mode: AuthMode::Password,
             open_signup: false,
             accounts_db: None,
+            sites_db: None,
+            scrape_site_memory: true,
+            scrape_allow_private: false,
             auth_service_url: None,
             auth_internal_secret: None,
             hosted_home_owner: None,
             social: Vec::new(),
             app_password: None,
+            session_secret: {
+                use rand::RngCore;
+                let mut secret = vec![0u8; 32];
+                rand::thread_rng().fill_bytes(&mut secret);
+                secret
+            },
             llm: None,
             suggest_model: None,
             suggestions_ai: true,
@@ -238,7 +275,14 @@ impl Default for Config {
             video_workers: 1,
             video_queue_max: 4,
             whisper_threads: None,
+            scrape_relays: Vec::new(),
+            scrape_relay_token: None,
+            scrape_relay_proxy: None,
             households_dir: None,
+            terms_check: true,
+            terms_issues_token: None,
+            terms_issues_repo: "evanbrobertson/RecipeApp".into(),
+            github_api: "https://api.github.com".into(),
             host: "0.0.0.0".into(),
             port: 3000,
         }
@@ -267,8 +311,25 @@ fn count(keys: &[&str], min: usize) -> Option<usize> {
     }
 }
 
-fn switched_off(key: &str) -> bool {
+pub(crate) fn switched_off(key: &str) -> bool {
     env(&[key]).is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "off" | "false" | "0"))
+}
+
+/// The relay addresses in a comma-separated list, without trailing slashes. Ones that aren't
+/// http(s) addresses are warned about and dropped.
+fn relay_urls(list: &str) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    for item in list.split(',').map(str::trim).filter(|u| !u.is_empty()) {
+        let url = item.trim_end_matches('/');
+        let ok = url::Url::parse(url)
+            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some());
+        if !ok {
+            tracing::warn!("SCRAPE_RELAYS: \"{item}\" isn't an http(s) address, ignored");
+        } else if !urls.iter().any(|u| u == url) {
+            urls.push(url.to_string());
+        }
+    }
+    urls
 }
 
 fn typesafe_from_env() -> Option<TypesafeConfig> {
@@ -341,11 +402,15 @@ impl Config {
             accounts_db: Some(crate::accounts::accounts_db_path(
                 &crate::db::database_path(),
             )),
+            sites_db: Some(crate::sites::sites_db_path(&crate::db::database_path())),
+            scrape_site_memory: !switched_off("SCRAPE_SITE_MEMORY"),
+            scrape_allow_private: false,
             auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
             auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),
             hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),
             social: crate::social::Provider::from_env(env),
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
+            session_secret: crate::auth::load_session_secret(&crate::db::database_path()),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),
             suggestions_ai: !switched_off("SUGGESTIONS_AI"),
@@ -360,9 +425,16 @@ impl Config {
             video_workers,
             video_queue_max: count(&["VIDEO_QUEUE_MAX"], 0).unwrap_or(4 * video_workers),
             whisper_threads: count(&["WHISPER_THREADS"], 1),
+            scrape_relays: relay_urls(env(&["SCRAPE_RELAYS"]).as_deref().unwrap_or("")),
+            scrape_relay_token: env(&["SCRAPE_RELAY_TOKEN"]),
+            scrape_relay_proxy: env(&["SCRAPE_RELAY_PROXY"]),
             households_dir: Some(crate::households::households_dir(
                 &crate::db::database_path(),
             )),
+            terms_check: !switched_off("TERMS_CHECK"),
+            terms_issues_token: env(&["TERMS_ISSUES_TOKEN"]),
+            terms_issues_repo: env(&["TERMS_ISSUES_REPO"]).unwrap_or(d.terms_issues_repo),
+            github_api: d.github_api,
             host: env(&["HOST"]).unwrap_or(d.host),
             port: env(&["PORT"])
                 .and_then(|p| p.parse().ok())
@@ -393,6 +465,7 @@ impl Config {
         if let Some(domain) = &self.railway_domain {
             return format!("https://{domain}");
         }
+        // Forwarded headers are whatever the client sent unless a proxy we trust sets them
         let first = |name: &str| {
             headers
                 .get(name)
@@ -401,10 +474,47 @@ impl Config {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         };
-        let proto = first("x-forwarded-proto").unwrap_or_else(|| "http".into());
-        let host = first("x-forwarded-host")
+        let forwarded = |name: &str| first(name).filter(|_| self.trust_proxy_headers);
+        let proto = forwarded("x-forwarded-proto").unwrap_or_else(|| "http".into());
+        let host = forwarded("x-forwarded-host")
             .or_else(|| first("host"))
             .unwrap_or_else(|| format!("localhost:{}", self.port));
         format!("{proto}://{host}")
+    }
+
+    /// Whether the public address is fixed by configuration (`SITE_URL`, or Railway's domain)
+    /// rather than read from each request's headers.
+    pub fn origin_is_fixed(&self) -> bool {
+        self.site_url.is_some() || self.railway_domain.is_some()
+    }
+
+    /// Refuses configurations that would put a forged `Host` into links people follow: with
+    /// accounts, invites, OAuth metadata and share links need `SITE_URL`.
+    pub fn check(&self) -> Result<(), String> {
+        if !self.origin_is_fixed() && self.auth_mode != AuthMode::Password {
+            return Err(
+                "SITE_URL is required with AUTH_MODE=accounts or hosted (for example \
+                 https://recipes.example.com): invite links, sign-in redirects and the connector's \
+                 address are built from it, and without it they'd follow the request's Host header"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relay_urls;
+
+    #[test]
+    fn relay_list_is_trimmed_deduplicated_and_checked() {
+        assert_eq!(
+            relay_urls(
+                " http://pi1.tail.ts.net:8787/, http://100.101.102.103:8787 ,,http://pi1.tail.ts.net:8787,pi2:8787,ftp://x"
+            ),
+            ["http://pi1.tail.ts.net:8787", "http://100.101.102.103:8787"]
+        );
+        assert!(relay_urls("").is_empty());
     }
 }

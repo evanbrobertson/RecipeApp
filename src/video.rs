@@ -116,33 +116,7 @@ fn on_path(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Whether a link is a cooking video we know how to read: TikTok, an Instagram reel, or a
-/// YouTube video or Short.
-pub fn is_video_url(url: &str) -> bool {
-    let Ok(u) = url::Url::parse(url) else {
-        return false;
-    };
-    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
-    let host = host
-        .strip_prefix("www.")
-        .or_else(|| host.strip_prefix("m."))
-        .unwrap_or(&host);
-    let path = u.path();
-    match host {
-        "tiktok.com" | "vm.tiktok.com" | "vt.tiktok.com" => path.len() > 1,
-        "instagram.com" => ["/reel/", "/reels/", "/tv/"]
-            .iter()
-            .any(|p| path.starts_with(p)),
-        "youtube.com" => {
-            ["/shorts/", "/live/"]
-                .iter()
-                .any(|p| path.len() > p.len() && path.starts_with(p))
-                || (path == "/watch" && u.query_pairs().any(|(k, v)| k == "v" && !v.is_empty()))
-        }
-        "youtu.be" => path.len() > 1,
-        _ => false,
-    }
-}
+pub use crumb_core::source::is_video_url;
 
 /// What the cook's browser read from a video's page (the Crumb extension), sent with the
 /// link to `POST /api/recipes/import` as `video`. It's whatever the cook sends, so it's
@@ -165,6 +139,8 @@ const MAX_DESCRIPTION_CHARS: usize = 10_000;
 /// How long what the browser read waits for its import to start.
 const KEEP_FROM_BROWSER: Duration = Duration::from_secs(15 * 60);
 const MAX_KEPT_FROM_BROWSER: usize = 64;
+/// What one household may have waiting, so one box can't push everyone else's out.
+const MAX_KEPT_FROM_BROWSER_PER_HOUSEHOLD: usize = 8;
 
 fn clip(value: Option<String>, max: usize) -> Option<String> {
     let value = value?;
@@ -226,6 +202,21 @@ static FROM_BROWSER: LazyLock<Mutex<HashMap<BrowserKey, (Instant, FromBrowser)>>
 pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
     let mut map = FROM_BROWSER.lock().unwrap_or_else(|e| e.into_inner());
     map.retain(|_, (at, _)| at.elapsed() < KEEP_FROM_BROWSER);
+    let key = (state.household, url.to_string());
+    while !map.contains_key(&key)
+        && map.keys().filter(|(h, _)| *h == state.household).count()
+            >= MAX_KEPT_FROM_BROWSER_PER_HOUSEHOLD
+    {
+        let Some(oldest) = map
+            .iter()
+            .filter(|((h, _), _)| *h == state.household)
+            .min_by_key(|(_, (at, _))| *at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
     while map.len() >= MAX_KEPT_FROM_BROWSER {
         let Some(oldest) = map
             .iter()
@@ -236,10 +227,7 @@ pub fn offer(state: &AppState, url: &str, read: FromBrowser) {
         };
         map.remove(&oldest);
     }
-    map.insert(
-        (state.household, url.to_string()),
-        (Instant::now(), read.cleaned()),
-    );
+    map.insert(key, (Instant::now(), read.cleaned()));
 }
 
 fn take_from_browser(state: &AppState, url: &str) -> Option<FromBrowser> {
@@ -385,6 +373,12 @@ pub async fn import(state: &AppState, url: &str) -> AppResult<(Recipe, bool)> {
     let tools = &state.config.video;
     // The cook's browser already read the page: the site isn't asked again (it may refuse)
     let from_browser = take_from_browser(state, url);
+    if from_browser.is_none() {
+        // Not a private address, whatever yt-dlp or the page fallback would be sent to
+        let parsed =
+            url::Url::parse(url).map_err(|_| AppError::bad_request("Please enter a valid URL"))?;
+        crate::scraper::check_public(state, &parsed).await?;
+    }
     let hint = if from_browser.is_none() && is_youtube(url) {
         YOUTUBE_HINT
     } else {
@@ -924,7 +918,7 @@ pub fn pick_frames(stills: Vec<Vec<u8>>, max: usize) -> Vec<Photo> {
 /// video's cover, else a still from the end, where the dish is usually shown.
 async fn photo(state: &AppState, meta: &VideoMeta, frames: &[Photo]) -> Option<String> {
     if let Some(thumbnail) = &meta.thumbnail
-        && let Some(kept) = crate::images::fetch_to_embed(&state.http, thumbnail).await
+        && let Some(kept) = crate::images::fetch_to_embed(state, thumbnail).await
     {
         return Some(kept);
     }
@@ -960,38 +954,6 @@ async fn run(command: &mut Command, timeout: Duration) -> Result<Vec<u8>, String
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn knows_video_links() {
-        for yes in [
-            "https://vt.tiktok.com/ZSb2DYyNb/",
-            "https://vm.tiktok.com/ZMabc123/",
-            "https://www.tiktok.com/@chef/video/7412345678901234567?_r=1",
-            "https://m.tiktok.com/v/7412345678901234567.html",
-            "https://www.instagram.com/reel/C9abcDEF/",
-            "https://instagram.com/reels/C9abcDEF/",
-            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
-            "https://www.youtube.com/watch?v=Xy_djhH3WE4&t=122s",
-            "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
-            "https://youtu.be/dQw4w9WgXcQ?si=abc",
-            "https://www.youtube.com/live/dQw4w9WgXcQ",
-        ] {
-            assert!(is_video_url(yes), "{yes}");
-        }
-        for no in [
-            "https://www.tiktok.com/",
-            "https://www.instagram.com/p/C9abcDEF/",
-            "https://www.youtube.com/watch",
-            "https://www.youtube.com/@chef",
-            "https://www.youtube.com/shorts/",
-            "https://youtu.be/",
-            "https://www.allrecipes.com/recipe/1/tiktok-pasta/",
-            "https://nottiktok.com/@a/video/1",
-            "not a url",
-        ] {
-            assert!(!is_video_url(no), "{no}");
-        }
-    }
 
     #[test]
     fn reads_ytdlp_json() {

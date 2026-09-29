@@ -1,7 +1,7 @@
 //! Imports each URL through the scraper's fetch order and prints which method won:
 //! `cargo run --release --example scrape_check -- <url>...`
 //! Makes real requests; keep the list short.
-use crumb::scraper::{Fetched, Method, fetch_wreq, scrape_with};
+use crumb::scraper::{Fetched, Method, Steps, fallbacks, fetch_wreq, scrape_with};
 use std::time::Instant;
 
 #[tokio::main]
@@ -10,7 +10,8 @@ async fn main() {
     for url in std::env::args().skip(1) {
         let started = Instant::now();
         let tried = std::cell::RefCell::new(Vec::new());
-        let result = scrape_with(&url, browser.available(), |method| {
+        let steps = Steps::from_env(browser.available(), false);
+        let result = scrape_with(&url, steps, |method| {
             let browser = browser.clone();
             let url = url.clone();
             let tried = &tried;
@@ -18,14 +19,23 @@ async fn main() {
                 let at = Instant::now();
                 let fetched = match method {
                     Method::Browser => match browser.fetch(&url).await {
-                        Ok(html) => Fetched::Page { status: 200, html },
+                        Ok(html) => Fetched::Page {
+                            status: 200,
+                            html,
+                            link: None,
+                        },
                         Err(err) => Fetched::Unreachable(err),
                     },
+                    Method::WordPress => fallbacks::fetch_wordpress(&url, None).await,
+                    Method::Archive => fallbacks::fetch_archive(&url).await,
                     wreq => fetch_wreq(wreq, &url).await,
                 };
                 let what = match &fetched {
-                    Fetched::Page { status, html } => format!("{status} ({} bytes)", html.len()),
+                    Fetched::Page { status, html, .. } => {
+                        format!("{status} ({} bytes)", html.len())
+                    }
                     Fetched::Unreachable(e) => format!("error: {e}"),
+                    Fetched::Recipe(_) => "recipe".into(),
                 };
                 tried.borrow_mut().push(format!(
                     "{} {what} {}ms",

@@ -6,6 +6,12 @@
 //! two never stack beyond it. The browser
 //! is driven over the DevTools protocol directly (a handful of commands), which keeps the
 //! binary small compared with a full CDP client.
+//!
+//! Chromium runs the JavaScript of whatever page it is sent to, and a page that answered the
+//! server's own fetch with a bot check is not to be trusted. Its network goes through a
+//! proxy that only connects to public addresses (`crumb_fetch::proxy`), loopback included, so
+//! the page's script can't reach cloud metadata, the auth service or anything else on the
+//! server's private network, whether it navigates, loads a sub-resource or calls `fetch`.
 
 use futures_util::{SinkExt, StreamExt};
 use regex::Regex;
@@ -134,6 +140,12 @@ impl Browser {
             .executable
             .as_deref()
             .ok_or("Chromium is not installed")?;
+        // The proxy refuses private addresses for everything Chromium does; this refuses the
+        // link itself before a browser is started for it
+        let target = url::Url::parse(url).map_err(|e| e.to_string())?;
+        crumb_fetch::check_resolved(&target)
+            .await
+            .map_err(|why| why.to_string())?;
         let _permit = match &self.budget {
             Some(budget) => Some(
                 tokio::time::timeout(BUDGET_WAIT, budget.acquire())
@@ -153,14 +165,19 @@ impl Browser {
 
 async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String> {
     let profile = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let proxy = crumb_fetch::proxy::Proxy::start()
+        .await
+        .map_err(|e| format!("Couldn't start the browser's proxy: {e}"))?;
     let mut command = Command::new(exe);
     if let Some(ua) = user_agent(exe).await {
         command.arg(format!("--user-agent={ua}"));
     }
+    if no_sandbox() {
+        command.arg("--no-sandbox");
+    }
     let mut child = command
         .args([
             "--headless=new",
-            "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
@@ -171,6 +188,12 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
             "--window-size=1366,900",
             "--lang=en-US",
             "--remote-debugging-port=0",
+            &format!("--proxy-server=http://{}", proxy.addr()),
+            // Loopback goes through the proxy too (and is refused there)
+            "--proxy-bypass-list=<-loopback>",
+            // Neither of these goes through an HTTP proxy
+            "--disable-quic",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
             &format!("--user-data-dir={}", profile.path().display()),
             "about:blank",
         ])
@@ -183,24 +206,67 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
 
     let result = drive(&mut child, url, timeout).await;
     let _ = child.kill().await;
+    drop(proxy);
     result
+}
+
+/// Chromium's sandbox stays on unless `BROWSER_NO_SANDBOX=1`. It needs unprivileged user
+/// namespaces (or a setuid helper), which some container platforms refuse; an operator who has
+/// seen the launch error below opts out knowingly. (Root can't use the sandbox either, which is
+/// one more reason the Docker image runs as an unprivileged user.)
+fn no_sandbox() -> bool {
+    static CHOICE: LazyLock<bool> = LazyLock::new(|| {
+        let asked = std::env::var("BROWSER_NO_SANDBOX")
+            .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "on" | "yes"));
+        if asked {
+            tracing::warn!(
+                "[browser] BROWSER_NO_SANDBOX is set: Chromium runs without its sandbox while it opens untrusted pages"
+            );
+        }
+        asked
+    });
+    *CHOICE
+}
+
+/// What to tell the operator when Chromium never became ready.
+fn launch_hint(stderr: &str) -> Option<&'static str> {
+    let lower = stderr.to_lowercase();
+    let sandbox_trouble =
+        lower.contains("sandbox") || lower.contains("namespace") || lower.contains("zygote");
+    (!no_sandbox() && sandbox_trouble).then_some(
+        "Chromium couldn't start with its sandbox (this host may not allow unprivileged user namespaces). Fix the host, or set BROWSER_NO_SANDBOX=1 to run it unsandboxed knowingly",
+    )
 }
 
 async fn devtools_url(child: &mut Child) -> Result<String, String> {
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let mut lines = BufReader::new(stderr).lines();
+    let mut seen = String::new();
     let find = async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(rest) = line.split("DevTools listening on ").nth(1) {
                 return Some(rest.trim().to_string());
             }
+            if seen.len() < 4000 {
+                seen.push_str(&line);
+                seen.push('\n');
+            }
         }
         None
     };
-    let url = tokio::time::timeout(Duration::from_secs(20), find)
-        .await
-        .map_err(|_| "Chromium didn't start in time".to_string())?
-        .ok_or("Chromium exited before it was ready")?;
+    let found = tokio::time::timeout(Duration::from_secs(20), find).await;
+    let url = match found {
+        Ok(Some(url)) => url,
+        other => {
+            if let Some(hint) = launch_hint(&seen) {
+                tracing::error!("[browser] {hint}");
+            }
+            return Err(match other {
+                Err(_) => "Chromium didn't start in time".to_string(),
+                _ => "Chromium exited before it was ready".to_string(),
+            });
+        }
+    };
     // Keep draining stderr so Chromium never blocks on a full pipe
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
     Ok(url)
@@ -353,6 +419,38 @@ async fn drive(child: &mut Child, url: &str, timeout: Duration) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With a Chromium installed (skipped without one): pages on the server's own network
+    /// are never reached, not even the one Chromium is sent to.
+    #[tokio::test]
+    async fn chromium_cannot_reach_loopback() {
+        let browser = Browser::from_env();
+        let Some(exe) = browser.executable.as_deref().filter(|p| p.is_file()) else {
+            return;
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = "<html><body>secret</body></html>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
+            }
+        });
+        let result = run(exe, &format!("http://{addr}/"), Duration::from_secs(15)).await;
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "{result:?}"
+        );
+        assert!(result.is_err(), "the proxy turns the page away");
+    }
 
     #[test]
     fn user_agent_follows_the_installed_version() {

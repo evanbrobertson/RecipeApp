@@ -11,6 +11,7 @@ pub mod checks;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod guard;
 pub mod hosted;
 pub mod households;
 pub mod images;
@@ -21,11 +22,15 @@ pub mod oauth;
 pub mod photos;
 pub mod preview;
 pub mod recipes;
+pub mod relay;
 pub mod scraper;
 pub mod share;
+pub mod site_terms;
+pub mod sites;
 pub mod social;
 pub mod suggestions;
 pub mod telemetry;
+pub mod throttle;
 pub mod video;
 pub mod video_jobs;
 pub mod web;
@@ -71,12 +76,25 @@ pub struct AppState {
     pub queued: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Unknown share tokens asked for, per client address (see `share::Misses`).
     pub share_misses: Arc<share::Misses>,
+    /// Sign-in attempts per client address and account (see [`throttle`]).
+    pub logins: Arc<throttle::Throttle>,
+    /// OAuth client registrations and similar counted actions.
+    pub rates: Arc<throttle::Rate>,
     /// Video imports waiting and running, across households (see [`video_jobs`]).
     pub video_jobs: Arc<video_jobs::VideoJobs>,
+    /// `crumb-relay`s asked for pages the server's own fetches were blocked on (see [`relay`]).
+    pub relays: Arc<relay::Relays>,
+    /// How each recipe site was last read, across households (see [`sites`]).
+    pub sites: Arc<sites::Sites>,
+    /// Wee Chef's look at sites' terms of service (see [`site_terms`]).
+    pub terms: Arc<site_terms::Flagger>,
 }
 
 impl AppState {
     pub fn new(db: db::Db, config: config::Config, mut browser: browser::Browser) -> Self {
+        // Nothing the server fetches, redirects and Chromium's requests included, may reach a
+        // site whose terms forbid automated fetching (see `site_terms`)
+        crumb_fetch::guard::set_veto(site_terms::host_is_listed);
         let video_jobs = Arc::new(video_jobs::VideoJobs::new(video_jobs::Limits::from_config(
             &config,
         )));
@@ -87,6 +105,14 @@ impl AppState {
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
             .expect("HTTP client");
+        let relays = Arc::new(relay::Relays::from_config(&config));
+        let sites = Arc::new(
+            match &config.sites_db {
+                Some(path) => sites::Sites::open(path),
+                None => sites::Sites::open_in_memory(),
+            }
+            .expect("sites database"),
+        );
         let households = Arc::new(households::Households::new(
             db,
             config.households_dir.clone(),
@@ -111,6 +137,7 @@ impl AppState {
             };
             Arc::new(opened.expect("accounts database"))
         });
+        let terms = Arc::new(site_terms::Flagger::new());
         Self {
             accounts,
             hosted,
@@ -130,7 +157,12 @@ impl AppState {
             checks: Arc::default(),
             queued: home.queued,
             share_misses: Arc::default(),
+            logins: Arc::default(),
+            rates: Arc::default(),
             video_jobs,
+            relays,
+            sites,
+            terms,
         }
     }
 }
@@ -228,6 +260,24 @@ pub fn app(state: AppState) -> Router {
         .layer(security_header(
             "permissions-policy",
             "camera=(), microphone=(), geolocation=(self)",
+        ))
+        // State changes must come from this site; /mcp checks a browser's Origin; HSTS over HTTPS
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::same_origin_only,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::mcp_origin,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::hsts,
+        ))
+        // The client's address, for the sign-in and registration limits
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            throttle::client_ip_layer,
         ))
         // Share tokens never reach a span (see telemetry::redact_path)
         .layer(

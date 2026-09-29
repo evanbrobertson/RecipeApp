@@ -78,6 +78,9 @@ impl TestApp {
 
         let mut config = Config {
             web_dist: dist.path().to_path_buf(),
+            // The tests serve their recipe sites from 127.0.0.1; the ones about the guard
+            // switch this off
+            scrape_allow_private: true,
             ..Config::default()
         };
         configure(&mut config);
@@ -1632,6 +1635,60 @@ async fn sized_images_fetch_remote_photos_and_remember_failures() {
     let (status, _, _) = send_raw(&t, get(&format!("/img/{id}/768"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_bot_check_is_reported_as_site_blocked() {
+    let app = axum::Router::new()
+        .route(
+            "/denied",
+            axum::routing::get(|| async { StatusCode::FORBIDDEN }),
+        )
+        .route(
+            "/check",
+            axum::routing::get(|| async {
+                axum::response::Html("<html><head><title>Just a moment...</title></head></html>")
+            }),
+        )
+        .route(
+            "/gone",
+            axum::routing::get(|| async { StatusCode::NOT_FOUND }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let site = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let t = TestApp::new(None);
+    for path in ["/denied", "/check"] {
+        let url = format!("{site}{path}");
+        let (status, err) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}: {err}");
+        assert_eq!(err["code"], "site_blocked", "{path}: {err}");
+        assert!(err["message"].as_str().unwrap().contains("extension"));
+
+        // Claude is pointed at the extension, not shown the site's status
+        let (msg, is_error) = mcp_call(&t, "import_recipe_from_url", json!({"url": url})).await;
+        assert!(is_error, "{msg}");
+        assert!(msg.contains("browser extension"), "{msg}");
+    }
+
+    // Any other failure keeps its own message and carries no code
+    let (status, err) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/gone")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(err.get("code").is_none(), "{err}");
+    assert!(err["message"].as_str().unwrap().contains("404"), "{err}");
+    let (_, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": "nope"})))
+        .await;
+    assert!(err.get("code").is_none(), "{err}");
 }
 
 #[tokio::test]
@@ -3831,6 +3888,119 @@ async fn saving_another_crumbs_share_imports_its_export() {
     assert_eq!(again["isNew"], false);
     let (_, list) = b.json("GET", "/api/recipes", None).await;
     assert_eq!(list.as_array().unwrap().len(), 3);
+}
+
+/// A server that counts the connections it gets, and says which paths were asked for.
+async fn counting_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let app = axum::Router::new().fallback(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async { "<html><title>Inside</title></html>" }
+    });
+    (serve(app).await, hits)
+}
+
+#[tokio::test]
+async fn links_into_the_servers_own_network_are_refused_before_any_request() {
+    // Off in every other test; on for this one, as it is in production
+    let t = TestApp::with_config(|c| c.scrape_allow_private = false);
+    let (local, hits) = counting_server().await;
+    let port = local.rsplit(':').next().unwrap().to_string();
+    for url in [
+        local.clone(),
+        format!("{local}/recipe"),
+        format!("http://localhost:{port}/recipe"),
+        "http://169.254.169.254/latest/meta-data/".to_string(),
+        "http://10.0.0.7:8080/admin".to_string(),
+        "http://192.168.1.1/".to_string(),
+        "http://[::1]:3000/api/recipes".to_string(),
+        "http://100.100.100.100/".to_string(),
+        "http://0.0.0.0:3000/".to_string(),
+    ] {
+        let (status, err) = t
+            .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {err}");
+        assert_eq!(
+            err["message"], "That link points somewhere private.",
+            "{url}"
+        );
+        // The preview page scrapes too, and shows that as its failure
+        let (_, _, page) = t.send(get(&format!("/preview?url={url}&go=1"))).await;
+        assert!(!page.contains("Inside"), "{url}");
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // An ordinary bad link is still just a bad link
+    let (_, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": "nope"})))
+        .await;
+    assert_eq!(err["message"], "Please enter a valid URL");
+}
+
+#[tokio::test]
+async fn a_photo_link_into_the_servers_own_network_is_never_fetched() {
+    let (local, hits) = counting_server().await;
+    let private = TestApp::with_config(|c| c.scrape_allow_private = false);
+    assert!(
+        crumb::images::fetch_to_embed(&private.state, &format!("{local}/p.jpg"))
+            .await
+            .is_none()
+    );
+    assert!(crumb::images::photo_is_dead(&private.state, &format!("{local}/p.jpg"), None).await);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    // Where it is allowed (these tests), the server is asked
+    let open = TestApp::new(None);
+    let _ = crumb::images::fetch_to_embed(&open.state, &format!("{local}/p.jpg")).await;
+    assert!(hits.load(std::sync::atomic::Ordering::SeqCst) > 0);
+}
+
+#[tokio::test]
+async fn an_import_is_remembered_per_site_and_forgotten_after_two_misses() {
+    use axum::response::Html;
+    use axum::routing::get as route;
+    let page = r#"<html><head><script type="application/ld+json">{"@context":"https://schema.org",
+        "@type":"Recipe","name":"Memory Pie","recipeIngredient":["1 pie"],
+        "recipeInstructions":["Eat it."]}</script></head></html>"#;
+    let origin = serve(
+        axum::Router::new()
+            .route("/pie", route(move || async move { Html(page) }))
+            .route(
+                "/nothing",
+                route(|| async { Html("<p>no recipe here</p>") }),
+            ),
+    )
+    .await;
+    let t = TestApp::new(None);
+    let now = crumb::sites::now_secs();
+    assert!(t.state.sites.get("127.0.0.1", now).is_none());
+
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{origin}/pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let facts = t.state.sites.get("127.0.0.1", now).expect("remembered");
+    assert_eq!(facts.winning_method.as_deref(), Some("wreq-firefox"));
+    assert!(!facts.blocks_server);
+    assert_eq!(facts.failures, 0);
+    // Only how the site was read: nothing of the recipe
+    assert!(!format!("{facts:?}").contains("Memory Pie"));
+
+    for _ in 0..2 {
+        let (status, _) = t
+            .json(
+                "POST",
+                "/api/recipes/import",
+                Some(json!({"url": format!("{origin}/nothing")})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(t.state.sites.get("127.0.0.1", now).is_none());
 }
 
 /// Serves `routes` on a real local port; returns its origin (`http://127.0.0.1:port`).
@@ -7412,4 +7582,673 @@ async fn previews_are_behind_the_login() {
     assert!(status.is_redirection(), "{status}");
     let to = headers[header::LOCATION].to_str().unwrap();
     assert!(to.starts_with("/login?next=%2Fpreview%3Furl%3D"), "{to}");
+}
+
+#[tokio::test]
+async fn import_refuses_archive_bombs_and_oversized_uploads() {
+    use std::io::Write;
+    let t = TestApp::new(None);
+    let upload = |name: &str, data: Vec<u8>| {
+        let boundary = "XBOMB";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend(data);
+        body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
+        Request::builder()
+            .method("POST")
+            .uri("/api/import/files")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    };
+    // 30 MB of zeros, a few KB gzipped: over the per-file cap once unpacked
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    e.write_all(&vec![0u8; 30 * 1024 * 1024]).unwrap();
+    let bomb = e.finish().unwrap();
+    assert!(bomb.len() < 1_000_000);
+    let (status, _, text) = t.send(upload("bomb.txt.gz", bomb)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert!(results[0]["error"].as_str().is_some(), "{text}");
+
+    // A file over 25 MB is refused while it streams in, and says so
+    let (status, _, text) = t
+        .send(upload("big.txt", vec![b'a'; 26 * 1024 * 1024]))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(results[0]["error"], "File is over 25 MB");
+
+    // More than the whole request may carry is a 4xx before anything is imported
+    let (status, _, _) = t
+        .send(upload("huge.txt", vec![b'a'; 60 * 1024 * 1024]))
+        .await;
+    assert!(status.is_client_error(), "{status}");
+}
+
+fn login_request(password: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "password": password }).to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn password_guesses_back_off_even_in_parallel() {
+    let t = TestApp::new(Some("secret"));
+    // A burst of parallel wrong guesses: only the free tries get an answer, the rest wait
+    let replies = futures_util::future::join_all(
+        (0..30).map(|i| t.send(login_request(&format!("guess{i}")))),
+    )
+    .await;
+    let wrong = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::UNAUTHORIZED)
+        .count();
+    let limited = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(wrong, 5, "only the free tries are checked");
+    assert_eq!(limited, 25);
+    // Backing off means even the right password waits its turn
+    let (status, _, text) = t.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{text}");
+    assert!(text.contains("Try again in"), "{text}");
+}
+
+#[tokio::test]
+async fn a_good_password_clears_the_count() {
+    let t = TestApp::new(Some("secret"));
+    for _ in 0..4 {
+        let (status, _, _) = t.send(login_request("nope")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(t.send(login_request("secret")).await.0, StatusCode::OK);
+    for _ in 0..4 {
+        assert_eq!(
+            t.send(login_request("nope")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}
+
+fn consent_query(client_id: &str, redirect: &str) -> String {
+    serde_urlencoded::to_string([
+        ("client_id", client_id),
+        ("redirect_uri", redirect),
+        ("state", "s"),
+        (
+            "code_challenge",
+            "abcabcabcabcabcabcabcabcabcabcabcabcabcabcabc",
+        ),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ])
+    .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_password_guesses_share_the_login_limit() {
+    let t = TestApp::new(Some("secret"));
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "Claude", "redirect_uris": ["https://claude.ai/cb"]})),
+        )
+        .await;
+    let q = consent_query(
+        client["client_id"].as_str().unwrap(),
+        "https://claude.ai/cb",
+    );
+    let post = |password: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/authorize")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!("{q}&action=allow&password={password}")))
+            .unwrap()
+    };
+    for _ in 0..5 {
+        let (status, _, html) = t.send(post("nope")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Incorrect password"));
+    }
+    // The login form's own attempts count too
+    assert_eq!(
+        t.send(login_request("nope")).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    let (_, _, html) = t.send(post("secret")).await;
+    assert!(html.contains("Try again in"), "{html}");
+}
+
+#[tokio::test]
+async fn session_cookies_depend_on_the_servers_secret() {
+    let a = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![1; 32];
+    });
+    let b = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![2; 32];
+    });
+    let (status, headers, _) = a.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    let pair = headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let with_cookie = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, pair.clone())
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(a.send(with_cookie("/api/recipes")).await.0, StatusCode::OK);
+    assert_eq!(
+        b.send(with_cookie("/api/recipes")).await.0,
+        StatusCode::UNAUTHORIZED,
+        "same password, other secret: not a valid session"
+    );
+}
+
+#[tokio::test]
+async fn oauth_registration_is_limited_and_pruned() {
+    let t = TestApp::new(Some("secret"));
+    let register = |name: &str| {
+        t.json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": name, "redirect_uris": ["https://a.example/cb"]})),
+        )
+    };
+    // Old clients nobody connected are dropped when new ones register; used ones stay
+    {
+        let conn = t.state.db.lock();
+        let now = crumb::model::now_secs();
+        for (id, age) in [("stale", 30 * 86400), ("fresh", 60), ("used", 30 * 86400)] {
+            conn.execute(
+                "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, 'x', '[]', ?2)",
+                rusqlite::params![id, now - age],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO oauth_tokens (hash, kind, client_id, expires_at, created_at) VALUES ('h', 'access', 'used', ?1, ?2)",
+            rusqlite::params![now + 1000, now],
+        )
+        .unwrap();
+    }
+    assert_eq!(register("one").await.0, StatusCode::CREATED);
+    let ids: Vec<String> = {
+        let conn = t.state.db.lock();
+        let mut stmt = conn
+            .prepare("SELECT id FROM oauth_clients ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert!(ids.contains(&"fresh".to_string()) && ids.contains(&"used".to_string()));
+    assert!(!ids.contains(&"stale".to_string()), "{ids:?}");
+
+    // Ten an hour from one address
+    for _ in 0..9 {
+        assert_eq!(register("more").await.0, StatusCode::CREATED);
+    }
+    assert_eq!(register("too many").await.0, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn the_consent_screen_does_not_let_a_name_pose_as_claude() {
+    let t = TestApp::new(Some("secret"));
+    let screen = async |name: &str, redirect: &str| {
+        let (_, client) = t
+            .json(
+                "POST",
+                "/oauth/register",
+                Some(json!({"client_name": name, "redirect_uris": [redirect]})),
+            )
+            .await;
+        let q = consent_query(client["client_id"].as_str().unwrap(), redirect);
+        t.send(get(&format!("/oauth/authorize?{q}"))).await.2
+    };
+    let html = screen("Claude", "https://attacker.example/cb").await;
+    assert!(
+        html.contains("Connect an app at <code>attacker.example</code>?"),
+        "{html}"
+    );
+    assert!(html.contains("calling itself"));
+    assert!(!html.contains("Connect Claude?"));
+    let html = screen("Claude", "https://claude.ai/api/mcp/auth_callback").await;
+    assert!(html.contains("Connect Claude?"));
+}
+
+#[tokio::test]
+async fn state_changes_from_other_sites_are_refused() {
+    let t = TestApp::new(None);
+    let post = |extra: &[(&str, &str)]| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/api/recipes/bulk-delete")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::HOST, "crumb.test");
+        for (k, v) in extra {
+            req = req.header(*k, *v);
+        }
+        req.body(Body::from(r#"{"ids":[1]}"#)).unwrap()
+    };
+    for site in ["cross-site", "same-site"] {
+        let (status, _, body) = t.send(post(&[("sec-fetch-site", site)])).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{site}: {body}");
+    }
+    // No Fetch Metadata: the Origin has to be this site's
+    let (status, _, _) = t.send(post(&[("origin", "https://evil.example")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = t.send(post(&[("origin", "null")])).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // This site's own pages, browsers that only send Origin, and non-browser clients pass
+    for extra in [
+        vec![("sec-fetch-site", "same-origin")],
+        vec![("origin", "http://crumb.test")],
+        vec![],
+    ] {
+        let (status, _, body) = t.send(post(&extra)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{extra:?}: {body}");
+    }
+    // Reads are never refused, and the protocol endpoints take other origins' calls
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/recipes")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = t
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::from(
+                    r#"{"redirect_uris":["https://claude.ai/cb"],"client_name":"c"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn mcp_checks_a_browsers_origin() {
+    let t = TestApp::with_config(|c| c.site_url = Some("https://crumb.example".into()));
+    let call = |origin: Option<&str>| {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        req.body(Body::from(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        ))
+        .unwrap()
+    };
+    let (status, _, _) = t.send(call(Some("https://evil.example"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    for ok in [
+        None,
+        Some("https://crumb.example"),
+        Some("https://claude.ai"),
+    ] {
+        let (status, _, body) = t.send(call(ok)).await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "{ok:?}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn shell_templates_stay_hidden_however_the_path_is_spelled() {
+    let t = TestApp::new(None);
+    for path in [
+        "/shell/preview/index.html",
+        "/%73hell/preview/index.html",
+        "/%53HELL/preview/index.html",
+        "/shell%2Fpreview/index.html",
+    ] {
+        let (status, _, body) = t.send(get(path)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!body.contains("previewBoot"), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn app_pages_carry_a_csp_that_allows_only_their_own_scripts() {
+    let t = TestApp::new(None);
+    let (status, headers, _) = t.send(get("/add")).await;
+    assert_eq!(status, StatusCode::OK);
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+    assert!(csp.contains("object-src 'none'") && csp.contains("frame-ancestors 'none'"));
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[tokio::test]
+async fn hsts_is_sent_over_https_only() {
+    let t = TestApp::with_config(|c| c.trust_proxy_headers = true);
+    let (_, headers, _) = t
+        .send(
+            Request::builder()
+                .uri("/api/health")
+                .header("x-forwarded-proto", "https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert!(
+        headers[header::STRICT_TRANSPORT_SECURITY]
+            .to_str()
+            .unwrap()
+            .starts_with("max-age=")
+    );
+    let (_, headers, _) = t.send(get("/api/health")).await;
+    assert!(!headers.contains_key(header::STRICT_TRANSPORT_SECURITY));
+}
+
+#[test]
+fn the_public_origin_ignores_forwarded_headers_unless_a_proxy_is_trusted() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("host", "real.example".parse().unwrap());
+    headers.insert("x-forwarded-host", "evil.example".parse().unwrap());
+    headers.insert("x-forwarded-proto", "https".parse().unwrap());
+    let mut config = Config::default();
+    assert_eq!(config.public_origin(&headers), "http://real.example");
+    config.trust_proxy_headers = true;
+    assert_eq!(config.public_origin(&headers), "https://evil.example");
+    config.site_url = Some("https://fixed.example/".into());
+    assert_eq!(config.public_origin(&headers), "https://fixed.example");
+}
+
+#[test]
+fn accounts_modes_refuse_to_start_without_a_fixed_address() {
+    use crumb::config::AuthMode;
+    let mut config = Config::default();
+    assert!(config.check().is_ok(), "password mode only warns");
+    config.auth_mode = AuthMode::Accounts;
+    assert!(config.check().unwrap_err().contains("SITE_URL"));
+    config.auth_mode = AuthMode::Hosted;
+    assert!(config.check().is_err());
+    config.site_url = Some("https://recipes.example".into());
+    assert!(config.check().is_ok());
+    config.site_url = None;
+    config.railway_domain = Some("app.up.railway.app".into());
+    assert!(config.check().is_ok());
+}
+
+/// A recipe as the extension reads it from a page: its JSON-LD inside a `@graph`.
+fn page_reading(name: &str) -> Value {
+    let ld = json!({"@context": "https://schema.org", "@graph": [
+        {"@type": "WebSite", "name": "Food"},
+        {"@type": "Recipe", "name": name, "url": "https://elsewhere.test/not-this",
+         "recipeIngredient": ["3 apples", "1 cup flour"],
+         "recipeInstructions": [{"@type": "HowToStep", "text": "Slice."}, {"@type": "HowToStep", "text": "Bake."}]},
+    ]});
+    json!({"jsonLd": [ld.to_string()], "image": "https://images.example/pie.jpg", "canonical": "https://elsewhere.test/x"})
+}
+
+#[tokio::test]
+async fn a_recipe_read_in_the_browser_is_saved_without_fetching_the_page() {
+    let t = TestApp::new(None);
+    // Nothing answers there: a fetch would fail, so saving proves there was none
+    let url = "https://recipes.invalid/apple-pie?utm_source=mail";
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["isNew"], true);
+    assert_eq!(res["title"], "Apple Pie");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(
+        recipe["url"], url,
+        "saved under the link, not the page's claim"
+    );
+    assert_eq!(
+        recipe["ingredients"][0]["items"].as_array().unwrap().len(),
+        2
+    );
+
+    // The same link again is the same recipe
+    let (_, again) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(again["isNew"], false);
+}
+
+#[tokio::test]
+async fn a_page_reading_is_size_capped_and_a_bad_one_falls_back_to_scraping() {
+    let t = TestApp::new(None);
+    let big = json!({"jsonLd": ["x".repeat(600 * 1024)]});
+    let (status, err) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": "https://recipes.invalid/big", "page": big})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{err}");
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": "https://recipes.invalid/odd", "page": {"jsonLd": "no"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Unreadable JSON-LD, or none: the page itself is scraped as usual
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = hits.clone();
+    let site = serve(axum::Router::new().route(
+        "/stew",
+        axum::routing::get(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                axum::response::Html(format!(
+                    r#"<html><head><script type="application/ld+json">{}</script></head></html>"#,
+                    json!({"@type": "Recipe", "name": "Site Stew",
+                        "recipeIngredient": ["1 onion", "2 carrots"],
+                        "recipeInstructions": ["Chop.", "Simmer."]})
+                ))
+            }
+        }),
+    ))
+    .await;
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": format!("{site}/stew"),
+                "page": {"jsonLd": ["{not json", "{\"@type\":\"Article\"}"], "card": "<p>hi</p>"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Site Stew");
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_preview_shows_the_recipe_the_extension_read() {
+    let t = TestApp::new(None);
+    let url = "https://recipes.invalid/apple-pie";
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+
+    // The extension's tab waits for the hand-over instead of scraping
+    let (_, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension"),
+            Some("none"),
+        ))
+        .await;
+    assert_eq!(page_data(&html)["preview"]["state"], "handover");
+
+    // A hand-over that holds no recipe says so; one without a page is refused
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": {"jsonLd": []}})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(false)));
+    let (status, _) = t
+        .json("POST", "/api/preview", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+
+    // The reload shows it, unsaved and unfetched
+    let (status, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let data = page_data(&html);
+    assert_eq!(data["preview"]["state"], "ready");
+    assert_eq!(data["preview"]["title"], "Apple Pie");
+    assert!(html.contains(r#"src="https://images.example/pie.jpg""#));
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Adding it saves that reading
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Apple Pie");
+}
+
+#[tokio::test]
+async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
+    let t = TestApp::new(None);
+    let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
+
+    // Import: 422 with the code, a polite message naming the site, and nothing saved
+    let (status, err) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+    assert_eq!(err["code"], "site_terms");
+    assert_eq!(err["site"], "Allrecipes");
+    assert_eq!(err["statusCode"], 422);
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Allrecipes's terms don't allow automated copying"),
+        "{err}"
+    );
+    assert!(err["message"].as_str().unwrap().contains("extension"));
+    let (_, list) = t.json("GET", "/api/recipes", None).await;
+    assert_eq!(list.as_array().map_or(0, Vec::len), 0);
+
+    // Claude is told the terms forbid it, and what to ask the user instead
+    let (msg, is_error) = mcp_call(&t, "import_recipe_from_url", json!({"url": url})).await;
+    assert!(is_error, "{msg}");
+    assert!(
+        msg.contains("terms of service forbid automated fetching"),
+        "{msg}"
+    );
+    assert!(msg.contains("browser extension") && msg.contains("import_recipe_from_text"));
+
+    // The preview fails with the code, without waiting to be asked twice
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    for extra in ["", "&go=1"] {
+        let (status, _, html) = t
+            .send(preview_req(
+                &format!("/preview?url={q}{extra}"),
+                Some("same-origin"),
+            ))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{extra}");
+        let data = page_data(&html);
+        assert_eq!(data["preview"]["state"], "failed");
+        assert_eq!(data["preview"]["code"], "site_terms");
+        assert_eq!(data["preview"]["site"], "Allrecipes");
+        assert_eq!(data["preview"]["host"], "allrecipes.com");
+    }
+
+    // What the cook's own browser read (the extension) is still taken
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+    let (status, _, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page_data(&html)["preview"]["state"], "ready");
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/recipes/import",
+            Some(json!({"url": url, "page": page_reading("Apple Pie")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    assert_eq!(res["title"], "Apple Pie");
+
+    // Refreshing it from its source would fetch it, so that's refused too
+    let (msg, is_error) =
+        mcp_call(&t, "refresh_recipe_from_source", json!({"id": res["id"]})).await;
+    assert!(is_error, "{msg}");
+    assert!(msg.contains("terms of service forbid"), "{msg}");
 }

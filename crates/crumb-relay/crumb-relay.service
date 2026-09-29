@@ -1,0 +1,25 @@
+# /etc/systemd/system/crumb-relay.service (see docs/RELAY.md)
+[Unit]
+Description=Crumb relay
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+
+[Service]
+# Holds RELAY_TOKEN and RELAY_LISTEN (see docs/RELAY.md); chmod 600, owned by root
+EnvironmentFile=/etc/crumb-relay.env
+ExecStart=/usr/local/bin/crumb-relay
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

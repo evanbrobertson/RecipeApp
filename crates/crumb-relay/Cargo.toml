@@ -1,0 +1,26 @@
+[package]
+name = "crumb-relay"
+version = "0.1.0"
+edition = "2024"
+description = "Fetches recipe pages for a Crumb server from another network, when its own IP address is blocked."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "crumb-relay"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+crumb-fetch = { path = "../crumb-fetch" }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
