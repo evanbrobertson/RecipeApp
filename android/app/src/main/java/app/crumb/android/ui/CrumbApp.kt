@@ -76,6 +76,8 @@ import app.crumb.android.ui.more.MoreScreen
 import app.crumb.android.ui.prep.PrepScreen
 import app.crumb.android.ui.recipe.RecipeScreen
 import app.crumb.android.ui.recipes.RecipesScreen
+import app.crumb.android.ui.account.AccountScreen
+import app.crumb.android.ui.account.ConnectionsScreen
 import app.crumb.android.ui.signin.SignInScreen
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.NunitoSans
@@ -96,6 +98,8 @@ import kotlin.reflect.KClass
 @Serializable data class NewRecipeRoute(val title: String? = null)
 @Serializable data class ImportRoute(val links: String? = null)
 @Serializable data object ConnectRoute
+@Serializable data object AccountRoute
+@Serializable data object ConnectionsRoute
 @Serializable data class CookRoute(val id: Long)
 @Serializable data class BookRoute(val id: Long)
 
@@ -188,6 +192,8 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                 composable<NewRecipeRoute> { backStack -> NewRecipeScreen(backStack.toRoute<NewRecipeRoute>().title) }
                 composable<ImportRoute> { backStack -> ImportScreen(backStack.toRoute<ImportRoute>().links) }
                 composable<ConnectRoute> { ConnectScreen() }
+                composable<AccountRoute> { AccountScreen() }
+                composable<ConnectionsRoute> { ConnectionsScreen() }
                 composable<BookRoute> { backStack ->
                     CookbookScreen(
                         id = backStack.toRoute<BookRoute>().id,

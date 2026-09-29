@@ -1,13 +1,17 @@
 package app.crumb.android
 
 import android.app.Application
+import android.os.Build
+import app.crumb.android.data.AccountApi
 import app.crumb.android.data.CrumbApi
+import app.crumb.android.data.appUserAgent
 import app.crumb.android.data.Importer
 import app.crumb.android.data.LocalStore
 import app.crumb.android.data.PhotoImport
 import app.crumb.android.timers.KitchenTimers
 import app.crumb.android.data.RecipeCache
 import app.crumb.android.data.RecipeRepository
+import app.crumb.android.data.SessionCookies
 import app.crumb.android.data.SessionStore
 import app.crumb.android.ui.theme.ThemeStore
 import coil3.ImageLoader
@@ -32,13 +36,20 @@ class AppContainer(app: Application, scope: CoroutineScope) {
     val local = LocalStore(app, scope)
     val timers = KitchenTimers(app, scope)
 
+    private val userAgent = appUserAgent(BuildConfig.VERSION_NAME, Build.VERSION.RELEASE, Build.MODEL)
+
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         // Imports scrape the page (sometimes in headless Chromium) before answering
         .readTimeout(90, TimeUnit.SECONDS)
+        // The server's device list names each sign-in from its user agent
+        .addInterceptor { chain ->
+            chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build())
+        }
         .build()
 
     val api = CrumbApi(http) { session.current }
+    val accounts = AccountApi(api)
     val recipes = RecipeRepository(api, cache)
     val importer = Importer(api, PhotoImport(app, api), app.contentResolver)
 
@@ -51,7 +62,7 @@ class AppContainer(app: Application, scope: CoroutineScope) {
             val cookie = current?.cookie
             chain.proceed(
                 if (sameServer && cookie != null) {
-                    request.newBuilder().header("Cookie", "${CrumbApi.COOKIE}=$cookie").build()
+                    request.newBuilder().header("Cookie", SessionCookies.header(cookie)).build()
                 } else request,
             )
         }
