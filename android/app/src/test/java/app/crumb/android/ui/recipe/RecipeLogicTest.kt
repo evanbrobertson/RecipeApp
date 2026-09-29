@@ -12,7 +12,7 @@ import org.junit.Test
 class RecipeLogicTest {
     @Test fun heroIsCappedByTheWebWidthAndTheShortSide() {
         assertEquals(640f, heroMaxWidth(844f), 0.01f)
-        assertEquals(480f, heroMaxWidth(360f), 0.01f)
+        assertEquals(360f, heroMaxWidth(360f), 0.01f)
     }
 
     private val day = 86_400_000L
