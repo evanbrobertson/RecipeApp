@@ -2,8 +2,9 @@
   /**
    * Shown instead of an error when a recipe site's bot check turned Crumb's server away
    * (`site_blocked`): the browser extension reads the page from the cook's own browser, which
-   * is already past the check. The main action opens the page so the cook can click the
-   * extension's toolbar button there (it reads the recipe and hands it to Crumb), else says
+   * is already past the check. The main action goes to the page in this tab so the cook can click
+   * the extension's toolbar button there (it reads the recipe and opens Crumb's preview in that
+   * same tab, so the cook ends up with one tab), else says
    * where to get it; on a phone, which has no extension to use, pasting
    * the recipe leads.
    *
@@ -45,7 +46,6 @@
   // The extension marks the page a moment after it loads, so this can flip while it's shown
   let installed = $state(extensionInstalled())
   const possible = $derived(installed || extensionPossible())
-  let opened = $state(false)
 
   $effect(() => {
     installed = extensionInstalled()
@@ -77,9 +77,6 @@
             {site}'s terms don't allow automated copying, so Crumb didn't fetch it. Paste the
             recipe text instead. On a computer, the Crumb extension can read it from your own
             browser.
-          {:else if opened}
-            Opened in a new tab. Click Crumb in your browser's toolbar there, and the extension
-            reads the recipe from that page and opens it in Crumb, ready to add.
           {:else if installed}
             {site}'s terms don't allow automated copying, so Crumb didn't fetch it. Open it on
             their site, then click Crumb in your toolbar: the extension reads the recipe from your
@@ -91,9 +88,6 @@
         {:else if !possible}
           It asked for a human check, so Crumb couldn't read it from here. Paste the recipe text
           instead. On a computer, the Crumb extension can read pages like this from your browser.
-        {:else if opened}
-          Opened in a new tab. Click Crumb in your browser's toolbar there, and the extension
-          reads the recipe from that page and opens it in Crumb, ready to add.
         {:else if installed}
           It asked for a human check, so Crumb couldn't read it from here. Open the recipe, then
           click Crumb in your toolbar: the extension reads it from your browser, which is already
@@ -137,13 +131,7 @@
       {@render paste(true)}
     {:else}
       {#if installed}
-        <a
-          class="btn btn-primary"
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          onclick={() => (opened = true)}
-        >
+        <a class="btn btn-primary" href={url} rel="noreferrer nofollow">
           <ExternalLink /> Read it with the extension
         </a>
       {:else}
