@@ -80,7 +80,8 @@ class CrumbApi(
     }
 
     suspend fun logout() {
-        runCatching { post("api/auth/logout", "{}").close() }
+        val hosted = SessionCookies.isHosted(session()?.cookie)
+        runCatching { post(if (hosted) "api/auth/sign-out" else "api/auth/logout", "{}").close() }
     }
 
     suspend fun recipes(query: String? = null, limit: Int? = null): List<RecipeSummary> {
@@ -194,6 +195,10 @@ class CrumbApi(
     suspend fun exportCookbook(id: Long): Download =
         download(send(Request.Builder().url(url("api/cookbooks/$id/export")).build()), "cookbook.json")
 
+    /** `GET /api/account/export`: the account, its devices and every household's recipes. */
+    suspend fun exportAccount(): Download =
+        download(send(Request.Builder().url(url("api/account/export")).build()), "crumb-account.json")
+
     /** `GET /api/export`: the whole box as a backup-format download. */
     suspend fun exportAll(): Download =
         download(send(Request.Builder().url(url("api/export")).build()), "crumb.json")
@@ -298,7 +303,7 @@ class CrumbApi(
             .toString()
     }
 
-    private fun url(path: String): HttpUrl {
+    internal fun url(path: String): HttpUrl {
         val server = session()?.server ?: throw ApiException(401, "Not signed in")
         return server.resolve(path)!!
     }
@@ -306,13 +311,13 @@ class CrumbApi(
     private suspend fun <T> get(url: HttpUrl, serializer: KSerializer<T>): T =
         decode(send(Request.Builder().url(url).build()), serializer)
 
-    private suspend fun post(path: String, json: String): Response =
+    internal suspend fun post(path: String, json: String): Response =
         send(Request.Builder().url(url(path)).post(json.toRequestBody(JSON)).build())
 
-    private suspend fun patch(path: String, json: String): Response =
+    internal suspend fun patch(path: String, json: String): Response =
         send(Request.Builder().url(url(path)).patch(json.toRequestBody(JSON)).build())
 
-    private suspend fun delete(path: String): Response =
+    internal suspend fun delete(path: String): Response =
         send(Request.Builder().url(url(path)).delete().build())
 
     private fun idsBody(key: String, ids: List<Long>): String =
@@ -347,16 +352,18 @@ class CrumbApi(
         return plain?.takeIf { it.isNotEmpty() } ?: fallback
     }
 
-    private suspend fun <T> decode(response: Response, serializer: KSerializer<T>): T =
+    internal suspend fun <T> decode(response: Response, serializer: KSerializer<T>): T =
         withContext(Dispatchers.Default) {
             response.use { CrumbJson.decodeFromString(serializer, it.body.string()) }
         }
 
-    private suspend fun send(request: Request, withSession: Boolean = true): Response {
+    internal suspend fun send(request: Request, withSession: Boolean = true): Response {
         val authed = if (withSession) {
             val cookie = session()?.cookie
             request.newBuilder().apply {
-                if (cookie != null) header("Cookie", "$COOKIE=$cookie")
+                if (cookie != null) header("Cookie", SessionCookies.header(cookie))
+                // Better Auth refuses a cookie's request that names no origin, as a browser's always does
+                if (SessionCookies.isHosted(cookie)) header("Origin", request.url.origin())
             }.build()
         } else request
         val response = try {
