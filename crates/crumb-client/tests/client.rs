@@ -369,6 +369,7 @@ async fn a_cook_can_be_undone() {
     let again = client.cooked(id).await.unwrap();
     assert_eq!(again.stats.count, 1);
     assert_eq!(again.event_id, None);
+    assert_eq!(client.cook_stats(id).await.unwrap().count, 1);
 
     let undone = client.undo_cooked(id, Some(event)).await.unwrap();
     assert_eq!(undone.count, 0);
