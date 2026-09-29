@@ -26,6 +26,7 @@ pub mod share;
 pub mod social;
 pub mod suggestions;
 pub mod telemetry;
+pub mod throttle;
 pub mod video;
 pub mod video_jobs;
 pub mod web;
@@ -71,6 +72,10 @@ pub struct AppState {
     pub queued: Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Unknown share tokens asked for, per client address (see `share::Misses`).
     pub share_misses: Arc<share::Misses>,
+    /// Sign-in attempts per client address and account (see [`throttle`]).
+    pub logins: Arc<throttle::Throttle>,
+    /// OAuth client registrations and similar counted actions.
+    pub rates: Arc<throttle::Rate>,
     /// Video imports waiting and running, across households (see [`video_jobs`]).
     pub video_jobs: Arc<video_jobs::VideoJobs>,
 }
@@ -130,6 +135,8 @@ impl AppState {
             checks: Arc::default(),
             queued: home.queued,
             share_misses: Arc::default(),
+            logins: Arc::default(),
+            rates: Arc::default(),
             video_jobs,
         }
     }
@@ -228,6 +235,11 @@ pub fn app(state: AppState) -> Router {
         .layer(security_header(
             "permissions-policy",
             "camera=(), microphone=(), geolocation=(self)",
+        ))
+        // The client's address, for the sign-in and registration limits
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            throttle::client_ip_layer,
         ))
         // Share tokens never reach a span (see telemetry::redact_path)
         .layer(

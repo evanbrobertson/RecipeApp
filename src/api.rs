@@ -128,12 +128,13 @@ async fn health(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
 
 async fn login(
     crate::Scoped(state): crate::Scoped,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<Response> {
     let body = json_body(&body)?;
     if state.config.accounts() || state.config.hosted() {
-        return crate::account_api::log_in(&state, &headers, &body).await;
+        return crate::account_api::log_in(&state, &ip, &headers, &body).await;
     }
     let password = body
         .get("password")
@@ -143,11 +144,11 @@ async fn login(
     if !state.config.auth_enabled() {
         return Ok(Json(json!({"ok": true})).into_response());
     }
+    let attempt = state.login_attempt(&ip, "password")?;
     if !auth::check_password(&state.config, password) {
-        // Slow down guessing
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         return Err(AppError::new(401, "Incorrect password"));
     }
+    state.login_succeeded(&attempt);
     let mut res = Json(json!({"ok": true})).into_response();
     if let Some(cookie) = auth::login_cookie(&state.config, &headers) {
         res.headers_mut().append(header::SET_COOKIE, cookie);

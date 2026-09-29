@@ -174,6 +174,9 @@ pub struct Config {
     pub social: Vec<crate::social::Provider>,
     /// Password for the web UI and the Claude connector. None = no auth (local dev only).
     pub app_password: Option<String>,
+    /// Random bytes mixed into the password-mode session key (`session.secret` beside the
+    /// database), so a session cookie can't be used to guess the password offline.
+    pub session_secret: Vec<u8>,
     /// The AI API, when a key is configured.
     pub llm: Option<LlmConfig>,
     /// Model for "Try next" blurbs; defaults to the provider's model.
@@ -224,6 +227,12 @@ impl Default for Config {
             hosted_home_owner: None,
             social: Vec::new(),
             app_password: None,
+            session_secret: {
+                use rand::RngCore;
+                let mut secret = vec![0u8; 32];
+                rand::thread_rng().fill_bytes(&mut secret);
+                secret
+            },
             llm: None,
             suggest_model: None,
             suggestions_ai: true,
@@ -346,6 +355,7 @@ impl Config {
             hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),
             social: crate::social::Provider::from_env(env),
             app_password: env(&["APP_PASSWORD", "NUXT_APP_PASSWORD"]),
+            session_secret: crate::auth::load_session_secret(&crate::db::database_path()),
             llm: llm_from_env(),
             suggest_model: env(&["SUGGEST_MODEL"]),
             suggestions_ai: !switched_off("SUGGESTIONS_AI"),

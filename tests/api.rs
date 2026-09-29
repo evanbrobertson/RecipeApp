@@ -7461,3 +7461,210 @@ async fn import_refuses_archive_bombs_and_oversized_uploads() {
         .await;
     assert!(status.is_client_error(), "{status}");
 }
+
+fn login_request(password: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "password": password }).to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn password_guesses_back_off_even_in_parallel() {
+    let t = TestApp::new(Some("secret"));
+    // A burst of parallel wrong guesses: only the free tries get an answer, the rest wait
+    let replies = futures_util::future::join_all(
+        (0..30).map(|i| t.send(login_request(&format!("guess{i}")))),
+    )
+    .await;
+    let wrong = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::UNAUTHORIZED)
+        .count();
+    let limited = replies
+        .iter()
+        .filter(|(s, _, _)| *s == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(wrong, 5, "only the free tries are checked");
+    assert_eq!(limited, 25);
+    // Backing off means even the right password waits its turn
+    let (status, _, text) = t.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{text}");
+    assert!(text.contains("Try again in"), "{text}");
+}
+
+#[tokio::test]
+async fn a_good_password_clears_the_count() {
+    let t = TestApp::new(Some("secret"));
+    for _ in 0..4 {
+        let (status, _, _) = t.send(login_request("nope")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(t.send(login_request("secret")).await.0, StatusCode::OK);
+    for _ in 0..4 {
+        assert_eq!(
+            t.send(login_request("nope")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}
+
+fn consent_query(client_id: &str, redirect: &str) -> String {
+    serde_urlencoded::to_string([
+        ("client_id", client_id),
+        ("redirect_uri", redirect),
+        ("state", "s"),
+        (
+            "code_challenge",
+            "abcabcabcabcabcabcabcabcabcabcabcabcabcabcabc",
+        ),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ])
+    .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_password_guesses_share_the_login_limit() {
+    let t = TestApp::new(Some("secret"));
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "Claude", "redirect_uris": ["https://claude.ai/cb"]})),
+        )
+        .await;
+    let q = consent_query(
+        client["client_id"].as_str().unwrap(),
+        "https://claude.ai/cb",
+    );
+    let post = |password: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/authorize")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!("{q}&action=allow&password={password}")))
+            .unwrap()
+    };
+    for _ in 0..5 {
+        let (status, _, html) = t.send(post("nope")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Incorrect password"));
+    }
+    // The login form's own attempts count too
+    assert_eq!(
+        t.send(login_request("nope")).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    let (_, _, html) = t.send(post("secret")).await;
+    assert!(html.contains("Try again in"), "{html}");
+}
+
+#[tokio::test]
+async fn session_cookies_depend_on_the_servers_secret() {
+    let a = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![1; 32];
+    });
+    let b = TestApp::with_config(|c| {
+        c.app_password = Some("secret".into());
+        c.session_secret = vec![2; 32];
+    });
+    let (status, headers, _) = a.send(login_request("secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    let pair = headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let with_cookie = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, pair.clone())
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(a.send(with_cookie("/api/recipes")).await.0, StatusCode::OK);
+    assert_eq!(
+        b.send(with_cookie("/api/recipes")).await.0,
+        StatusCode::UNAUTHORIZED,
+        "same password, other secret: not a valid session"
+    );
+}
+
+#[tokio::test]
+async fn oauth_registration_is_limited_and_pruned() {
+    let t = TestApp::new(Some("secret"));
+    let register = |name: &str| {
+        t.json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": name, "redirect_uris": ["https://a.example/cb"]})),
+        )
+    };
+    // Old clients nobody connected are dropped when new ones register; used ones stay
+    {
+        let conn = t.state.db.lock();
+        let now = crumb::model::now_secs();
+        for (id, age) in [("stale", 30 * 86400), ("fresh", 60), ("used", 30 * 86400)] {
+            conn.execute(
+                "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, 'x', '[]', ?2)",
+                rusqlite::params![id, now - age],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO oauth_tokens (hash, kind, client_id, expires_at, created_at) VALUES ('h', 'access', 'used', ?1, ?2)",
+            rusqlite::params![now + 1000, now],
+        )
+        .unwrap();
+    }
+    assert_eq!(register("one").await.0, StatusCode::CREATED);
+    let ids: Vec<String> = {
+        let conn = t.state.db.lock();
+        let mut stmt = conn
+            .prepare("SELECT id FROM oauth_clients ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert!(ids.contains(&"fresh".to_string()) && ids.contains(&"used".to_string()));
+    assert!(!ids.contains(&"stale".to_string()), "{ids:?}");
+
+    // Ten an hour from one address
+    for _ in 0..9 {
+        assert_eq!(register("more").await.0, StatusCode::CREATED);
+    }
+    assert_eq!(register("too many").await.0, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn the_consent_screen_does_not_let_a_name_pose_as_claude() {
+    let t = TestApp::new(Some("secret"));
+    let screen = async |name: &str, redirect: &str| {
+        let (_, client) = t
+            .json(
+                "POST",
+                "/oauth/register",
+                Some(json!({"client_name": name, "redirect_uris": [redirect]})),
+            )
+            .await;
+        let q = consent_query(client["client_id"].as_str().unwrap(), redirect);
+        t.send(get(&format!("/oauth/authorize?{q}"))).await.2
+    };
+    let html = screen("Claude", "https://attacker.example/cb").await;
+    assert!(
+        html.contains("Connect an app at <code>attacker.example</code>?"),
+        "{html}"
+    );
+    assert!(html.contains("calling itself"));
+    assert!(!html.contains("Connect Claude?"));
+    let html = screen("Claude", "https://claude.ai/api/mcp/auth_callback").await;
+    assert!(html.contains("Connect Claude?"));
+}

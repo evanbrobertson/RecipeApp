@@ -58,6 +58,10 @@ The image runs Crumb and Chromium as the unprivileged `crumb` user (uid 10001). 
 
 Chromium runs sandboxed. If your platform does not allow that, the logs show `Chromium couldn't start with its sandbox` and pages that need the browser fallback fail; set `BROWSER_NO_SANDBOX=1` to accept running it unsandboxed.
 
+## Sign-in limits and sessions
+
+Wrong passwords back off per client address and per account (five free tries for an account, ten for an address, then 2 s, 4 s, ... up to 15 minutes), on every sign-in path including the connector's approval page. In password mode the session cookie is signed with a key derived from `APP_PASSWORD` and a random secret kept in `session.secret` next to the database, so keep that file with the database. Deleting it signs everyone out.
+
 ## Notes
 
 - **Moving existing recipes:** copy your old `sqlite.db` onto the volume as `recipes.db` (for example with

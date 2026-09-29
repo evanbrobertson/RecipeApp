@@ -182,7 +182,50 @@ fn get_str<'a>(m: &'a Map<String, Value>, k: &str) -> Option<&'a str> {
     m.get(k).and_then(Value::as_str)
 }
 
-async fn register(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+/// Registrations one client address may make per hour, and all addresses together.
+const REGISTRATIONS_PER_IP: u32 = 10;
+const REGISTRATIONS_TOTAL: u32 = 120;
+/// Registered clients kept. Registration is open by design (Claude registers itself), so
+/// clients nobody has connected are dropped after a week, and sooner when the table is full.
+const MAX_CLIENTS: i64 = 1000;
+const UNUSED_CLIENT_TTL: i64 = 7 * DAY;
+
+/// Drops clients that never got a token. Returns how many clients are left.
+fn prune_clients(conn: &rusqlite::Connection, older_than: i64) -> rusqlite::Result<i64> {
+    conn.execute(
+        "DELETE FROM oauth_clients WHERE created_at < ?1
+           AND id NOT IN (SELECT client_id FROM oauth_tokens)",
+        [older_than],
+    )?;
+    conn.query_row("SELECT count(*) FROM oauth_clients", [], |r| r.get(0))
+}
+
+async fn register(
+    State(state): State<AppState>,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let hour = std::time::Duration::from_secs(60 * MINUTE as u64);
+    if !state.rates.hit(
+        &format!("oauth-register:{}", ip.0),
+        REGISTRATIONS_PER_IP,
+        hour,
+    ) || !state
+        .rates
+        .hit("oauth-register:all", REGISTRATIONS_TOTAL, hour)
+    {
+        return cors(
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": "temporarily_unavailable",
+                    "error_description": "Too many registrations. Try again later.",
+                })),
+            )
+                .into_response(),
+        );
+    }
     let invalid = || {
         cors(
             (
@@ -215,15 +258,37 @@ async fn register(State(state): State<AppState>, headers: HeaderMap, body: Bytes
     }
 
     let id = random_token(16);
-    let saved = state.db.lock().execute(
-        "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            id,
-            client_name,
-            serde_json::to_string(&uris).unwrap_or_default(),
-            now_secs()
-        ],
-    );
+    let saved = {
+        let conn = state.db.lock();
+        let now = now_secs();
+        let mut count = prune_clients(&conn, now - UNUSED_CLIENT_TTL).unwrap_or(0);
+        if count >= MAX_CLIENTS {
+            // Full: make room from the ones nobody has used yet, however new
+            count = prune_clients(&conn, now - MINUTE).unwrap_or(count);
+        }
+        if count >= MAX_CLIENTS {
+            drop(conn);
+            return cors(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "error": "temporarily_unavailable",
+                        "error_description": "Too many apps are registered. Try again later.",
+                    })),
+                )
+                    .into_response(),
+            );
+        }
+        conn.execute(
+            "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                client_name,
+                serde_json::to_string(&uris).unwrap_or_default(),
+                now
+            ],
+        )
+    };
     if let Err(err) = saved {
         return AppError::internal(err).into_response();
     }
@@ -773,25 +838,28 @@ fn redirect_back(redirect_uri: &str, params: &[(&str, &str)]) -> Response {
 
 async fn authorize_get(
     State(state): State<AppState>,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let params = AuthorizeParams::read(|k| q.get(k).cloned());
-    authorize(&state, &headers, Method::GET, params, HashMap::new()).await
+    authorize(&state, &ip, &headers, Method::GET, params, HashMap::new()).await
 }
 
 async fn authorize_post(
     State(state): State<AppState>,
+    axum::Extension(ip): axum::Extension<crate::throttle::ClientIp>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let form: HashMap<String, String> = serde_urlencoded::from_bytes(&body).unwrap_or_default();
     let params = AuthorizeParams::read(|k| form.get(k).cloned());
-    authorize(&state, &headers, Method::POST, params, form).await
+    authorize(&state, &ip, &headers, Method::POST, params, form).await
 }
 
 async fn authorize(
     state: &AppState,
+    ip: &crate::throttle::ClientIp,
     headers: &HeaderMap,
     method: Method,
     params: AuthorizeParams,
@@ -849,7 +917,19 @@ async fn authorize(
             );
         }
         let password = form.get("password").map(String::as_str).unwrap_or("");
-        if logged_in || (!accounts && check_password(&state.config, password)) {
+        // Guessing the app password here is limited like signing in
+        let mut attempt = None;
+        if !logged_in && !accounts {
+            match state.login_attempt(ip, "password") {
+                Ok(keys) => attempt = Some(keys),
+                Err(err) => return fail(&err.message),
+            }
+        }
+        let allowed = logged_in || (!accounts && check_password(&state.config, password));
+        if let (true, Some(keys)) = (allowed, &attempt) {
+            state.login_succeeded(keys);
+        }
+        if allowed {
             let code = match issue(
                 state,
                 Kind::Code,
@@ -874,9 +954,6 @@ async fn authorize(
             }
             return res;
         }
-        if !accounts {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-        }
         error = if accounts {
             "Sign in to Crumb first."
         } else {
@@ -884,11 +961,6 @@ async fn authorize(
         };
     }
 
-    let client_name = client
-        .name
-        .as_deref()
-        .filter(|n| !n.is_empty())
-        .unwrap_or("An application");
     let host = url::Url::parse(&params.redirect_uri)
         .ok()
         .and_then(|u| {
@@ -937,10 +1009,9 @@ async fn authorize(
     } else {
         format!(r#"<div class="error">{}</div>"#, escape_html(error))
     };
-    let name = escape_html(client_name);
+    let heading = consent_heading(client.name.as_deref(), &host);
     let body = format!(
-        r#"<h1>Connect {name}?</h1>
-    <p><strong>{name}</strong> (<code>{}</code>) wants to read, add and edit recipes in Crumb.</p>
+        r#"{heading}
     <form method="post" action="/oauth/authorize">
       {hidden}
       {password_field}
@@ -949,8 +1020,7 @@ async fn authorize(
         <button type="submit" name="action" value="deny" formnovalidate>Cancel</button>
         <button type="submit" name="action" value="allow" class="primary">Allow</button>
       </div>
-    </form>"#,
-        escape_html(&host)
+    </form>"#
     );
     let mut res = Html(page("Connect", &body)).into_response();
     let h = res.headers_mut();
@@ -959,9 +1029,72 @@ async fn authorize(
     res
 }
 
+/// Hosts whose apps may be called by the name they registered with: Claude's own.
+fn is_known_host(host: &str) -> bool {
+    ["claude.ai", "claude.com"]
+        .iter()
+        .any(|k| host == *k || host.ends_with(&format!(".{k}")))
+}
+
+/// The consent screen's question. Anyone can register a client with any name, so the name is
+/// only trusted for Claude's own hosts; for everything else the address the approval is sent
+/// to comes first and the name is shown as what the app calls itself.
+fn consent_heading(client_name: Option<&str>, host: &str) -> String {
+    let host_html = escape_html(host);
+    let name = client_name.map(str::trim).filter(|n| !n.is_empty());
+    let (title, who) = match name {
+        Some(n) if is_known_host(host) => {
+            let n = escape_html(n);
+            (
+                format!("Connect {n}?"),
+                format!("<strong>{n}</strong> (<code>{host_html}</code>)"),
+            )
+        }
+        Some(n) => (
+            format!("Connect an app at <code>{host_html}</code>?"),
+            format!(
+                "An app calling itself \u{201c}{}\u{201d}, which sends you back to <code>{host_html}</code>,",
+                escape_html(n)
+            ),
+        ),
+        None => (
+            format!("Connect an app at <code>{host_html}</code>?"),
+            format!("An app that sends you back to <code>{host_html}</code>"),
+        ),
+    };
+    let warning = if is_known_host(host) {
+        ""
+    } else {
+        "<p>Only continue if you just set this up yourself. Anyone can choose an app's name; the address above is where your approval goes.</p>"
+    };
+    format!(
+        "<h1>{title}</h1>\n    <p>{who} wants to read, add and edit recipes in Crumb.</p>{warning}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_consent_screen_leads_with_the_host_not_the_name() {
+        let known = consent_heading(Some("Claude"), "claude.ai");
+        assert!(known.contains("Connect Claude?"));
+        let spoof = consent_heading(Some("Claude <b>"), "attacker.example");
+        assert!(!spoof.contains("Connect Claude"), "{spoof}");
+        assert!(spoof.contains("Connect an app at <code>attacker.example</code>?"));
+        assert!(spoof.contains("calling itself"));
+        assert!(
+            spoof.contains("Claude &lt;b&gt;"),
+            "the name is escaped: {spoof}"
+        );
+        // A host that only ends in the same letters, or has claude.ai as a prefix, is not Claude's
+        assert!(!is_known_host("evilclaude.ai"));
+        assert!(!is_known_host("claude.ai.evil.example"));
+        assert!(is_known_host("claude.com"));
+        let none = consent_heading(None, "a.test");
+        assert!(none.contains("Connect an app at"));
+    }
 
     #[test]
     fn redirect_uri_rules() {
