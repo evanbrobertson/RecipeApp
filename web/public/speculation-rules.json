@@ -9,7 +9,16 @@
           },
           {
             "not": {
-              "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/random", "/*/cook", "/*.*"]
+              "href_matches": [
+                "/api/*",
+                "/mcp",
+                "/oauth/*",
+                "/login",
+                "/random",
+                "/preview",
+                "/*/cook",
+                "/*.*"
+              ]
             }
           },
           {
@@ -27,7 +36,16 @@
         "and": [
           {
             "not": {
-              "href_matches": ["/api/*", "/mcp", "/oauth/*", "/login", "/random", "/*/cook", "/*.*"]
+              "href_matches": [
+                "/api/*",
+                "/mcp",
+                "/oauth/*",
+                "/login",
+                "/random",
+                "/preview",
+                "/*/cook",
+                "/*.*"
+              ]
             }
           },
           {

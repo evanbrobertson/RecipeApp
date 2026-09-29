@@ -95,6 +95,23 @@ impl Households {
 }
 
 impl Households {
+    /// Household `id`'s box if it has one already: never creates a file (Popular reads every
+    /// household's box, and one that never saved anything has nothing to add).
+    pub fn existing(&self, id: HouseholdId) -> Option<Household> {
+        if id == HOME {
+            return Some(self.home.clone());
+        }
+        if let Some(h) = self.open.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
+            return Some(h.clone());
+        }
+        let dir = self.dir.as_ref()?;
+        dir.join(id.to_string())
+            .join("recipes.db")
+            .exists()
+            .then(|| self.get(id).ok())
+            .flatten()
+    }
+
     /// Deletes household `id`'s box (never the home one's): closes it and removes its
     /// folder, database and all.
     pub fn remove(&self, id: HouseholdId) -> AppResult<()> {

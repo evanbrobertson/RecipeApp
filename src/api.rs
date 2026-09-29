@@ -49,6 +49,11 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/recipes/bulk-delete", routing::post(bulk_delete))
         .route("/api/trash", routing::get(list_trash).delete(empty_trash))
+        .route("/api/popular", routing::get(popular))
+        .route(
+            "/api/popular/opt-out",
+            routing::get(popular_setting).post(popular_opt_out),
+        )
         .route("/api/trash/{id}", routing::delete(purge_trashed))
         .route("/api/trash/{id}/restore", routing::post(restore_trashed))
         .route("/api/recipes/random", routing::get(random_recipe))
@@ -635,6 +640,42 @@ async fn delete_recipe(
         return Err(AppError::not_found("Recipe not found"));
     }
     Ok(Json(json!({"ok": true})))
+}
+
+/// Popular: `{enabled, optedOut, minHouseholds, items: [{url, host, title, households}]}`,
+/// links other households saved that this one hasn't (see `popular`).
+async fn popular(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    let enabled = crate::popular::Popular::enabled(&state);
+    let opted_out = crate::popular::opted_out(&state.db.lock());
+    let items = crate::popular::for_household(&state).await;
+    Ok(Json(json!({
+        "enabled": enabled,
+        "optedOut": opted_out,
+        "minHouseholds": crate::popular::Popular::min_households(&state),
+        "items": items.iter().map(crate::popular::Link::to_json).collect::<Vec<_>>(),
+    })))
+}
+
+/// `{enabled, optedOut}` without counting anything: for the setting on More.
+async fn popular_setting(crate::Scoped(state): crate::Scoped) -> AppResult<Json<Value>> {
+    Ok(Json(json!({
+        "enabled": crate::popular::Popular::enabled(&state),
+        "optedOut": crate::popular::opted_out(&state.db.lock()),
+    })))
+}
+
+/// `{optedOut}`: whether this household's saved links count toward Popular.
+async fn popular_opt_out(
+    crate::Scoped(state): crate::Scoped,
+    body: Bytes,
+) -> AppResult<Json<Value>> {
+    let out = json_body(&body)?
+        .get("optedOut")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| AppError::bad_request("optedOut: expected true or false"))?;
+    crate::popular::set_opted_out(&state.db.lock(), out)?;
+    state.popular.forget().await;
+    Ok(Json(json!({"optedOut": out})))
 }
 
 /// The trash: recipes deleted in the last 30 days, newest first (`trash::Trashed::to_json`).

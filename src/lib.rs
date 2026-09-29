@@ -20,6 +20,7 @@ pub mod llm;
 pub mod mcp;
 pub mod oauth;
 pub mod photos;
+pub mod popular;
 pub mod preview;
 pub mod recipes;
 pub mod relay;
@@ -89,6 +90,8 @@ pub struct AppState {
     pub sites: Arc<sites::Sites>,
     /// Wee Chef's look at sites' terms of service (see [`site_terms`]).
     pub terms: Arc<site_terms::Flagger>,
+    /// Links several households saved, counted every few hours (see [`popular`]).
+    pub popular: Arc<popular::Popular>,
 }
 
 impl AppState {
@@ -164,6 +167,7 @@ impl AppState {
             relays,
             sites,
             terms,
+            popular: Arc::default(),
         }
     }
 }

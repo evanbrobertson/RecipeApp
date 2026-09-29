@@ -163,6 +163,9 @@ web/src/
 - **Trash:** `recipes::delete_recipes` moves recipes to `recipe_trash` (`src/trash.rs`): the whole row as JSON, its cookbooks
   and cooks; restored under its own id within 30 days, then purged. Nothing else needs to skip deleted recipes. The
   connector can list and restore, never empty it (the safeguard against a recipe's text talking Claude into a delete).
+- **Popular** (`src/popular.rs`): public recipe links at least `POPULAR_MIN_HOUSEHOLDS` (≥2) households saved, counted from
+  the boxes every 6 hours and kept only in memory; links only (host, a title only when that many agree), never a photo,
+  a recipe's contents or who saved it. A household opts out in its own box (`box_settings`); `POPULAR=off` for all.
 - **Cook/view log:** `recipe_events` (`viewed`/`cooked`, deduped within 30 min / 6 h). Views are pruned after 400
   days; cooks are kept and go into backups as `cookedAt`. Anything that logs a view must run inside `whenActive`.
 - **Sentry:** the browser SDK gets its DSN, environment and release from a `Server-Timing` header the server adds

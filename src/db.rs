@@ -170,7 +170,13 @@ fn bootstrap_sql() -> String {
   CREATE UNIQUE INDEX IF NOT EXISTS shares_token_unique ON shares (token);
   CREATE UNIQUE INDEX IF NOT EXISTS shares_recipe_unique ON shares (recipe_id) WHERE recipe_id IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS shares_cookbook_unique ON shares (cookbook_id) WHERE cookbook_id IS NOT NULL;
-{}",
+{}
+
+  -- The household's own settings for its box, by key (see src/popular.rs). Not in backups.
+  CREATE TABLE IF NOT EXISTS box_settings (
+    key text PRIMARY KEY NOT NULL,
+    value text NOT NULL
+  );",
         recipes_table_sql("recipes"),
         crate::trash::TABLE_SQL
     )
@@ -344,6 +350,7 @@ pub fn wipe_box(conn: &mut Connection) -> rusqlite::Result<()> {
     tx.execute_batch(
         "DELETE FROM shares;
          DELETE FROM recipe_trash;
+         DELETE FROM box_settings;
          DELETE FROM recipe_flags;
          DELETE FROM recipe_checks;
          DELETE FROM recipe_events;
