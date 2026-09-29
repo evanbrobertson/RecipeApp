@@ -206,32 +206,8 @@ fun HttpUrl.origin(): String = buildString {
     if (port != HttpUrl.defaultPort(scheme)) append(':').append(port)
 }
 
-/**
- * A session's user agent as "Firefox on Linux", roughly: enough to tell one's devices apart.
- * Words it as the web's `deviceName` does.
- */
-// TODO(core): client::device_name
-fun deviceName(agent: String?): String {
-    if (agent.isNullOrEmpty()) return "Unknown device"
-    fun has(needle: String) = agent.contains(needle)
-    val browser = when {
-        has("Edg/") -> "Edge"
-        has("Firefox/") -> "Firefox"
-        has("Chrome/") -> "Chrome"
-        has("Safari/") -> "Safari"
-        has("okhttp") || has("Android") -> "Crumb app"
-        else -> "Browser"
-    }
-    val system = when {
-        has("iPhone") || has("iPad") -> "iOS"
-        has("Android") -> "Android"
-        has("Mac OS X") -> "macOS"
-        has("Windows") -> "Windows"
-        has("Linux") -> "Linux"
-        else -> null
-    }
-    return if (system == null) browser else "$browser on $system"
-}
+/** A session's user agent as "Firefox on Linux", worded by the shared core. */
+fun deviceName(agent: String?): String = app.crumb.core.deviceName(agent?.takeIf { it.isNotEmpty() })
 
 /** The user agent the app announces, so the server's device list can name this phone. */
 fun appUserAgent(version: String, release: String, model: String): String =
@@ -284,9 +260,8 @@ object AccountForms {
 }
 
 /** "Mar 11, 2025", as the web's `toLocaleDateString` prints it for devices, apps and invites. */
-// TODO(core): home::date_label
 fun dayLabel(seconds: Long, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String {
-    val at = java.time.Instant.ofEpochSecond(seconds).atZone(zone)
-    val months = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-    return "${months[at.monthValue - 1]} ${at.dayOfMonth}, ${at.year}"
+    val ms = seconds * 1000
+    val offset = zone.rules.getOffset(java.time.Instant.ofEpochMilli(ms)).totalSeconds / 60
+    return app.crumb.core.dateLabel(ms, offset)
 }
