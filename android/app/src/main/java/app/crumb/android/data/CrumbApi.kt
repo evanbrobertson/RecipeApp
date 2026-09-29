@@ -1,6 +1,7 @@
 package app.crumb.android.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
@@ -26,6 +27,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 import java.net.URLDecoder
+import java.net.URLEncoder
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -107,8 +109,39 @@ class CrumbApi(
         return decode(post("api/cookbooks", body), CookbookListItem.serializer())
     }
 
-    suspend fun importUrl(link: String): ImportResult =
-        decode(post("api/recipes/import", buildJsonObject { put("url", link) }.toString()), ImportResult.serializer())
+    /**
+     * `POST /api/recipes/import` for a link. A cooking video answers 202 with a job instead of a
+     * recipe, which is polled every [POLL_MS] until it's saved; [progress] gets crumb-core's
+     * short lines ("Queued (2nd)…"). A full queue is a 429 [ApiException]; a job that fails is one
+     * with the job's own status and message. A dropped connection between polls doesn't lose the
+     * job (it keeps running on the server), so a few misses are waited out.
+     */
+    suspend fun importUrl(link: String, progress: (String) -> Unit = {}): ImportResult {
+        val body = withContext(Dispatchers.Default) {
+            post("api/recipes/import", buildJsonObject { put("url", link) }.toString()).use { it.body.string() }
+        }
+        val started = CrumbJson.decodeFromString(ImportJob.serializer(), body)
+        val jobId = started.jobId ?: return CrumbJson.decodeFromString(ImportResult.serializer(), body)
+        var job = started
+        var missed = 0
+        while (true) {
+            when (job.status) {
+                "done" -> {
+                    val r = job.recipe ?: throw ApiException(422, "Couldn't read that video")
+                    return ImportResult(r.id, r.title, r.isNew, fromVideo = true)
+                }
+                "failed" -> throw ApiException(job.statusCode ?: 422, job.message ?: "Couldn't read that video")
+            }
+            progress(app.crumb.core.jobProgress(job.status, job.position?.toUInt()))
+            delay(POLL_MS)
+            job = try {
+                get(url("api/import/jobs/${URLEncoder.encode(jobId, "UTF-8")}"), ImportJob.serializer()).also { missed = 0 }
+            } catch (e: OfflineException) {
+                if (++missed > MAX_POLL_MISSES) throw e
+                job
+            }
+        }
+    }
 
     suspend fun importText(text: String): ImportResult =
         decode(post("api/recipes/import", buildJsonObject { put("text", text) }.toString()), ImportResult.serializer())
@@ -376,6 +409,12 @@ class CrumbApi(
 
     companion object {
         const val COOKIE = "crumb_session"
+
+        /** How often a video's job is asked after (web `POLL_MS`). */
+        const val POLL_MS = 2000L
+
+        /** Polls in a row that may fail to connect (about three minutes) before the wait is given up. */
+        private const val MAX_POLL_MISSES = 90
         private val JSON = "application/json".toMediaType()
         private val JPEG = "image/jpeg".toMediaType()
         private val OCTET = "application/octet-stream".toMediaType()

@@ -88,7 +88,30 @@ data class ImportResult(
     val title: String,
     val isNew: Boolean,
     val cookbook: ImportedCookbook? = null,
+    /** The page's photo link was dead, so it was saved without one. */
+    val droppedPhoto: Boolean = false,
+    /** A cooking video Wee Chef watched in the server's queue. */
+    val fromVideo: Boolean = false,
 )
+
+/**
+ * A cooking video's place in the server's queue: the 202 answer to `POST /api/recipes/import`
+ * and `GET /api/import/jobs/{id}`. [status] is `queued`, `running`, `done` or `failed`.
+ */
+@Serializable
+data class ImportJob(
+    val jobId: String? = null,
+    val status: String = "",
+    /** 1 = next. */
+    val position: Int? = null,
+    val recipe: JobRecipe? = null,
+    val statusCode: Int? = null,
+    val message: String? = null,
+)
+
+/** The recipe a finished video job saved. */
+@Serializable
+data class JobRecipe(val id: Long, val title: String, val isNew: Boolean)
 
 /**
  * `POST /api/recipes` and `PATCH /api/recipes/{id}`: every settable field, camelCase.

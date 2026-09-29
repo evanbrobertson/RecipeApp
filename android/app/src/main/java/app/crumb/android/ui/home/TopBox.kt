@@ -83,6 +83,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import app.crumb.android.data.Importer
+import app.crumb.core.isVideoUrl
+import app.crumb.core.jobProgress
+import app.crumb.core.linksIn
 import app.crumb.android.data.Incoming
 import app.crumb.android.data.PhotoImport
 import app.crumb.android.ui.AppContainerProvider
@@ -203,8 +206,12 @@ fun TopBox(
         file != null -> AddMode.File
         else -> detect(text).mode
     }
+    val isVideo = linksIn(text).let { it.size == 1 && isVideoUrl(it.first()) }
     val summary = when {
         saving && mode == AddMode.Photo -> progress
+        // A cooking video waits in the server's queue: say where it is, as the web does
+        saving && mode == AddMode.Link && (progress.isNotEmpty() || isVideo) ->
+            progress.ifEmpty { jobProgress("running", null) }
         saving -> if (mode == AddMode.Link) "Fetching… tricky sites take ~20s" else "Reading…"
         mode == AddMode.Photo -> if (pages.isNotEmpty()) detected.summary else "Up to $MaxPhotos pages of one recipe"
         mode == AddMode.Claude -> "Opens the connector setup"
@@ -328,8 +335,9 @@ fun TopBox(
                 if (urls.size > 1) {
                     nav.import(urls.joinToString("\n"))
                 } else {
+                    progress = ""
                     run("Couldn't get that recipe") {
-                        showOutcome(container.importer.link(urls.first()), nav)
+                        showOutcome(container.importer.link(urls.first()) { progress = it }, nav)
                         input.setTextAndPlaceCursorAtEnd("")
                     }
                 }
@@ -698,7 +706,14 @@ suspend fun showOutcome(outcome: app.crumb.android.data.ImportOutcome, nav: Crum
             Toaster.show("Check the amounts", "Photos are read on this device, so a few numbers or words may be off.")
             nav.edit(outcome.id)
         } else {
-            if (!outcome.isNew) Toaster.show("Already in your recipes")
+            when {
+                !outcome.isNew -> Toaster.show("Already in your recipes")
+                outcome.droppedPhoto -> Toaster.show(
+                    "Saved without its photo",
+                    "The site's photo link doesn't work. You can add one in Edit.",
+                )
+                outcome.fromVideo -> Toaster.show("Saved from the video", tone = ToastTone.Success)
+            }
             nav.recipe(outcome.id)
         }
         is app.crumb.android.data.ImportOutcome.Book -> {

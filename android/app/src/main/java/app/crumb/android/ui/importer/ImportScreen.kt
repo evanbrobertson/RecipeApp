@@ -82,6 +82,7 @@ import app.crumb.android.ui.friendlyMessage
 import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.NunitoSans
 import app.crumb.core.bookImportedTitle
+import app.crumb.core.linksInText
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.BookmarkCheck
 import com.composables.icons.lucide.ChevronDown
@@ -111,6 +112,8 @@ data class LinkJob(
     val title: String? = null,
     val cookbook: Boolean = false,
     val message: String? = null,
+    /** Where a cooking video is in the server's queue ("Queued (2nd)…"), while it works. */
+    val progress: String? = null,
 )
 
 enum class FileState { Working, Done, Failed }
@@ -155,7 +158,7 @@ class ImportViewModel(
     /** Two workers, as the web: fast enough and gentle on the server's headless browser. */
     fun runLinks() {
         if (_state.value.running) return
-        val links = Importer.links(_state.value.linksText)
+        val links = linksInText(_state.value.linksText)
         if (links.isEmpty()) return
         val jobs = links.map { LinkJob(it) }.toMutableList()
         _state.update { it.copy(jobs = jobs.toList(), running = true) }
@@ -169,8 +172,13 @@ class ImportViewModel(
                     jobs[i] = jobs[i].copy(state = LinkState.Working)
                     _state.update { it.copy(jobs = jobs.toList()) }
                     jobs[i] = try {
-                        when (val outcome = importer.link(jobs[i].url)) {
+                        val outcome = importer.link(jobs[i].url) { line ->
+                            jobs[i] = jobs[i].copy(progress = line)
+                            _state.update { it.copy(jobs = jobs.toList()) }
+                        }
+                        when (outcome) {
                             is ImportOutcome.Saved -> jobs[i].copy(
+                                progress = null,
                                 state = if (outcome.isNew) LinkState.Saved else LinkState.Duplicate,
                                 id = outcome.id,
                                 title = outcome.title,
@@ -189,7 +197,7 @@ class ImportViewModel(
                             is ImportOutcome.Files -> jobs[i]
                         }
                     } catch (e: Exception) {
-                        jobs[i].copy(state = LinkState.Failed, message = e.friendlyMessage())
+                        jobs[i].copy(state = LinkState.Failed, message = e.friendlyMessage(), progress = null)
                     }
                     _state.update { it.copy(jobs = jobs.toList()) }
                 }
@@ -322,7 +330,7 @@ fun ImportScreen(links: String?) {
 @Composable
 private fun LinksSection(state: ImportUiState, vm: ImportViewModel) {
     val c = Crumb.colors
-    val count = Importer.links(state.linksText).size
+    val count = linksInText(state.linksText).size
     Column {
         GroupLabel("Links")
         CrumbInput(
@@ -407,6 +415,7 @@ private fun LinkRow(job: LinkJob) {
             if (job.state == LinkState.Duplicate && !job.cookbook) {
                 Text("Already saved", style = CrumbText.meta, color = c.inkMuted)
             }
+            job.progress?.let { Text(it, style = CrumbText.bodySmall.copy(fontSize = 13.sp), color = c.inkMuted) }
             job.message?.let { Text(it, style = CrumbText.bodySmall.copy(fontSize = 13.sp), color = c.error) }
         }
     }

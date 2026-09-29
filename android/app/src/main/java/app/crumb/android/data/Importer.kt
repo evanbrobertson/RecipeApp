@@ -6,7 +6,16 @@ import android.net.Uri
 /** What an import produced; the screen picks the toast and where to go. */
 sealed interface ImportOutcome {
     /** One recipe; [onDevice] when the phone read photos itself (worth checking the amounts). */
-    data class Saved(val id: Long, val title: String, val isNew: Boolean, val onDevice: Boolean = false) : ImportOutcome
+    data class Saved(
+        val id: Long,
+        val title: String,
+        val isNew: Boolean,
+        val onDevice: Boolean = false,
+        /** Wee Chef watched a cooking video for it. */
+        val fromVideo: Boolean = false,
+        /** The page's photo link was dead, so it was saved without one. */
+        val droppedPhoto: Boolean = false,
+    ) : ImportOutcome
 
     /** A shared cookbook link from another Crumb. */
     data class Book(val cookbook: ImportedCookbook) : ImportOutcome
@@ -26,7 +35,9 @@ class Importer(
     private val photos: PhotoImport,
     private val resolver: ContentResolver,
 ) {
-    suspend fun link(url: String): ImportOutcome = outcome(api.importUrl(url.trim()))
+    /** A link; [progress] gets "Queued (2nd)…"-style lines while a cooking video waits its turn. */
+    suspend fun link(url: String, progress: (String) -> Unit = {}): ImportOutcome =
+        outcome(api.importUrl(url.trim(), progress))
 
     suspend fun text(text: String): ImportOutcome = outcome(api.importText(text))
 
@@ -42,14 +53,10 @@ class Importer(
         ImportOutcome.Files(api.importFiles(uris.map { Incoming.upload(resolver, it) }))
 
     private fun outcome(r: ImportResult): ImportOutcome =
-        r.cookbook?.let { ImportOutcome.Book(it) } ?: ImportOutcome.Saved(r.id, r.title, r.isNew)
+        r.cookbook?.let { ImportOutcome.Book(it) }
+            ?: ImportOutcome.Saved(r.id, r.title, r.isNew, fromVideo = r.fromVideo, droppedPhoto = r.droppedPhoto)
 
     companion object {
-        private val URL = Regex("""https?://\S+""", RegexOption.IGNORE_CASE)
-
-        /** Every distinct link in some text, in order (ImportTools' link scan). */
-        fun links(text: String): List<String> = URL.findAll(text).map { it.value.trimEnd('.', ',', ')', ']') }.distinct().toList()
-
         /** File types the server can't read, refused before uploading (TopBox's check). */
         fun unreadable(mimeType: String?, name: String?): Boolean =
             mimeType?.startsWith("video/") == true || mimeType?.startsWith("audio/") == true ||

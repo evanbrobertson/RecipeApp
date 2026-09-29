@@ -101,6 +101,68 @@ class CrumbApiTest {
     }
 
     @Test
+    fun droppedPhotoComesThrough() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""{"id":9,"title":"Pie","isNew":true,"droppedPhoto":true}"""))
+        val result = api.importUrl("https://example.com/pie")
+        assertTrue(result.droppedPhoto)
+        assertFalse(result.fromVideo)
+    }
+
+    @Test
+    fun aVideoIsQueuedThenWatchedThenSaved() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""{"jobId":"j1","id":"j1","status":"queued","position":2}""", 202))
+        server.enqueue(json("""{"id":"j1","status":"queued","position":1}"""))
+        server.enqueue(json("""{"id":"j1","status":"running"}"""))
+        server.enqueue(json("""{"id":"j1","status":"done","recipe":{"id":12,"title":"Pasta","isNew":true}}"""))
+        val lines = mutableListOf<String>()
+        val result = api.importUrl("https://www.tiktok.com/@cook/video/1") { lines += it }
+        assertEquals(listOf("Queued (2nd)…", "Up next…", "Watching the video… this can take a minute or two"), lines)
+        assertEquals(ImportResult(12, "Pasta", true, fromVideo = true), result)
+        assertEquals("/api/recipes/import", server.takeRequest().url.encodedPath)
+        assertEquals("/api/import/jobs/j1", server.takeRequest().url.encodedPath)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun aFailedVideoThrowsTheJobsMessage() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""{"jobId":"j2","status":"running"}""", 202))
+        server.enqueue(json("""{"id":"j2","status":"failed","statusCode":422,"message":"No recipe in that video"}"""))
+        try {
+            api.importUrl("https://youtu.be/abc")
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(422, e.status)
+            assertEquals("No recipe in that video", e.message)
+        }
+    }
+
+    @Test
+    fun aFullVideoQueueIsA429() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""{"statusCode":429,"statusMessage":"Too Many Requests","message":"Too many videos waiting"}""", 429))
+        try {
+            api.importUrl("https://www.instagram.com/reel/abc/")
+            fail()
+        } catch (e: ApiException) {
+            assertEquals(429, e.status)
+        }
+    }
+
+    @Test
+    fun aDroppedConnectionBetweenPollsIsWaitedOut() = runTest {
+        session = Session(server.url("/"), "c")
+        server.enqueue(json("""{"jobId":"j3","status":"running"}""", 202))
+        server.enqueue(MockResponse.Builder().onResponseStart(mockwebserver3.SocketEffect.CloseSocket()).build())
+        server.enqueue(json("""{"id":"j3","status":"done","recipe":{"id":5,"title":"Soup","isNew":false}}"""))
+        val result = api.importUrl("https://youtu.be/abc")
+        assertEquals(5L, result.id)
+        assertFalse(result.isNew)
+    }
+
+    @Test
     fun unreachableServerIsOffline() = runTest {
         val dead = server.url("/")
         server.close()
