@@ -14,8 +14,6 @@ class RecipesLogicTest {
     @Test fun countsRecipesInWords() {
         assertEquals("1 recipe", recipeCountLabel(1))
         assertEquals("3 recipes", recipeCountLabel(3))
-        assertEquals("2 recipes will be permanently deleted.", deleteDescription(2))
-        assertEquals("Deleted 1 recipe", deletedTitle(1))
         assertEquals("Added 4 to Weeknight dinners", addedTitle(4, "Weeknight dinners"))
     }
 

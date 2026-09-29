@@ -11,12 +11,6 @@ import app.crumb.core.plural
 /** "1 recipe" / "2 recipes". */
 fun recipeCountLabel(count: Int): String = plural(count.toUInt(), "recipe")
 
-/** The "Delete recipes?" body. */
-fun deleteDescription(count: Int): String = "${recipeCountLabel(count)} will be permanently deleted."
-
-/** "Deleted 3 recipes". */
-fun deletedTitle(count: Int): String = "Deleted ${recipeCountLabel(count)}"
-
 /** "Added 2 to Weeknight dinners". */
 fun addedTitle(count: Int, book: String): String = "Added $count to $book"
 

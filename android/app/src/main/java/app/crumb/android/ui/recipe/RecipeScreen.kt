@@ -97,6 +97,9 @@ import app.crumb.android.ui.crumbViewModel
 import app.crumb.android.ui.friendlyMessage
 import app.crumb.android.ui.books.bookLook
 import app.crumb.android.ui.theme.Crumb
+import app.crumb.android.ui.trash.DELETE_ONE_DESCRIPTION
+import app.crumb.android.ui.trash.movedToTrashTitle
+import app.crumb.android.ui.trash.undoDelete
 import app.crumb.android.ui.theme.DmSerif
 import app.crumb.android.ui.theme.NunitoSans
 import app.crumb.core.hostOf
@@ -303,7 +306,7 @@ class RecipePageViewModel(
     }
 
     suspend fun delete(): Boolean = try {
-        container.api.deleteRecipe(id)
+        container.recipes.deleteRecipe(id)
         true
     } catch (e: Exception) {
         Toaster.show("Couldn't delete", e.friendlyMessage(), ToastTone.Error)
@@ -690,7 +693,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
     if (showDelete) {
         CrumbModal(
             title = "Delete this recipe?",
-            description = "This can't be undone.",
+            description = DELETE_ONE_DESCRIPTION,
             onDismiss = { showDelete = false },
             footer = {
                 Btn("Cancel", { showDelete = false }, style = BtnStyle.Ghost)
@@ -700,7 +703,12 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
                         scope.launch {
                             if (vm.delete()) {
                                 container.local.forgetViewed(listOf(recipe.id))
-                                Toaster.show("Recipe deleted")
+                                Toaster.show(
+                                    movedToTrashTitle(1),
+                                    "Put it back from More › Trash",
+                                    ToastTone.Success,
+                                    ToastAction("Undo") { undoDelete(container, listOf(recipe.id)) { nav.recipe(it.single()) } },
+                                )
                                 showDelete = false
                                 nav.back()
                             }

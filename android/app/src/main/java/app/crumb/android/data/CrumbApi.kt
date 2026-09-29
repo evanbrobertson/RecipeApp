@@ -177,6 +177,21 @@ class CrumbApi(
     suspend fun deleteRecipes(ids: List<Long>): Int =
         decode(post("api/recipes/bulk-delete", idsBody("ids", ids)), Deleted.serializer()).deleted
 
+    /** `GET /api/trash`: recipes deleted in the last 30 days, newest first. */
+    suspend fun trash(): List<Trashed> = get(url("api/trash"), ListSerializer(Trashed.serializer()))
+
+    /** `POST /api/trash/{id}/restore`: puts a deleted recipe back. */
+    suspend fun restoreRecipe(id: Long): Restored =
+        decode(post("api/trash/$id/restore", "{}"), Restored.serializer())
+
+    /** `DELETE /api/trash/{id}`: deletes one recipe from the trash for good. */
+    suspend fun purgeTrashed(id: Long) {
+        delete("api/trash/$id").close()
+    }
+
+    /** `DELETE /api/trash`: empties the trash; how many went. */
+    suspend fun emptyTrash(): Int = decode(delete("api/trash"), Deleted.serializer()).deleted
+
     /** `GET /api/recipes/random`: a random recipe, or null when the box is empty (404). */
     suspend fun randomRecipe(exclude: List<Long> = emptyList(), current: Long? = null): RecipeSummary? {
         val url = url("api/recipes/random").newBuilder().apply {

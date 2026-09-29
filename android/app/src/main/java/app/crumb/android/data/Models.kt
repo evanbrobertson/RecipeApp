@@ -132,6 +132,24 @@ data class ImportJob(
 @Serializable
 data class JobRecipe(val id: Long, val title: String, val isNew: Boolean)
 
+/** A recipe in the trash (`GET /api/trash`): restorable until [purgeAt] (both ISO-8601). */
+@Serializable
+data class Trashed(
+    val id: Long,
+    val title: String,
+    val url: String? = null,
+    val image: String? = null,
+    val deletedAt: String,
+    val purgeAt: String,
+)
+
+/**
+ * `POST /api/trash/{id}/restore`: the recipe that's back. [isNew] is false when its link was
+ * saved again meanwhile: [id] is then that other recipe, and the deleted copy is gone.
+ */
+@Serializable
+data class Restored(val id: Long, val title: String, val isNew: Boolean = true)
+
 /** `POST /api/recipes/{id}/cooked`: the cook stats plus the new event (`null` if deduped). */
 @Serializable
 data class Cooked(

@@ -42,4 +42,15 @@ class RecipeCacheTest {
         assertNull(cache.recipe(7))
         assertEquals(0, tmp.root.listFiles()!!.size)
     }
+
+    @Test
+    fun forgetsDeletedRecipesAndTheirPlaceInTheList() = runTest {
+        val cache = RecipeCache(tmp.root)
+        cache.useServer("https://one.example/")
+        cache.putRecipe(soup)
+        cache.putRecipes(listOf(RecipeSummary(id = 7, title = "Soup"), RecipeSummary(id = 8, title = "Pie")))
+        cache.forgetRecipes(listOf(7))
+        assertNull(cache.recipe(7))
+        assertEquals(listOf(8L), cache.recipes()!!.map { it.id })
+    }
 }
