@@ -37,6 +37,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -365,6 +369,8 @@ private fun InfoRow(
     subtitle: String? = null,
     titleColor: androidx.compose.ui.graphics.Color? = null,
     onClick: (() -> Unit)? = null,
+    /** The start of [subtitle] drawn as the web's link (primary, bold); the row's tap is its target. */
+    subtitleLink: String? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val c = Crumb.colors
@@ -380,7 +386,18 @@ private fun InfoRow(
         Icon(icon, null, tint = titleColor ?: c.ink, modifier = Modifier.size(22.dp).padding(start = 2.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = CrumbText.rowTitle, color = titleColor ?: c.ink)
-            if (subtitle != null) Text(subtitle, style = CrumbText.bodySmall, color = c.inkMuted)
+            if (subtitle != null && subtitleLink != null && subtitle.startsWith(subtitleLink)) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = c.primary, fontWeight = FontWeight.Bold)) { append(subtitleLink) }
+                        append(subtitle.removePrefix(subtitleLink))
+                    },
+                    style = CrumbText.bodySmall,
+                    color = c.inkMuted,
+                )
+            } else if (subtitle != null) {
+                Text(subtitle, style = CrumbText.bodySmall, color = c.inkMuted)
+            }
         }
         trailing?.invoke(this)
     }
@@ -693,7 +710,7 @@ private fun ConnectedAppsCard(state: AccountUiState, vm: AccountViewModel, onCon
     Section("Connected apps") {
         when {
             apps == null -> InfoRow(Lucide.Plug, "Loading…")
-            apps.isEmpty() -> InfoRow(Lucide.Plug, "No apps connected", "Connect Claude to save and find recipes from a chat.", onClick = onConnect)
+            apps.isEmpty() -> InfoRow(Lucide.Plug, "No apps connected", "Connect Claude to save and find recipes from a chat.", onClick = onConnect, subtitleLink = "Connect Claude")
             else -> apps.forEachIndexed { i, app ->
                 if (i > 0) Divider()
                 val key = "app:${app.id}:${app.household?.id}"
