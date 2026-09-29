@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -417,13 +418,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
     val cooked = cookedLine(state.cookStats)
     val scaledYield = recipe.recipeYield?.takeIf { it.isNotBlank() }
         ?.let { if (scale == 1.0) it else scaleIngredient(it, scale) }
-    val times = listOfNotNull(
-        Durations.display(recipe.prepTime)?.let { TimesEntry("Prep", Lucide.Timer, it) },
-        Durations.display(recipe.cookTime)?.let { TimesEntry("Cook", Lucide.Flame, it) },
-        Durations.display(recipe.freezeTime)?.let { TimesEntry("Extra", Lucide.Snowflake, it) },
-        Durations.display(recipe.totalTime)?.let { TimesEntry("Total", Lucide.Clock, it) },
-    ).toMutableList()
-    scaledYield?.let { times += TimesEntry("Serves", Lucide.Users, it) }
+    val times = recipeTimes(recipe, scaledYield)
     val hasIngredients = recipe.ingredients.any { it.items.isNotEmpty() }
 
     val listState = rememberLazyListState()
@@ -510,38 +505,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
             }
         }
 
-        item {
-            Row(
-                Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Ingredients", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.weight(1f))
-                if (hasIngredients) ScaleControl(scale, onChange = { RecipeSession.setScale(recipe.id, it) })
-            }
-        }
-        if (!hasIngredients) {
-            item {
-                Text("No ingredients listed.", style = CrumbText.bodySmall, color = c.inkMuted, modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp))
-            }
-        }
-        recipe.ingredients.forEachIndexed { sectionIndex, section ->
-            if (section.items.isEmpty()) return@forEachIndexed
-            item(key = "ingredients-$sectionIndex") {
-                Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp)) {
-                    section.name?.takeIf { it.isNotBlank() }?.let { name ->
-                        Text(name.uppercase(), style = CrumbText.kicker, color = c.primary, modifier = Modifier.padding(bottom = 10.dp))
-                    }
-                    Card(Modifier.fillMaxWidth()) {
-                        section.items.forEachIndexed { itemIndex, line ->
-                            if (itemIndex > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = c.line)
-                            val key = "$sectionIndex:$itemIndex"
-                            val done = key in ticked
-                            IngredientRow(line, done, scale, onToggle = { ticked = if (done) ticked - key else ticked + key })
-                        }
-                    }
-                }
-            }
-        }
+        ingredientItems(recipe, scale, onScale = { RecipeSession.setScale(recipe.id, it) }, ticked = ticked, onToggle = { key -> ticked = if (key in ticked) ticked - key else ticked + key })
 
         if (video != null) {
             item(key = "video") {
@@ -551,67 +515,9 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
                 )
             }
         }
-        item {
-            Text(
-                "Method",
-                style = CrumbText.sectionTitle,
-                color = c.ink,
-                modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp),
-            )
-        }
-        if (recipe.instructions.none { it.items.isNotEmpty() }) {
-            item {
-                Text("No steps listed.", style = CrumbText.bodySmall, color = c.inkMuted, modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp))
-            }
-        }
-        recipe.instructions.forEachIndexed { sectionIndex, section ->
-            val base = recipe.instructions.take(sectionIndex).sumOf { it.items.size }
-            item(key = "method-$sectionIndex") {
-                Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp)) {
-                    section.name?.takeIf { it.isNotBlank() }?.let { name ->
-                        Text(name.uppercase(), style = CrumbText.kicker, color = c.primary, modifier = Modifier.padding(bottom = 12.dp))
-                    }
-                    section.items.forEachIndexed { itemIndex, step ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.Top) {
-                            Text(
-                                "${base + itemIndex + 1}",
-                                color = c.primary,
-                                fontFamily = DmSerif,
-                                fontSize = 28.sp,
-                                lineHeight = 28.sp,
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.width(36.dp),
-                            )
-                            Text(
-                                step,
-                                style = CrumbText.body.copy(fontSize = 17.sp, lineHeight = 26.sp),
-                                color = c.ink,
-                                modifier = Modifier.weight(1f).padding(start = 16.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        methodItems(recipe)
 
-        recipe.notes?.takeIf { it.isNotBlank() }?.let { notes ->
-            item {
-                Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp)) {
-                    Card(Modifier.fillMaxWidth(), padding = PaddingValues(24.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Lucide.StickyNote, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
-                            Text("Notes", color = c.primary, fontFamily = NunitoSans, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
-                        }
-                        Text(
-                            notes,
-                            style = CrumbText.note,
-                            color = c.ink,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                }
-            }
-        }
+        recipe.notes?.takeIf { it.isNotBlank() }?.let { notesItem(it) }
 
         val nutrition = recipe.nutrition
         if (nutrition != null && nutrition.isNotEmpty()) {
@@ -716,7 +622,7 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
 /** "By Sam · seriouseats.com", with the cooked badge in front when there is one. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Byline(recipe: Recipe, cooked: String?, sourceHost: String?, onOpenSource: (String) -> Unit) {
+internal fun Byline(recipe: Recipe, cooked: String?, sourceHost: String?, onOpenSource: (String) -> Unit) {
     val c = Crumb.colors
     val author = recipe.author?.takeIf { it.isNotBlank() }
     val sourceUrl = webLink(recipe.originalUrl) ?: webLink(recipe.url)
@@ -755,14 +661,14 @@ private fun Dot() {
     Text("·", color = Crumb.colors.inkMuted, fontFamily = NunitoSans, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 2.dp))
 }
 
-private data class TimesEntry(val label: String, val icon: ImageVector, val value: String)
+internal data class TimesEntry(val label: String, val icon: ImageVector, val value: String)
 
 /**
  * The times and yield (web `.card` `dl`): as many 88dp-or-wider columns as fit, stretched to
  * fill the row the way CSS grid's auto-fit does, so two entries share the width in halves.
  */
 @Composable
-private fun TimesCard(entries: List<TimesEntry>, modifier: Modifier = Modifier) {
+internal fun TimesCard(entries: List<TimesEntry>, modifier: Modifier = Modifier) {
     val c = Crumb.colors
     Card(modifier.fillMaxWidth(), padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -796,7 +702,7 @@ private fun TimesCard(entries: List<TimesEntry>, modifier: Modifier = Modifier) 
 
 /** One ingredient line with its round tick (web's `.ingredients` row). */
 @Composable
-private fun IngredientRow(line: String, done: Boolean, scale: Double, onToggle: () -> Unit) {
+internal fun IngredientRow(line: String, done: Boolean, scale: Double, onToggle: () -> Unit) {
     val c = Crumb.colors
     Row(
         Modifier
@@ -876,4 +782,128 @@ private fun recipeMenu(
 
 private fun openUrl(context: Context, url: String) {
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+}
+
+/** The times and yield entries, in the order of the web's card; [yield] is the (scaled) "Serves". */
+internal fun recipeTimes(recipe: Recipe, yield: String?): List<TimesEntry> = buildList {
+    Durations.display(recipe.prepTime)?.let { add(TimesEntry("Prep", Lucide.Timer, it)) }
+    Durations.display(recipe.cookTime)?.let { add(TimesEntry("Cook", Lucide.Flame, it)) }
+    Durations.display(recipe.freezeTime)?.let { add(TimesEntry("Extra", Lucide.Snowflake, it)) }
+    Durations.display(recipe.totalTime)?.let { add(TimesEntry("Total", Lucide.Clock, it)) }
+    yield?.let { add(TimesEntry("Serves", Lucide.Users, it)) }
+}
+
+/**
+ * The "Ingredients" title with its scale control, then a "none listed" line or each section as
+ * a card of tickable lines. That is two items (or three with the line), then one per section.
+ */
+internal fun LazyListScope.ingredientItems(
+    recipe: Recipe,
+    scale: Double,
+    onScale: (Double) -> Unit,
+    ticked: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    val hasIngredients = recipe.ingredients.any { it.items.isNotEmpty() }
+    item {
+        val c = Crumb.colors
+        Row(
+            Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Ingredients", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.weight(1f))
+            if (hasIngredients) ScaleControl(scale, onChange = onScale)
+        }
+    }
+    if (!hasIngredients) {
+        item {
+            Text("No ingredients listed.", style = CrumbText.bodySmall, color = Crumb.colors.inkMuted, modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp))
+        }
+    }
+    recipe.ingredients.forEachIndexed { sectionIndex, section ->
+        if (section.items.isEmpty()) return@forEachIndexed
+        item(key = "ingredients-$sectionIndex") {
+            val c = Crumb.colors
+            Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp)) {
+                section.name?.takeIf { it.isNotBlank() }?.let { name ->
+                    Text(name.uppercase(), style = CrumbText.kicker, color = c.primary, modifier = Modifier.padding(bottom = 10.dp))
+                }
+                Card(Modifier.fillMaxWidth()) {
+                    section.items.forEachIndexed { itemIndex, line ->
+                        if (itemIndex > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = c.line)
+                        val key = "$sectionIndex:$itemIndex"
+                        IngredientRow(line, key in ticked, scale, onToggle = { onToggle(key) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The "Method" title and every step, numbered across sections. */
+internal fun LazyListScope.methodItems(recipe: Recipe) {
+    item {
+        Text(
+            "Method",
+            style = CrumbText.sectionTitle,
+            color = Crumb.colors.ink,
+            modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp),
+        )
+    }
+    if (recipe.instructions.none { it.items.isNotEmpty() }) {
+        item {
+            Text("No steps listed.", style = CrumbText.bodySmall, color = Crumb.colors.inkMuted, modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp))
+        }
+    }
+    recipe.instructions.forEachIndexed { sectionIndex, section ->
+        val base = recipe.instructions.take(sectionIndex).sumOf { it.items.size }
+        item(key = "method-$sectionIndex") {
+            val c = Crumb.colors
+            Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 20.dp)) {
+                section.name?.takeIf { it.isNotBlank() }?.let { name ->
+                    Text(name.uppercase(), style = CrumbText.kicker, color = c.primary, modifier = Modifier.padding(bottom = 12.dp))
+                }
+                section.items.forEachIndexed { itemIndex, step ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.Top) {
+                        Text(
+                            "${base + itemIndex + 1}",
+                            color = c.primary,
+                            fontFamily = DmSerif,
+                            fontSize = 28.sp,
+                            lineHeight = 28.sp,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(36.dp),
+                        )
+                        Text(
+                            step,
+                            style = CrumbText.body.copy(fontSize = 17.sp, lineHeight = 26.sp),
+                            color = c.ink,
+                            modifier = Modifier.weight(1f).padding(start = 16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The cook's notes card (Kalam, the handwritten face). */
+internal fun LazyListScope.notesItem(notes: String) {
+    item {
+        val c = Crumb.colors
+        Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 28.dp)) {
+            Card(Modifier.fillMaxWidth(), padding = PaddingValues(24.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Lucide.StickyNote, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
+                    Text("Notes", color = c.primary, fontFamily = NunitoSans, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
+                }
+                Text(
+                    notes,
+                    style = CrumbText.note,
+                    color = c.ink,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
 }

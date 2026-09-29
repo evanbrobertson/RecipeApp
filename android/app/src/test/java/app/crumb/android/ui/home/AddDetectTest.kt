@@ -1,6 +1,7 @@
 package app.crumb.android.ui.home
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,5 +33,18 @@ class AddDetectTest {
         assertEquals("Import all", addLabel(AddMode.Link, "https://a.com https://b.com"))
         assertEquals("Add", addLabel(AddMode.Link, "https://a.com"))
         assertEquals("Open", addLabel(AddMode.Apps, ""))
+    }
+
+    @Test fun oneSharedLinkOpensItsPreview() {
+        assertEquals("https://example.com/pie", sharedLink("https://example.com/pie"))
+        assertEquals("https://example.com/pie", sharedLink("  https://example.com/pie\n"))
+        assertEquals("https://example.com/pie", sharedLink("Best pie https://example.com/pie"))
+    }
+
+    @Test fun textAndSeveralLinksAreNotOneLink() {
+        assertNull(sharedLink("2 cups flour\n1 cup sugar\nMix and bake"))
+        assertNull(sharedLink("https://example.com/a https://example.com/b"))
+        assertNull(sharedLink("https://example.com/a\nhttps://example.com/b"))
+        assertNull(sharedLink(""))
     }
 }

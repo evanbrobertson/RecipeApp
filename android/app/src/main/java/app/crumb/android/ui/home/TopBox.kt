@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import app.crumb.android.data.Importer
@@ -137,6 +138,8 @@ fun TopBox(
     shared: String? = null,
     onSharedUsed: () -> Unit = {},
     autofocus: Boolean = false,
+    /** Opens with "Recipe text" chosen (from a preview that couldn't read the page). */
+    startInTextMode: Boolean = false,
 ) {
     val c = Crumb.colors
     val nav = LocalNav.current
@@ -150,7 +153,9 @@ fun TopBox(
     val pages = remember { mutableStateListOf<Uri>() }
     var file by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf<String?>(null) }
-    var manual by rememberSaveable { mutableStateOf<AddMode?>(null) }
+    var manual by rememberSaveable { mutableStateOf<AddMode?>(if (startInTextMode) AddMode.Text else null) }
+    // Until something is typed, an empty field doesn't hand the chosen mode back to detection
+    var holdManual by rememberSaveable { mutableStateOf(startInTextMode) }
     var menuOpen by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf("") }
@@ -191,8 +196,16 @@ fun TopBox(
                 }
             }
             // Clearing the field hands the choice back to detection
-            if (text.isBlank() && photos == 0 && name == null && manual != AddMode.Photo && manual != AddMode.File) manual = null
+            if (text.isNotBlank()) holdManual = false
+            if (text.isBlank() && photos == 0 && name == null && manual != AddMode.Photo && manual != AddMode.File && !holdManual) manual = null
         }
+    }
+    // A video the server was still reading when the app went away: asked after again, with its
+    // progress line back in the box, and opened here when it lands
+    val jobLine by container.videoJobs.progress.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { container.videoJobs.resume() }
+    LaunchedEffect(Unit) {
+        container.videoJobs.addBox.collect { end -> showJobEnd(end, nav) }
     }
     LaunchedEffect(pages.isNotEmpty()) {
         if (pages.isNotEmpty() && vision == null) vision = container.importer.readsPhotos()
@@ -208,6 +221,7 @@ fun TopBox(
     }
     val isVideo = linksIn(text).let { it.size == 1 && isVideoUrl(it.first()) }
     val summary = when {
+        !saving && jobLine != null -> jobLine.orEmpty()
         saving && mode == AddMode.Photo -> progress
         // A cooking video waits in the server's queue: say where it is, as the web does
         saving && mode == AddMode.Link && (progress.isNotEmpty() || isVideo) ->
@@ -696,6 +710,17 @@ private fun TrayButton(icon: androidx.compose.ui.graphics.vector.ImageVector, la
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = label, tint = Crumb.colors.inkMuted, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** A video that finished while nobody was waiting on it: open the recipe, or say why not. */
+suspend fun showJobEnd(end: app.crumb.android.data.JobEnd, nav: CrumbNav) {
+    when (end) {
+        is app.crumb.android.data.JobEnd.Saved -> showOutcome(
+            app.crumb.android.data.ImportOutcome.Saved(end.result.id, end.result.title, end.result.isNew, fromVideo = true),
+            nav,
+        )
+        is app.crumb.android.data.JobEnd.Failed -> Toaster.show("Couldn't get that recipe", end.message, ToastTone.Error)
     }
 }
 

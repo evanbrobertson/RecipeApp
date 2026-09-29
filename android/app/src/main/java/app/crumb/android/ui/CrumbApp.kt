@@ -53,6 +53,9 @@ import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.connect.ConnectScreen
 import app.crumb.android.ui.importer.ImportScreen
 import app.crumb.android.data.Incoming
+import app.crumb.android.data.JobEnd
+import app.crumb.android.ui.components.Toast
+import app.crumb.android.ui.components.ToastAction
 import app.crumb.android.ui.components.ToastHost
 import app.crumb.android.ui.components.ToastTone
 import app.crumb.android.ui.components.Toaster
@@ -60,6 +63,7 @@ import app.crumb.android.timers.TimerDock
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import app.crumb.android.ui.home.HomeScreen
+import app.crumb.android.ui.home.sharedLink
 import app.crumb.android.ui.home.showOutcome
 import app.crumb.android.ui.suggestions.ReviewCount
 import app.crumb.android.ui.suggestions.SuggestionsScreen
@@ -74,6 +78,7 @@ import app.crumb.android.ui.edit.EditScreen
 import app.crumb.android.ui.edit.NewRecipeScreen
 import app.crumb.android.ui.more.MoreScreen
 import app.crumb.android.ui.prep.PrepScreen
+import app.crumb.android.ui.preview.PreviewScreen
 import app.crumb.android.ui.recipe.RecipeScreen
 import app.crumb.android.ui.recipes.RecipesScreen
 import app.crumb.android.ui.account.AccountScreen
@@ -91,7 +96,8 @@ import kotlin.reflect.KClass
 @Serializable data object ShelfRoute
 @Serializable data object SuggestionsRoute
 @Serializable data object MoreRoute
-@Serializable data class AddRoute(val text: String? = null)
+@Serializable data class AddRoute(val text: String? = null, val textMode: Boolean = false)
+@Serializable data class PreviewRoute(val url: String)
 @Serializable data class RecipeRoute(val id: Long, val fromRandom: Boolean = false)
 @Serializable data class PrepRoute(val id: Long)
 @Serializable data class EditRoute(val id: Long)
@@ -150,11 +156,40 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
     LaunchedEffect(incoming) {
         val got = incoming ?: return@LaunchedEffect
         if (got.text != null) {
-            nav.navigate(AddRoute()) { launchSingleTop = true }
+            // One link goes to its preview; anything else to the Add box
+            val link = sharedLink(got.text)
+            if (link != null) {
+                onSharedUsed()
+                crumbNav.preview(link)
+            } else {
+                nav.navigate(AddRoute()) { launchSingleTop = true }
+            }
             return@LaunchedEffect
         }
         onSharedUsed()
         importShared(got, container.importer, crumbNav)
+    }
+
+    // A video that lands while the Add box isn't on screen: a toast with a way to open it
+    LaunchedEffect(Unit) {
+        container.videoJobs.background.collect { end ->
+            when (end) {
+                is JobEnd.Saved -> Toaster.show(
+                    Toast(
+                        if (end.result.isNew) "Saved from the video" else "Already in your recipes",
+                        end.result.title,
+                        ToastTone.Success,
+                        ToastAction("Open") { crumbNav.recipe(end.result.id) },
+                    ),
+                )
+                is JobEnd.Failed -> Toaster.show("Couldn't read that video", end.message, ToastTone.Error)
+            }
+        }
+    }
+    // Back from another app or the lock screen: ask after a video the server was still reading
+    LifecycleResumeEffect(Unit) {
+        container.videoJobs.resume()
+        onPauseOrDispose {}
     }
 
     val entry by nav.currentBackStackEntryAsState()
@@ -177,9 +212,10 @@ private fun SignedIn(sharedIn: StateFlow<Incoming?>, onSharedUsed: () -> Unit) {
                 composable<SuggestionsRoute> { SuggestionsScreen() }
                 composable<MoreRoute> { MoreScreen() }
                 composable<AddRoute> { backStack ->
-                    val routeText = backStack.toRoute<AddRoute>().text
-                    AddScreen(shared = shared ?: routeText, onSharedUsed = onSharedUsed)
+                    val route = backStack.toRoute<AddRoute>()
+                    AddScreen(shared = shared ?: route.text, onSharedUsed = onSharedUsed, textMode = route.textMode)
                 }
+                composable<PreviewRoute> { backStack -> PreviewScreen(backStack.toRoute<PreviewRoute>().url) }
                 composable<RecipeRoute> { backStack ->
                     val route = backStack.toRoute<RecipeRoute>()
                     RecipeScreen(id = route.id, fromRandom = route.fromRandom, onSignedOut = signedOut)

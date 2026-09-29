@@ -32,7 +32,7 @@ import com.composables.icons.lucide.PenLine
  * other ways in. [shared] (Share → Crumb text, or the route's text) prefills it once.
  */
 @Composable
-fun AddScreen(shared: String?, onSharedUsed: () -> Unit) {
+fun AddScreen(shared: String?, onSharedUsed: () -> Unit, textMode: Boolean = false) {
     val c = Crumb.colors
     val nav = LocalNav.current
     Column(
@@ -54,8 +54,10 @@ fun AddScreen(shared: String?, onSharedUsed: () -> Unit) {
                 shared = shared,
                 onSharedUsed = onSharedUsed,
                 autofocus = shared == null,
+                startInTextMode = textMode,
             )
         }
+        PopularLinks()
         Column {
             SectionHeader("What you can paste", Modifier.padding(bottom = 14.dp))
             ListCard(
