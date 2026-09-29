@@ -403,6 +403,25 @@ pub fn session_cookie(set_cookie: String) -> Option<String> {
     client::session_cookie(&set_cookie)
 }
 
+/// What to save from one `Set-Cookie` header to stay signed in, in any account mode: the
+/// bare `crumb_session` value, or `name=value` for the hosted edition's cookie.
+#[uniffi::export]
+pub fn saved_session(set_cookie: String) -> Option<String> {
+    client::saved_session(&set_cookie)
+}
+
+/// A saved session as the `Cookie` request header.
+#[uniffi::export]
+pub fn session_header(saved: String) -> String {
+    client::session_header(&saved)
+}
+
+/// Whether a saved session is the hosted edition's (Better Auth's paths).
+#[uniffi::export]
+pub fn is_hosted_session(saved: String) -> bool {
+    client::is_hosted_session(&saved)
+}
+
 /// The message to show for a failed request, from its status and body.
 #[uniffi::export]
 pub fn error_message(status: u16, body: String) -> String {
@@ -1317,6 +1336,43 @@ pub fn plural(n: u32, one: String) -> String {
 #[uniffi::export]
 pub fn device_name(agent: Option<String>) -> String {
     client::device_name(agent.as_deref())
+}
+
+/// How long a recipe in the trash has left: "12 days left", or "Goes for good today".
+/// Unix milliseconds.
+#[uniffi::export]
+pub fn trash_days_left(purge_at_ms: i64, now_ms: i64) -> String {
+    crumb_core::trash::days_left(purge_at_ms, now_ms)
+}
+
+/// The single delete's confirmation ("It goes to the trash, …").
+#[uniffi::export]
+pub fn trash_delete_one() -> String {
+    crumb_core::trash::DELETE_ONE.to_string()
+}
+
+/// The bulk delete's confirmation: "3 recipes will go to the trash, …".
+#[uniffi::export]
+pub fn trash_delete_many(count: u32) -> String {
+    crumb_core::trash::delete_many(count)
+}
+
+/// The toast after deleting: "Moved 3 recipes to the trash".
+#[uniffi::export]
+pub fn trash_moved(count: u32) -> String {
+    crumb_core::trash::moved_to_trash(count)
+}
+
+/// The toast after Undo: "Put back" or "Put back 3 recipes".
+#[uniffi::export]
+pub fn trash_put_back(count: u32) -> String {
+    crumb_core::trash::put_back(count)
+}
+
+/// "Empty the trash?"'s body.
+#[uniffi::export]
+pub fn trash_empty(count: u32) -> String {
+    crumb_core::trash::empty_trash(count)
 }
 
 #[cfg(test)]
