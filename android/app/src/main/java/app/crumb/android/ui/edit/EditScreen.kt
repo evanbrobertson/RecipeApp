@@ -54,6 +54,7 @@ import app.crumb.android.ui.components.VSpace
 import app.crumb.android.ui.crumbViewModel
 import app.crumb.android.ui.friendlyMessage
 import app.crumb.android.ui.theme.Crumb
+import app.crumb.core.recipeDraftNew
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Lucide
 import kotlinx.coroutines.launch
@@ -119,7 +120,7 @@ private fun EditContent(data: EditData) {
         BackLink(data.recipe.title) { nav.back() }
         Text("Edit recipe", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.padding(top = 4.dp, bottom = 28.dp))
         RecipeEditor(
-            initial = recipeDraft(data.recipe),
+            initial = remember(data.recipe) { recipeDraft(data.recipe) },
             saving = saving,
             flags = flags,
             onDismissFlag = { flag ->
@@ -134,11 +135,11 @@ private fun EditContent(data: EditData) {
                     }
                 }
             },
-            onSubmit = { fields ->
+            onSubmit = { body ->
                 saving = true
                 scope.launch {
                     try {
-                        container.api.updateRecipe(id, fields)
+                        container.api.updateRecipe(id, body)
                         Toaster.show("Saved", tone = ToastTone.Success)
                         nav.back()
                     } catch (e: Exception) {
@@ -169,14 +170,14 @@ fun NewRecipeScreen(title: String?) {
         VSpace(8.dp)
         Text("New recipe", style = CrumbText.pageTitle, color = c.ink, modifier = Modifier.padding(bottom = 28.dp))
         RecipeEditor(
-            initial = newDraft(title.orEmpty()),
+            initial = remember { recipeDraftNew(title.orEmpty()) },
             saving = saving,
             submitLabel = "Save recipe",
-            onSubmit = { fields ->
+            onSubmit = { body ->
                 saving = true
                 scope.launch {
                     try {
-                        val recipe = container.api.createRecipe(fields)
+                        val recipe = container.api.createRecipe(body)
                         nav.replaceWithRecipe(recipe.id)
                     } catch (e: Exception) {
                         if ((e as? ApiException)?.isSignedOut == true) nav.signedOut()

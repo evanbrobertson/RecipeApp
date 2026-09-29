@@ -1,9 +1,5 @@
 package app.crumb.android.data
 
-import app.crumb.android.ui.edit.RecipeDraft
-import app.crumb.android.ui.edit.photoFlag
-import app.crumb.android.ui.edit.recipeDraft
-import app.crumb.android.ui.edit.toFields
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -38,25 +34,9 @@ class VideoModelTest {
         assertTrue(e.vertical)
     }
 
-    @Test fun theEditorSendsTheVideoLink() {
-        val draft = recipeDraft(Recipe(id = 1, title = "Soup", video = "https://youtu.be/abc"))
-        assertEquals("https://youtu.be/abc", draft.video)
-        assertEquals("https://youtu.be/abc", draft.toFields().video)
-        assertNull(draft.copy(video = "  ").toFields().video)
-    }
-
     @Test fun importReportsADroppedPhoto() {
         val r = CrumbJson.decodeFromString(ImportResult.serializer(), """{"id":3,"title":"Pie","isNew":true,"droppedPhoto":true}""")
         assertTrue(r.droppedPhoto)
         assertFalse(CrumbJson.decodeFromString(ImportResult.serializer(), """{"id":3,"title":"Pie","isNew":true}""").droppedPhoto)
-    }
-
-    @Test fun theEditorShowsThePhotoFlagOnlyWhileTheLinkIsStillThere() {
-        val flag = Flag(9, "image", "https://x.test/a.jpg", "dead_image", "review")
-        val other = Flag(10, "ingredients", "https://x.test/a.jpg", "junk", "review")
-        assertEquals(flag, photoFlag(listOf(other, flag), "https://x.test/a.jpg"))
-        assertNull(photoFlag(listOf(flag), "https://x.test/b.jpg"))
-        assertNull(photoFlag(listOf(flag), RecipeDraft().image))
-        assertNull(photoFlag(listOf(flag.copy(state = "dismissed")), "https://x.test/a.jpg"))
     }
 }

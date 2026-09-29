@@ -1,5 +1,8 @@
 package app.crumb.android.data
 
+import app.crumb.core.DraftSection
+import app.crumb.core.recipeDraftNew
+import app.crumb.core.recipeDraftToJson
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
@@ -220,9 +223,8 @@ class CrumbApiTest {
                    "createdAt":"2026-09-26T16:26:43.000Z","updatedAt":"2026-09-26T16:26:43.000Z","isNew":true}""",
             ),
         )
-        val recipe = api.createRecipe(
-            RecipeFields(title = "Soup", totalTime = "PT30M", ingredients = listOf(Section(items = listOf("stock")))),
-        )
+        val draft = recipeDraftNew("Soup").copy(totalTime = "PT30M", ingredients = listOf(DraftSection("", "stock")))
+        val recipe = api.createRecipe(recipeDraftToJson(draft))
         assertEquals("Soup", recipe.title)
         assertEquals("120", recipe.nutrition?.get("calories")?.toString()?.trim('"'))
         val request = server.takeRequest()

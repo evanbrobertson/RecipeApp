@@ -46,16 +46,6 @@ val CrumbJson = Json {
 }
 
 /**
- * For recipe create/update: the server reads a missing field as "leave it" and null as
- * "clear it", so the editor's empty fields must go as explicit nulls (never "", which the
- * server keeps, or rejects for links).
- */
-private val FieldsJson = Json(CrumbJson) {
-    explicitNulls = true
-    encodeDefaults = true
-}
-
-/**
  * The Crumb server's REST API (src/api.rs). Signed-in requests carry the `crumb_session`
  * cookie from the current [session]; a 401 means the session expired or the password changed.
  */
@@ -170,13 +160,13 @@ class CrumbApi(
         )
     }
 
-    /** `POST /api/recipes`: save the editor's fields. */
-    suspend fun createRecipe(fields: RecipeFields): Recipe =
-        decode(post("api/recipes", FieldsJson.encodeToString(RecipeFields.serializer(), fields)), Recipe.serializer())
+    /** `POST /api/recipes`: save the editor's form (`recipeDraftToJson`'s body). */
+    suspend fun createRecipe(body: String): Recipe =
+        decode(post("api/recipes", body), Recipe.serializer())
 
-    /** `PATCH /api/recipes/{id}`: save the editor's fields over an existing recipe. */
-    suspend fun updateRecipe(id: Long, fields: RecipeFields): Recipe =
-        decode(patch("api/recipes/$id", FieldsJson.encodeToString(RecipeFields.serializer(), fields)), Recipe.serializer())
+    /** `PATCH /api/recipes/{id}`: save the editor's form over an existing recipe. */
+    suspend fun updateRecipe(id: Long, body: String): Recipe =
+        decode(patch("api/recipes/$id", body), Recipe.serializer())
 
     /** `DELETE /api/recipes/{id}`. */
     suspend fun deleteRecipe(id: Long) {
