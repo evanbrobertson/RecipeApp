@@ -58,6 +58,20 @@ pub fn day_label(ms: i64, now_ms: i64, offset_minutes: i32) -> String {
     }
 }
 
+/// A full date as the web prints one ("Mar 11, 2025": `toLocaleDateString` with day, short
+/// month and year, in en-US), for shared links, connected apps, devices and invites.
+pub fn date_label(ms: i64, offset_minutes: i32) -> String {
+    match local(ms, offset_minutes) {
+        Some(at) => format!(
+            "{} {}, {}",
+            MONTHS[at.month0() as usize],
+            at.day(),
+            at.year()
+        ),
+        None => String::new(),
+    }
+}
+
 /// How a recipe got into the box, as Fresh in the box says it ("from a link").
 pub fn source_label(source: &str) -> Option<&'static str> {
     Some(match source {
@@ -125,6 +139,14 @@ mod tests {
         assert_eq!(day_label(NOW - 3 * HOUR, NOW, -10 * 60), "Yesterday");
         assert_eq!(day_label(NOW - 3 * 24 * HOUR, NOW, 0), "Friday");
         assert_eq!(day_label(NOW - 8 * 24 * HOUR, NOW, 0), "Sep 20");
+    }
+
+    #[test]
+    fn full_dates_are_local() {
+        assert_eq!(date_label(NOW, 0), "Sep 28, 2026");
+        // 12:00 UTC is already tomorrow fourteen hours east
+        assert_eq!(date_label(NOW, 14 * 60), "Sep 29, 2026");
+        assert_eq!(date_label(0, 0), "Jan 1, 1970");
     }
 
     #[test]
