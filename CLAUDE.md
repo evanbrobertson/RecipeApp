@@ -44,7 +44,10 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
-  for `stable` (Railway `production`). See `docs/RELEASING.md`; versions come from conventional commit messages
+  for `stable` (Railway `production`). The Linux desktop app (`desktop/linux`, Qt6/QML via cxx-qt, built in an
+  `archlinux:latest` container) rides the same version: each master push uploads a `crumb-desktop-linux-<version>`
+  tarball artifact, and Promote attaches the tarball, its `.sha256` and an AUR `PKGBUILD` to the GitHub Release.
+  See `docs/RELEASING.md`; versions come from conventional commit messages
 - **Errors/tracing:** Sentry, opt-in via `SENTRY_DSN` (`src/telemetry.rs`, `web/src/lib/sentry*.ts`)
 
 ## Commands
@@ -105,6 +108,7 @@ src/
   scraper.rs, importers.rs, llm.rs
 tests/api.rs      # Router integration tests against a temp DB
 android/          # Native Android app (Kotlin + Jetpack Compose), a REST client linking crumb-core; see android/README.md
+desktop/linux/    # Native Linux desktop app (Qt6/QML via cxx-qt), a crumb-client app following the Omarchy theme
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
 extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", reads the recipe in the page, opens /preview
 web/src/

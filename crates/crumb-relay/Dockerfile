@@ -27,6 +27,10 @@ COPY src ./src
 COPY crates ./crates
 # The sites whose terms forbid automated fetching (include_str!)
 COPY data ./data
+# The desktop app is a workspace member: a stub, so Cargo can load the workspace
+COPY desktop/linux/Cargo.toml desktop/linux/Cargo.toml
+RUN mkdir -p desktop/linux/src && echo 'fn main() {}' > desktop/linux/src/main.rs \
+    && touch desktop/linux/src/lib.rs
 RUN cargo build --release --locked -p crumb-relay \
     && install -D target/release/crumb-relay /out/crumb-relay
 
