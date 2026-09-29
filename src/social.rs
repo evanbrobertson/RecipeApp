@@ -198,10 +198,32 @@ pub fn provider_ids(state: &AppState) -> Vec<&'static str> {
     state.config.social.iter().map(|p| p.id).collect()
 }
 
-/// Only same-origin paths ("//host" would be an open redirect).
+/// Only same-origin paths. Browsers read `/\host` and `/<TAB>/host` as `//host`, so anything
+/// with a control character or a backslash is refused, and what is left is resolved against a
+/// stand-in origin and must still be on it.
 fn same_origin(next: Option<&str>) -> Option<String> {
-    next.filter(|n| n.starts_with('/') && !n.starts_with("//") && !n.contains('\\'))
-        .map(String::from)
+    let next = next?;
+    if !next.starts_with('/')
+        || next.starts_with("//")
+        || next.chars().any(|c| c.is_control() || c == '\\')
+    {
+        return None;
+    }
+    let base = url::Url::parse("https://crumb.invalid").ok()?;
+    let resolved = base.join(next).ok()?;
+    if resolved.origin() != base.origin() {
+        return None;
+    }
+    let mut out = resolved.path().to_string();
+    if let Some(q) = resolved.query() {
+        out.push('?');
+        out.push_str(q);
+    }
+    if let Some(f) = resolved.fragment() {
+        out.push('#');
+        out.push_str(f);
+    }
+    Some(out)
 }
 
 fn redirect_uri(state: &AppState, headers: &HeaderMap, provider: &str) -> String {
@@ -711,6 +733,29 @@ mod tests {
         assert_eq!(same_origin(Some("//evil.test")), None);
         assert_eq!(same_origin(Some("https://evil.test")), None);
         assert_eq!(same_origin(Some("/\\evil.test")), None);
+        assert_eq!(
+            same_origin(Some("/%5Cevil.com")),
+            Some("/%5Cevil.com".into())
+        );
+        for evil in [
+            "/\tevil.com",
+            "/\t/evil.com",
+            "/\n/evil.com",
+            "/\r/evil.com",
+            "\\evil.com",
+            "//evil.com",
+            "https://evil.com",
+            "///evil.com",
+            "/\\/evil.com",
+            "",
+        ] {
+            assert_eq!(same_origin(Some(evil)), None, "{evil:?}");
+        }
+        assert_eq!(same_origin(None), None);
+        assert_eq!(
+            same_origin(Some("/recipes/1?a=b#c")),
+            Some("/recipes/1?a=b#c".into())
+        );
     }
 
     #[test]
