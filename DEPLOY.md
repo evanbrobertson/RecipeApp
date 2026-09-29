@@ -52,6 +52,12 @@ Service → Settings → Networking → **Generate Domain**. The app listens on 
 Open `https://<your-domain>/connect`, copy the connector URL (`https://<your-domain>/mcp`) and add it in
 Claude under **Settings → Connectors → Add custom connector**. Approve with your app password.
 
+## Container user and Chromium's sandbox
+
+The image runs Crumb and Chromium as the unprivileged `crumb` user (uid 10001). The container starts as root only so the entrypoint can `chown -R` the data directory (the volume mount path, or the folder of `DATABASE_PATH`) to `crumb` once, then it drops privileges for good. An existing volume with root-owned files keeps working with no manual step. If the volume refuses `chown`, the entrypoint says so and keeps running as root so nothing breaks. `CRUMB_RUN_AS_ROOT=1` skips the drop.
+
+Chromium runs sandboxed. If your platform does not allow that, the logs show `Chromium couldn't start with its sandbox` and pages that need the browser fallback fail; set `BROWSER_NO_SANDBOX=1` to accept running it unsandboxed.
+
 ## Notes
 
 - **Moving existing recipes:** copy your old `sqlite.db` onto the volume as `recipes.db` (for example with

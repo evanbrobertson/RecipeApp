@@ -157,10 +157,12 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
     if let Some(ua) = user_agent(exe).await {
         command.arg(format!("--user-agent={ua}"));
     }
+    if no_sandbox() {
+        command.arg("--no-sandbox");
+    }
     let mut child = command
         .args([
             "--headless=new",
-            "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
@@ -186,21 +188,63 @@ async fn run(exe: &Path, url: &str, timeout: Duration) -> Result<String, String>
     result
 }
 
+/// Chromium's sandbox stays on unless `BROWSER_NO_SANDBOX=1`. It needs unprivileged user
+/// namespaces (or a setuid helper), which some container platforms refuse; an operator who has
+/// seen the launch error below opts out knowingly. (Root can't use the sandbox either, which is
+/// one more reason the Docker image runs as an unprivileged user.)
+fn no_sandbox() -> bool {
+    static CHOICE: LazyLock<bool> = LazyLock::new(|| {
+        let asked = std::env::var("BROWSER_NO_SANDBOX")
+            .is_ok_and(|v| matches!(v.trim(), "1" | "true" | "on" | "yes"));
+        if asked {
+            tracing::warn!(
+                "[browser] BROWSER_NO_SANDBOX is set: Chromium runs without its sandbox while it opens untrusted pages"
+            );
+        }
+        asked
+    });
+    *CHOICE
+}
+
+/// What to tell the operator when Chromium never became ready.
+fn launch_hint(stderr: &str) -> Option<&'static str> {
+    let lower = stderr.to_lowercase();
+    let sandbox_trouble =
+        lower.contains("sandbox") || lower.contains("namespace") || lower.contains("zygote");
+    (!no_sandbox() && sandbox_trouble).then_some(
+        "Chromium couldn't start with its sandbox (this host may not allow unprivileged user namespaces). Fix the host, or set BROWSER_NO_SANDBOX=1 to run it unsandboxed knowingly",
+    )
+}
+
 async fn devtools_url(child: &mut Child) -> Result<String, String> {
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let mut lines = BufReader::new(stderr).lines();
+    let mut seen = String::new();
     let find = async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(rest) = line.split("DevTools listening on ").nth(1) {
                 return Some(rest.trim().to_string());
             }
+            if seen.len() < 4000 {
+                seen.push_str(&line);
+                seen.push('\n');
+            }
         }
         None
     };
-    let url = tokio::time::timeout(Duration::from_secs(20), find)
-        .await
-        .map_err(|_| "Chromium didn't start in time".to_string())?
-        .ok_or("Chromium exited before it was ready")?;
+    let found = tokio::time::timeout(Duration::from_secs(20), find).await;
+    let url = match found {
+        Ok(Some(url)) => url,
+        other => {
+            if let Some(hint) = launch_hint(&seen) {
+                tracing::error!("[browser] {hint}");
+            }
+            return Err(match other {
+                Err(_) => "Chromium didn't start in time".to_string(),
+                _ => "Chromium exited before it was ready".to_string(),
+            });
+        }
+    };
     // Keep draining stderr so Chromium never blocks on a full pipe
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
     Ok(url)

@@ -390,6 +390,8 @@ own. To check a local setup, put your values in a git-ignored `.env.local` and r
 | `HOST` / `PORT`     | No         | Listen address, default `0.0.0.0:3000`                                        |
 | `CHROMIUM_PATH`     | No         | Chromium for the scraping fallback (set in the Docker image; auto-detected)   |
 | `BROWSER_SCRAPING`  | No         | Set to `off` to disable the headless browser fallback                         |
+| `BROWSER_NO_SANDBOX` | No        | Set to `1` if Chromium can't start sandboxed on your host (the log says so); off by default |
+| `CRUMB_RUN_AS_ROOT` | No         | Docker only: `1` skips the entrypoint's drop to the unprivileged `crumb` user |
 | `VIDEO_IMPORT`      | No         | `off` stops cooking videos being downloaded (their captions are still read)   |
 | `YT_DLP_PATH` / `FFMPEG_PATH` / `WHISPER_PATH` | No | The video tools; set in the Docker image, else found on `PATH` |
 | `WHISPER_MODEL`     | No         | The whisper.cpp model file, default `/opt/video/models/ggml-base.en.bin` (in the image) |
