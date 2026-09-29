@@ -80,6 +80,7 @@ src/
   preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
+  scraper/page.rs # A recipe the extension read in the cook's browser (`page`): capped, parsed, never fetched
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint
   video.rs        # Cooking videos: caption, else download + whisper transcript + frames for Wee Chef
@@ -88,7 +89,7 @@ src/
   scraper.rs, importers.rs, llm.rs, browser.rs
 tests/api.rs      # Router integration tests against a temp DB
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
-extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", opens /preview
+extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", reads the recipe in the page, opens /preview
 web/src/
   layouts/Layout.astro   # Head, fonts, theme + transition boot scripts, nav rail / tab bar, timer dock
   pages/                 # Static pages; pages/shell/* are templates for dynamic routes
@@ -147,7 +148,11 @@ web/src/
   read-only `videoEmbed`. The page's `RecipeVideo.svelte` loads nothing from the video's site until Play.
 - **Previews** (`/preview?url=`, `src/preview.rs`) scrape on GET, so they only scrape for `Sec-Fetch-Site` `none` or
   `same-origin`; from another site they ask first. The Add button posts to `/api/recipes/import`, which takes the
-  preview's kept scrape. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
+  preview's kept scrape. A site that turns the server away (`site_blocked`) can still be read: the extension reads
+  only the recipe (JSON-LD, else the recipe card, plus `og:image`/`og:title`, 512 KB max) in the cook's browser and the
+  preview page (`via=extension`) posts it as `page` to `/api/preview` (or `/api/recipes/import`); the server parses it
+  (`scraper::page::FromPage`), saves it under the link, never a URL from the payload, and scrapes only if it held no
+  recipe. The extension is its own product: versions `extension-vX.Y.Z` from commits touching
   `extension/`, released by `.github/workflows/extension.yml`.
 - **Anything with a side effect on GET** (like `/random`) must be excluded from `speculation-rules.json` and marked
   `data-no-prerender`, or hovering the link runs it.

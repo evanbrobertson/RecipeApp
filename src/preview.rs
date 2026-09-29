@@ -56,7 +56,9 @@ fn kept() -> std::sync::MutexGuard<'static, HashMap<Key, (Instant, Scraped)>> {
     map
 }
 
-fn keep(state: &AppState, url: &str, scraped: &Scraped) {
+/// Keeps a scrape for the import that follows: what a preview showed, or what the cook's
+/// browser read from the page (`scraper::page`).
+pub fn keep(state: &AppState, url: &str, scraped: &Scraped) {
     let mut map = kept();
     while map.len() >= MAX_KEPT {
         let Some(oldest) = map
@@ -95,6 +97,9 @@ pub fn routes() -> Router<AppState> {
 struct Params {
     url: Option<String>,
     go: Option<String>,
+    /// `extension`: the extension opened this tab and is about to hand over the page as it
+    /// read it (see [`waiting`]).
+    via: Option<String>,
 }
 
 /// Whether the request came from Crumb or the browser itself, not from another site.
@@ -138,6 +143,12 @@ async fn page(
     }
     if !trusted(&headers) {
         return waiting(&state, &url, "ask");
+    }
+    // The extension read the recipe in the cook's browser and hands it over from this page
+    // (`POST /api/preview`), then reloads with `go=1`: nothing is scraped meanwhile. If it
+    // could hand nothing over, that reload scrapes as usual.
+    if params.go.is_none() && params.via.as_deref() == Some("extension") {
+        return waiting(&state, &url, "handover");
     }
     if params.go.is_none() {
         return waiting(&state, &url, "loading");

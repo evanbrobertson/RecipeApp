@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
             routing::get(list_recipes).post(create_recipe),
         )
         .route("/api/recipes/import", routing::post(import_recipe))
+        .route("/api/preview", routing::post(preview_page))
         .route("/api/import/jobs/{id}", routing::get(import_job))
         .route(
             "/api/recipes/import/photos",
@@ -387,7 +388,8 @@ async fn create_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
 
 /// A link or pasted text. A cooking video answers 202 at once with its job (see
 /// [`import_job`]): `{jobId, status, position?}`. With a video link, `video` may carry what
-/// the cook's browser read from its page (`video::FromBrowser`).
+/// the cook's browser read from its page (`video::FromBrowser`); with a recipe link, `page` may carry the
+/// recipe the browser read from it (`scraper::page::FromPage`), which is saved without fetching the link.
 async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Response> {
     let body = json_body(&body)?;
     let (recipe, is_new, dropped_photo) = if let Some(url) = body.get("url") {
@@ -404,6 +406,11 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
             if crate::video::is_video_url(&url) {
                 crate::video::offer(&state, &url, read);
             }
+        }
+        // A recipe page as the cook's browser read it (the extension), for a site that turns
+        // the server away: saved without fetching the page, unless it holds no recipe
+        if let Some(page) = body.get("page").filter(|v| v.is_object()) {
+            keep_page_reading(&state, url, page)?;
         }
         match recipes::start_link(&state, url).await? {
             recipes::Started::Done(recipes::Imported::Recipe {
@@ -443,6 +450,40 @@ async fn import_recipe(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppR
         out["droppedPhoto"] = json!(true);
     }
     Ok(Json(out).into_response())
+}
+
+/// Keeps the recipe the cook's browser read from the page at `url`, for the import that
+/// follows to save instead of fetching the page. True when it held a recipe; when it didn't,
+/// nothing is kept and the page is scraped as usual.
+fn keep_page_reading(state: &AppState, url: &str, page: &Value) -> AppResult<bool> {
+    let page = crate::scraper::page::FromPage::from_json(page)?;
+    let url = recipes::unwrap_share_link(url);
+    if crate::video::is_video_url(&url) {
+        return Ok(false);
+    }
+    Ok(page.scrape(&url).is_some_and(|scraped| {
+        crate::preview::keep(state, &url, &scraped);
+        true
+    }))
+}
+
+/// `{url, page}`: the recipe the extension read in the cook's browser, for the preview of
+/// `url` (`/preview?url=…&via=extension`) to show. Answers `{found}`; the preview page then
+/// reloads, and shows it, or scrapes as usual when nothing was found.
+async fn preview_page(crate::Scoped(state): crate::Scoped, body: Bytes) -> AppResult<Json<Value>> {
+    let body = json_body(&body)?;
+    let url = body
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|u| crate::model::is_valid_url(u))
+        .ok_or_else(|| AppError::bad_request("Please enter a valid URL"))?;
+    let page = body
+        .get("page")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| AppError::bad_request("page: expected the recipe read from the page"))?;
+    let found = keep_page_reading(&state, url, page)?;
+    Ok(Json(json!({"found": found})))
 }
 
 /// Where a video import is: `queued` (with its `position`, 1 = next), `running`, `done`
