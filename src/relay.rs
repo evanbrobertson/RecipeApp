@@ -10,14 +10,26 @@
 //!
 //! Each call tries the relays in turn, starting from a different one each time, with the
 //! Firefox profile then Safari's. One that can't be reached is left alone for five minutes.
+//!
+//! A relay with Chromium or the video tools also works for the server (`crumb_work::wire`): it
+//! says so in `GET /health` (asked every [`CAN_FRESH_FOR`]), and [`Relays::render`],
+//! [`Relays::video_meta`] and [`Relays::watch`] hand it that work before the server does it
+//! itself. Wee Chef's calls, and their keys, stay on the server.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crumb_fetch::wire::{ErrorReply, FetchReply, FetchRequest};
+use crumb_fetch::wire::{ErrorReply, FetchReply, FetchRequest, Health};
 use crumb_fetch::{Fetched, Profile};
+use crumb_work::video::{VideoMeta, Watched};
+use crumb_work::wire::{
+    CAN_RENDER, CAN_VIDEO, RenderReply, RenderRequest, VideoMetaReply, VideoRequest, WatchReply,
+    WatchRequest,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::config::Config;
 
@@ -28,6 +40,13 @@ const BUDGET: Duration = Duration::from_secs(30);
 /// One relay call. The relay gives a site up to 30 seconds itself, so this is only the step's
 /// budget in effect; a call that runs out of it is not the relay's fault.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long what a relay said it can do is believed.
+const CAN_FRESH_FOR: Duration = Duration::from_secs(10 * 60);
+/// A page in a relay's Chromium (the relay gives it 45 seconds, plus a wait for its turn).
+const RENDER_TIMEOUT: Duration = Duration::from_secs(75);
+const VIDEO_META_TIMEOUT: Duration = Duration::from_secs(60);
+/// Downloading, transcribing and taking stills on a small machine.
+const WATCH_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 
 /// Why one call to a relay didn't give a page.
 #[derive(Debug, PartialEq, Eq)]
@@ -51,6 +70,30 @@ pub struct Relays {
     /// When each relay may be tried again.
     down: Mutex<HashMap<String, Instant>>,
     down_for: Duration,
+    /// What each relay said it can do (`GET /health`), and when.
+    can: tokio::sync::Mutex<HashMap<String, (Instant, Vec<String>)>>,
+}
+
+/// Why no relay did a piece of work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotDone {
+    /// No relay that can do it was free (or none is set up): the server does it itself.
+    NoWorker,
+    /// A relay did it and it came to nothing (blocked there too, a video it couldn't get),
+    /// so the server doing it from its own address is unlikely to fare better.
+    Nothing,
+}
+
+/// Why a relay didn't do a piece of work.
+#[derive(Debug, PartialEq, Eq)]
+enum WorkError {
+    /// It did it, and it came to nothing (blocked there too, a video it couldn't get): the
+    /// server needn't ask another.
+    Nothing(String),
+    /// Busy, can't, or out of time: another relay, or the server itself.
+    Skip,
+    /// Unreachable or broken: leave it alone for a while.
+    Down(String),
 }
 
 impl Relays {
@@ -95,6 +138,7 @@ impl Relays {
             next: AtomicUsize::new(0),
             down: Mutex::new(HashMap::new()),
             down_for: DOWN_FOR,
+            can: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -151,6 +195,201 @@ impl Relays {
         }
         tracing::info!("[relay] {host}: no relay got the recipe");
         None
+    }
+
+    /// The relays that can do `what` (`render`, `video`), in turn order, skipping any that's
+    /// down. Asks each one's `/health` when what it said is stale.
+    async fn workers(&self, what: &str) -> Vec<String> {
+        let count = self.urls.len();
+        if count == 0 {
+            return Vec::new();
+        }
+        let start = self.next.fetch_add(1, Ordering::Relaxed);
+        let mut out = Vec::new();
+        for i in 0..count {
+            let relay = &self.urls[(start + i) % count];
+            if self.is_down(relay) {
+                continue;
+            }
+            if self.can_do(relay, what).await {
+                out.push(relay.clone());
+            }
+        }
+        out
+    }
+
+    /// Whether any relay says it can do `what` (asking the stale ones).
+    pub async fn can(&self, what: &str) -> bool {
+        !self.workers(what).await.is_empty()
+    }
+
+    async fn can_do(&self, relay: &str, what: &str) -> bool {
+        let mut can = self.can.lock().await;
+        if let Some((at, said)) = can.get(relay)
+            && at.elapsed() < CAN_FRESH_FOR
+        {
+            return said.iter().any(|c| c == what);
+        }
+        let asked = self
+            .http
+            .get(format!("{relay}/health"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await;
+        let said = match asked {
+            Ok(res) if res.status().is_success() => res
+                .json::<Health>()
+                .await
+                .map(|h| h.can)
+                .unwrap_or_default(),
+            Ok(res) => {
+                tracing::warn!("[relay] {relay}: /health answered {}", res.status());
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[relay] {relay}: unreachable ({}); skipping it for a while",
+                    e.without_url()
+                );
+                drop(can);
+                self.mark_down(relay);
+                return false;
+            }
+        };
+        let yes = said.iter().any(|c| c == what);
+        can.insert(relay.to_string(), (Instant::now(), said));
+        yes
+    }
+
+    /// Hands work to the relays that can do `what`, in turn, until one does it.
+    async fn work<Q: Serialize, R: DeserializeOwned>(
+        &self,
+        what: &str,
+        path: &str,
+        request: &Q,
+        timeout: Duration,
+        host: &str,
+    ) -> Result<R, NotDone> {
+        for relay in self.workers(what).await {
+            let call = self.work_call::<Q, R>(&relay, path, request, timeout);
+            match tokio::time::timeout(timeout, call)
+                .await
+                .unwrap_or(Err(WorkError::Skip))
+            {
+                Ok(reply) => return Ok(reply),
+                Err(WorkError::Nothing(why)) => {
+                    tracing::info!("[relay] {host}: {relay}{path} gave nothing ({why})");
+                    return Err(NotDone::Nothing);
+                }
+                Err(WorkError::Skip) => continue,
+                Err(WorkError::Down(why)) => {
+                    tracing::warn!("[relay] {relay}: {why}; skipping it for a while");
+                    self.mark_down(&relay);
+                }
+            }
+        }
+        Err(NotDone::NoWorker)
+    }
+
+    async fn work_call<Q: Serialize, R: DeserializeOwned>(
+        &self,
+        relay: &str,
+        path: &str,
+        request: &Q,
+        timeout: Duration,
+    ) -> Result<R, WorkError> {
+        let res = self
+            .http
+            .post(format!("{relay}{path}"))
+            .bearer_auth(&self.token)
+            .timeout(timeout)
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    WorkError::Skip
+                } else {
+                    WorkError::Down(e.without_url().to_string())
+                }
+            })?;
+        let status = res.status().as_u16();
+        if status == 200 {
+            return res
+                .json::<R>()
+                .await
+                .map_err(|e| WorkError::Down(format!("unreadable reply: {}", e.without_url())));
+        }
+        let why = res
+            .json::<ErrorReply>()
+            .await
+            .map(|e| e.error)
+            .unwrap_or_default();
+        Err(match status {
+            400 | 422 => WorkError::Nothing(why),
+            // Busy, or it can't after all (what it said is refreshed on the next ask)
+            429 | 501 => {
+                if status == 501 {
+                    self.can.lock().await.remove(relay);
+                }
+                WorkError::Skip
+            }
+            401 => WorkError::Down("it didn't accept SCRAPE_RELAY_TOKEN".into()),
+            code => WorkError::Down(format!("answered {code} {why}")),
+        })
+    }
+
+    /// The page at `url` as a relay's Chromium rendered it.
+    pub async fn render(&self, url: &str) -> Result<String, NotDone> {
+        let host = crate::telemetry::host_of(url);
+        let started = Instant::now();
+        let request = RenderRequest {
+            url: url.to_string(),
+        };
+        let reply: RenderReply = self
+            .work(CAN_RENDER, "/render", &request, RENDER_TIMEOUT, &host)
+            .await?;
+        tracing::info!(
+            "[relay] {host}: {} rendered it in {} ms",
+            reply.relay,
+            started.elapsed().as_millis()
+        );
+        Ok(reply.html)
+    }
+
+    /// A video's details as a relay's `yt-dlp` read them.
+    pub async fn video_meta(&self, url: &str) -> Result<VideoMeta, NotDone> {
+        let host = crate::telemetry::host_of(url);
+        let request = VideoRequest {
+            url: url.to_string(),
+        };
+        let reply: VideoMetaReply = self
+            .work(
+                CAN_VIDEO,
+                "/video/meta",
+                &request,
+                VIDEO_META_TIMEOUT,
+                &host,
+            )
+            .await?;
+        tracing::info!("[relay] {host}: {} read the video's details", reply.relay);
+        Ok(reply.meta)
+    }
+
+    /// A video watched on a relay: what's said and its stills.
+    pub async fn watch(&self, meta: &VideoMeta) -> Result<Watched, NotDone> {
+        let host = crate::telemetry::host_of(&meta.url);
+        let started = Instant::now();
+        let request = WatchRequest { meta: meta.clone() };
+        let reply: WatchReply = self
+            .work(CAN_VIDEO, "/video/watch", &request, WATCH_TIMEOUT, &host)
+            .await?;
+        tracing::info!(
+            "[relay] {host}: {} watched it in {} ms",
+            reply.relay,
+            started.elapsed().as_millis()
+        );
+        Ok(reply.watched())
     }
 
     fn is_down(&self, relay: &str) -> bool {
@@ -507,5 +746,75 @@ mod tests {
             ..config
         };
         assert!(!Relays::from_config(&config).is_empty());
+    }
+
+    /// A relay that works for the server: says what it can do, renders, and reads videos.
+    async fn serve_worker(can: Vec<&'static str>, render_status: StatusCode) -> String {
+        let can: Vec<String> = can.into_iter().map(String::from).collect();
+        let app = Router::new()
+            .route(
+                "/health",
+                axum::routing::get(move || {
+                    let can = can.clone();
+                    async move {
+                        Json(Health {
+                            name: "pi1".into(),
+                            version: "0.2.0".into(),
+                            can,
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/render",
+                post(move |Json(req): Json<RenderRequest>| async move {
+                    if render_status != StatusCode::OK {
+                        return Err((
+                            render_status,
+                            Json(ErrorReply {
+                                error: "blocked".into(),
+                            }),
+                        ));
+                    }
+                    Ok(Json(RenderReply {
+                        html: format!("<p>{}</p>", req.url),
+                        relay: "pi1".into(),
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn chromium_work_goes_to_a_relay_that_has_it() {
+        let fetch_only = serve_worker(vec![], StatusCode::OK).await;
+        let worker = serve_worker(vec!["render"], StatusCode::OK).await;
+        let both = relays(&[&fetch_only, &worker]);
+        assert!(both.can(CAN_RENDER).await);
+        assert!(!both.can(CAN_VIDEO).await);
+        for _ in 0..2 {
+            let html = both.render("https://food.test/r").await.unwrap();
+            assert_eq!(html, "<p>https://food.test/r</p>");
+        }
+        // Blocked in the relay's Chromium: the server is told not to bother itself
+        let blocked = relays_blocked().await;
+        assert_eq!(
+            blocked.render("https://food.test/r").await,
+            Err(NotDone::Nothing)
+        );
+        // No relay with Chromium: the server does it
+        let none = relays(&[&fetch_only]);
+        assert_eq!(
+            none.render("https://food.test/r").await,
+            Err(NotDone::NoWorker)
+        );
+    }
+
+    async fn relays_blocked() -> Relays {
+        let url = serve_worker(vec!["render"], StatusCode::UNPROCESSABLE_ENTITY).await;
+        relays(&[&url])
     }
 }

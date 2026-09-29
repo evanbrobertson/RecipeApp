@@ -19,7 +19,7 @@
   import { pageState } from "../lib/page.svelte"
   import type { Cookbook, RecipeSummary } from "../lib/recipe"
   import { forgetViewed } from "../lib/storage"
-  import { toast } from "../lib/toast"
+  import { flash, toast } from "../lib/toast"
 
   interface Data {
     recipes: RecipeSummary[]
@@ -118,13 +118,28 @@
     }
   }
 
+  /** Puts just-deleted recipes back, then shows the list with them. */
+  async function restore(ids: number[]) {
+    try {
+      for (const id of ids) await api(`/api/trash/${id}/restore`, { method: "POST" })
+      flash({ title: ids.length === 1 ? "Put back" : `Put back ${ids.length} recipes` })
+      location.reload()
+    } catch (e) {
+      toast({ title: "Couldn't put them back", description: errorMessage(e), tone: "error" })
+    }
+  }
+
   async function deleteSelected() {
     busy = true
     try {
       const ids = [...selected]
       await api("/api/recipes/bulk-delete", { method: "POST", body: { ids } })
       forgetViewed(ids)
-      toast({ title: `Deleted ${ids.length} recipe${ids.length === 1 ? "" : "s"}`, tone: "success" })
+      toast({
+        title: `Moved ${ids.length} recipe${ids.length === 1 ? "" : "s"} to the trash`,
+        tone: "success",
+        action: { label: "Undo", onselect: () => void restore(ids) },
+      })
       if (page.data) page.data.recipes = page.data.recipes.filter((r) => !selected.has(r.id))
       showDelete = false
       toggleSelecting()
@@ -316,7 +331,7 @@
   <Modal
     bind:open={showDelete}
     title="Delete recipes?"
-    description={`${selected.size} recipe${selected.size === 1 ? "" : "s"} will be permanently deleted.`}
+    description={`${selected.size} recipe${selected.size === 1 ? "" : "s"} will go to the trash, where you can put ${selected.size === 1 ? "it" : "them"} back for 30 days.`}
   >
     {#snippet footer()}
       <button type="button" class="btn btn-ghost" onclick={() => (showDelete = false)}>

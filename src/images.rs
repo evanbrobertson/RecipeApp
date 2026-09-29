@@ -391,6 +391,9 @@ pub async fn serve_photo(
         })
         .optional()
         .unwrap_or(None);
+    // A deleted recipe's photo, for the trash page (its own statement: the lock above is let go)
+    let in_box = row.is_some();
+    let row = row.or_else(|| crate::trash::image_and_url(&state.db.lock(), id));
     let Some((Some(image), page_url)) =
         row.filter(|r| r.0.as_deref().is_some_and(|i| !i.is_empty()))
     else {
@@ -452,6 +455,7 @@ pub async fn serve_photo(
             images.record_failure(source, failure);
             // A link the site refuses for good goes on the Suggestions page (see checks.rs)
             if linked
+                && in_box
                 && err.dead
                 && let Err(e) = crate::checks::flag_dead_photo(&state.db.lock(), id, &image)
             {
@@ -460,7 +464,10 @@ pub async fn serve_photo(
             return unavailable(failure, &image, caching);
         }
     };
-    if linked && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image) {
+    if linked
+        && in_box
+        && let Err(e) = crate::checks::photo_works(&state.db.lock(), id, &image)
+    {
         tracing::warn!("[img] recipe {id}: couldn't clear its photo flag: {e:?}");
     }
     let worker = state.images.clone();

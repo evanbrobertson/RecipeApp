@@ -166,6 +166,11 @@ pub struct Config {
     pub sites_db: Option<PathBuf>,
     /// `SCRAPE_SITE_MEMORY=off`: don't remember (or use) how each site was read last time.
     pub scrape_site_memory: bool,
+    /// `POPULAR=off`: no Popular links (see `src/popular.rs`).
+    pub popular: bool,
+    /// `POPULAR_MIN_HOUSEHOLDS`: how many households must have saved a link before it's
+    /// Popular (at least 2, default 3).
+    pub popular_min_households: usize,
     /// Whether a link to a private address may be fetched. Off, always, outside the tests:
     /// they serve recipes from `127.0.0.1`.
     pub scrape_allow_private: bool,
@@ -249,6 +254,8 @@ impl Default for Config {
             accounts_db: None,
             sites_db: None,
             scrape_site_memory: true,
+            popular: true,
+            popular_min_households: 3,
             scrape_allow_private: false,
             auth_service_url: None,
             auth_internal_secret: None,
@@ -404,6 +411,9 @@ impl Config {
             )),
             sites_db: Some(crate::sites::sites_db_path(&crate::db::database_path())),
             scrape_site_memory: !switched_off("SCRAPE_SITE_MEMORY"),
+            popular: !switched_off("POPULAR"),
+            popular_min_households: count(&["POPULAR_MIN_HOUSEHOLDS"], 2)
+                .unwrap_or(d.popular_min_households),
             scrape_allow_private: false,
             auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
             auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),

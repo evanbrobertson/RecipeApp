@@ -272,7 +272,7 @@
     try {
       await api(`/api/recipes/${id}`, { method: "DELETE" })
       forgetViewed([id])
-      flash({ title: "Recipe deleted" })
+      flash({ title: "Moved to the trash", description: "Put it back from More › Trash" })
       location.href = "/recipes"
     } catch (e) {
       toast({ title: "Couldn't delete", description: errorMessage(e), tone: "error" })
@@ -617,7 +617,11 @@
   <ShareSheet bind:open={showShare} {recipe} bind:share={page.data.share} />
 {/if}
 
-<Modal bind:open={showDelete} title="Delete this recipe?" description="This can't be undone.">
+<Modal
+  bind:open={showDelete}
+  title="Delete this recipe?"
+  description="It goes to the trash, where you can put it back for 30 days."
+>
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (showDelete = false)}>Cancel</button>
     <button type="button" class="btn btn-danger" onclick={deleteRecipe}>Delete</button>

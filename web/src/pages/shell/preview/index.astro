@@ -21,6 +21,7 @@ import kalam from "../../../assets/fonts/kalam.woff2?url"
 import themeBoot from "../../../lib/theme-boot.js?raw"
 import PreviewActions from "../../../islands/PreviewActions.svelte"
 import ShareScale from "../../../islands/ShareScale.svelte"
+import PreviewVideo from "../../../islands/PreviewVideo.svelte"
 ---
 
 <!doctype html>
@@ -63,6 +64,8 @@ import ShareScale from "../../../islands/ShareScale.svelte"
             </div>
           </div>
         </section>
+
+        <PreviewVideo client:only="svelte" />
 
         <div class="share-split">
           <section class="share-panel" aria-labelledby="share-ingredients-title">
@@ -109,6 +112,11 @@ import ShareScale from "../../../islands/ShareScale.svelte"
   }
   .share-split:has(.preview-empty) {
     display: none;
+  }
+  /* In its island (inline, so no margin of its own): the gap the article's sections have */
+  .share-video {
+    margin-top: 3rem;
+    max-width: 48rem;
   }
   .preview-skeleton > * + * {
     margin-top: 0.5rem;
