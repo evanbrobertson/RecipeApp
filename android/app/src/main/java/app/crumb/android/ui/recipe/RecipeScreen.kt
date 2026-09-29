@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -437,8 +438,16 @@ private fun RecipeContent(recipe: Recipe, state: RecipePageState, fromRandom: Bo
     LazyColumn(Modifier.fillMaxSize().testTag("recipe").onGloballyPositioned { origin = it.positionInRoot() }, state = listState, horizontalAlignment = Alignment.CenterHorizontally) {
         item {
             if (hasHero) {
-                Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    RecipePhoto(photo, recipe.image, Modifier.fillMaxWidth().aspectRatio(4f / 3f), contentDescription = recipe.title)
+                Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    // The web caps the hero at 640px wide; a landscape phone is also kept to
+                    // three quarters of its short height so the title shows below it
+                    val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+                    RecipePhoto(
+                        photo,
+                        recipe.image,
+                        Modifier.widthIn(max = heroMaxWidth(screenHeight.value).dp).fillMaxWidth().aspectRatio(4f / 3f),
+                        contentDescription = recipe.title,
+                    )
                 }
             } else {
                 Box(Modifier.statusBarsPadding().padding(top = 56.dp))

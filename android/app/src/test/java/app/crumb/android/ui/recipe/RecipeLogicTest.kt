@@ -10,6 +10,11 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RecipeLogicTest {
+    @Test fun heroIsCappedByTheWebWidthAndTheShortSide() {
+        assertEquals(640f, heroMaxWidth(844f), 0.01f)
+        assertEquals(480f, heroMaxWidth(360f), 0.01f)
+    }
+
     private val day = 86_400_000L
     private val start = 1_767_225_600_000L // 2026-01-01T00:00:00Z
 
