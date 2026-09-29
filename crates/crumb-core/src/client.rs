@@ -50,8 +50,10 @@ pub fn photo_path(recipe_id: i64, image: Option<&str>, px: u32) -> Option<String
 }
 
 /// What someone typed as their server ("crumb.example.com", "http://192.168.1.5:3000/")
-/// as a base URL ending in "/", or None if it isn't a web address. Defaults to HTTPS;
-/// the query and fragment are dropped, a sub-path is kept.
+/// as a base URL ending in "/", or None if it isn't a web address. Defaults to HTTPS, except
+/// for a server on this machine or the local network (localhost, `.local`, a private IP),
+/// which almost never has a certificate; the query and fragment are dropped, a sub-path is
+/// kept.
 pub fn server_url(input: &str) -> Option<String> {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
@@ -65,6 +67,9 @@ pub fn server_url(input: &str) -> Option<String> {
     let mut url = url::Url::parse(&with_scheme).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
+    }
+    if !trimmed.contains("://") && is_local(&url) {
+        url.set_scheme("http").ok()?;
     }
     let host = url.host_str()?.to_string();
     let ip = matches!(url.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)));
@@ -84,9 +89,12 @@ pub fn allows_cleartext(base_url: &str) -> bool {
     let Ok(url) = url::Url::parse(base_url) else {
         return false;
     };
-    if url.scheme() == "https" {
-        return true;
-    }
+    url.scheme() == "https" || is_local(&url)
+}
+
+/// This machine or the local network: localhost, a `.local` name, or a loopback, private
+/// or link-local address.
+fn is_local(url: &url::Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".local"),
         Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
@@ -423,8 +431,21 @@ mod tests {
         );
         assert_eq!(
             server_url("localhost:3000").as_deref(),
+            Some("http://localhost:3000/")
+        );
+        assert_eq!(
+            server_url("192.168.1.5:3000").as_deref(),
+            Some("http://192.168.1.5:3000/")
+        );
+        assert_eq!(
+            server_url("crumb.local").as_deref(),
+            Some("http://crumb.local/")
+        );
+        assert_eq!(
+            server_url("https://localhost:3000").as_deref(),
             Some("https://localhost:3000/")
         );
+        assert_eq!(server_url("8.8.8.8").as_deref(), Some("https://8.8.8.8/"));
         assert_eq!(server_url("crumb"), None);
         assert_eq!(server_url("not a url"), None);
         assert_eq!(server_url(""), None);
