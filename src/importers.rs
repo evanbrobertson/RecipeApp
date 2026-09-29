@@ -413,28 +413,72 @@ static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
 static HTML_START: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*<(!doctype|html)").unwrap());
 
-fn unzip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+/// Limits on what an upload may unpack to, shared by every level of nesting in one upload.
+const MAX_ENTRY_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_UNPACKED_BYTES: u64 = 150 * 1024 * 1024;
+const MAX_ENTRIES: usize = 2000;
+const MAX_ARCHIVE_DEPTH: u8 = 2;
+
+/// What is left of an upload's unpacking allowance.
+struct Budget {
+    bytes: u64,
+    entries: usize,
+}
+
+impl Budget {
+    fn new() -> Self {
+        Self {
+            bytes: MAX_UNPACKED_BYTES,
+            entries: MAX_ENTRIES,
+        }
+    }
+}
+
+const TOO_BIG: &str = "the archive unpacks to more than Crumb reads";
+
+/// Reads at most `limit` bytes; more than that is an error, so a bomb stops early.
+fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| e.to_string())?;
+    if out.len() as u64 > limit {
+        return Err(TOO_BIG.into());
+    }
+    Ok(out)
+}
+
+fn unzip(bytes: &[u8], budget: &mut Budget) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    if archive.len() > budget.entries {
+        return Err(TOO_BIG.into());
+    }
+    budget.entries -= archive.len();
     let mut out = Vec::new();
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let file = archive.by_index(i).map_err(|e| e.to_string())?;
         let name = file.name().to_string();
         if name.ends_with('/') || name.starts_with("__MACOSX") {
             continue;
         }
-        let mut data = Vec::new();
-        file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        let limit = MAX_ENTRY_BYTES.min(budget.bytes);
+        // The declared size can lie, so the read is capped too
+        if file.size() > limit {
+            return Err(TOO_BIG.into());
+        }
+        let data = read_capped(file, limit)?;
+        budget.bytes -= data.len() as u64;
         out.push((name, data));
     }
     Ok(out)
 }
 
-fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    flate2::read::GzDecoder::new(bytes)
-        .read_to_end(&mut out)
-        .map_err(|e| e.to_string())?;
-    Ok(out)
+fn gunzip(bytes: &[u8], budget: &mut Budget) -> Result<Vec<u8>, String> {
+    let limit = MAX_ENTRY_BYTES.min(budget.bytes);
+    let data = read_capped(flate2::read::GzDecoder::new(bytes), limit)?;
+    budget.bytes -= data.len() as u64;
+    Ok(data)
 }
 
 pub async fn recipes_from_file(
@@ -442,7 +486,8 @@ pub async fn recipes_from_file(
     name: &str,
     bytes: Vec<u8>,
 ) -> Result<Vec<ImportedRecipe>, String> {
-    recipes_from_file_at(state, name.to_string(), bytes, 0).await
+    let mut budget = Budget::new();
+    recipes_from_file_at(state, name.to_string(), bytes, 0, &mut budget).await
 }
 
 fn recipes_from_file_at<'a>(
@@ -450,27 +495,32 @@ fn recipes_from_file_at<'a>(
     name: String,
     bytes: Vec<u8>,
     depth: u8,
+    budget: &'a mut Budget,
 ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<ImportedRecipe>, String>> + Send + 'a>> {
     Box::pin(async move {
         let kind = ext(&name);
         let is_zip = bytes.starts_with(&[0x50, 0x4b]);
         let is_gzip = bytes.starts_with(&[0x1f, 0x8b]);
 
-        if is_zip && depth < 2 {
+        if (is_zip || is_gzip) && depth >= MAX_ARCHIVE_DEPTH {
+            return Err("archives inside archives are nested too deeply".into());
+        }
+        if is_zip {
             let mut out = Vec::new();
-            for (entry, data) in unzip(&bytes)? {
-                // A bad entry shouldn't sink the whole archive
-                out.extend(
-                    recipes_from_file_at(state, entry, data, depth + 1)
-                        .await
-                        .unwrap_or_default(),
-                );
+            for (entry, data) in unzip(&bytes, budget)? {
+                // A bad entry shouldn't sink the whole archive, but a bomb does
+                match recipes_from_file_at(state, entry, data, depth + 1, budget).await {
+                    Ok(found) => out.extend(found),
+                    Err(e) if e == TOO_BIG => return Err(e),
+                    Err(_) => {}
+                }
             }
             return Ok(out);
         }
         if is_gzip {
             let inner = name.strip_suffix(".gz").unwrap_or(&name).to_string();
-            return recipes_from_file_at(state, inner, gunzip(&bytes)?, depth + 1).await;
+            let data = gunzip(&bytes, budget)?;
+            return recipes_from_file_at(state, inner, data, depth + 1, budget).await;
         }
         if kind == "pdf" {
             return from_pdf(state, bytes).await;
@@ -573,6 +623,67 @@ mod tests {
         let out = from_json_value(&json!({"items": [mealie]}));
         assert_eq!(out[0].fields.ingredients[0].items, vec!["1 onion", "salt"]);
         assert_eq!(out[0].fields.url.as_deref(), Some("https://m.test/s"));
+    }
+
+    fn gz(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, data) in entries {
+            w.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            w.write_all(data).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn a_gzip_bomb_stops_at_the_entry_limit() {
+        // ~51 MB of zeros squeezes to about 50 KB
+        let bomb = gz(&vec![0u8; MAX_ENTRY_BYTES as usize + 1]);
+        assert!(bomb.len() < 200_000);
+        assert_eq!(gunzip(&bomb, &mut Budget::new()), Err(TOO_BIG.into()));
+        let fine = gz(b"{\"title\": \"x\"}");
+        assert!(gunzip(&fine, &mut Budget::new()).is_ok());
+    }
+
+    #[test]
+    fn zip_entries_share_one_budget() {
+        let big = vec![0u8; 40 * 1024 * 1024];
+        let archive = zip_of(&[
+            ("a.txt", &big),
+            ("b.txt", &big),
+            ("c.txt", &big),
+            ("d.txt", &big),
+        ]);
+        assert!(archive.len() < 1_000_000);
+        // Each entry is under the per-entry cap, together they are over the total
+        assert_eq!(unzip(&archive, &mut Budget::new()), Err(TOO_BIG.into()));
+        let small = zip_of(&[("a.txt", b"one"), ("b.txt", b"two")]);
+        assert_eq!(unzip(&small, &mut Budget::new()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn zip_entry_counts_are_capped() {
+        let names: Vec<String> = (0..MAX_ENTRIES + 1).map(|i| format!("{i}.txt")).collect();
+        let entries: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b"x"[..])).collect();
+        assert_eq!(
+            unzip(&zip_of(&entries), &mut Budget::new()),
+            Err(TOO_BIG.into())
+        );
+    }
+
+    #[test]
+    fn a_lying_entry_size_is_not_trusted() {
+        let mut budget = Budget::new();
+        budget.bytes = 10;
+        assert!(unzip(&zip_of(&[("a.txt", &[b'a'; 11])]), &mut budget).is_err());
     }
 
     #[test]

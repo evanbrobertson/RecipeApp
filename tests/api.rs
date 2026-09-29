@@ -7413,3 +7413,51 @@ async fn previews_are_behind_the_login() {
     let to = headers[header::LOCATION].to_str().unwrap();
     assert!(to.starts_with("/login?next=%2Fpreview%3Furl%3D"), "{to}");
 }
+
+#[tokio::test]
+async fn import_refuses_archive_bombs_and_oversized_uploads() {
+    use std::io::Write;
+    let t = TestApp::new(None);
+    let upload = |name: &str, data: Vec<u8>| {
+        let boundary = "XBOMB";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend(data);
+        body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
+        Request::builder()
+            .method("POST")
+            .uri("/api/import/files")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    };
+    // 60 MB of zeros, a few KB gzipped: over the per-file cap once unpacked
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    e.write_all(&vec![0u8; 60 * 1024 * 1024]).unwrap();
+    let bomb = e.finish().unwrap();
+    assert!(bomb.len() < 1_000_000);
+    let (status, _, text) = t.send(upload("bomb.txt.gz", bomb)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert!(results[0]["error"].as_str().is_some(), "{text}");
+
+    // A file over 50 MB is refused while it streams in, and says so
+    let (status, _, text) = t
+        .send(upload("big.txt", vec![b'a'; 51 * 1024 * 1024]))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let results: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(results[0]["error"], "File is over 50 MB");
+
+    // More than the whole request may carry is a 4xx before anything is imported
+    let (status, _, _) = t
+        .send(upload("huge.txt", vec![b'a'; 110 * 1024 * 1024]))
+        .await;
+    assert!(status.is_client_error(), "{status}");
+}
