@@ -8170,6 +8170,59 @@ async fn a_preview_shows_the_recipe_the_extension_read() {
 }
 
 #[tokio::test]
+async fn a_preview_shows_the_video_the_extension_read() {
+    let t = TestApp::new(None);
+    // Allrecipes: the Recipe's JSON-LD names JW Player's mp4
+    let url = "https://www.allrecipes.com/zing-noodles-11725006";
+    let q: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+    let ld = r#"[{"@type":["Recipe","NewsArticle"],"name":"Zing Noodles","recipeIngredient":["1 jar sauce","1 lb noodles"],
+        "recipeInstructions":[{"@type":"HowToStep","text":"Cook."}],
+        "video":{"@type":"VideoObject","contentUrl":"https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4",
+          "thumbnailUrl":"https://cdn.jwplayer.com/v2/media/9QcFPcvu/thumbnails/g43V12F6.jpg?width=1280"}}]"#;
+    let (status, res) = t
+        .json(
+            "POST",
+            "/api/preview",
+            Some(json!({"url": url, "page": {"jsonLd": [ld]}})),
+        )
+        .await;
+    assert_eq!((status, &res["found"]), (StatusCode::OK, &json!(true)));
+
+    let (status, headers, html) = t
+        .send(preview_req(
+            &format!("/preview?url={q}&via=extension&go=1"),
+            Some("same-origin"),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let preview = &page_data(&html)["preview"];
+    assert_eq!(
+        preview["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+    assert_eq!(preview["videoEmbed"]["provider"], "file");
+    // Played from its own site, once the cook presses Play
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(
+        csp.contains("media-src https:") && csp.contains("frame-src https:"),
+        "{csp}"
+    );
+
+    // Adding it keeps the video
+    let (status, res) = t
+        .json("POST", "/api/recipes/import", Some(json!({"url": url})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    let (_, recipe) = t
+        .json("GET", &format!("/api/recipes/{}", res["id"]), None)
+        .await;
+    assert_eq!(
+        recipe["video"],
+        "https://cdn.jwplayer.com/videos/9QcFPcvu-K3AjnAEN.mp4"
+    );
+}
+
+#[tokio::test]
 async fn a_site_whose_terms_forbid_automated_fetching_is_never_fetched() {
     let t = TestApp::new(None);
     let url = "https://www.allrecipes.com/recipe/1/apple-pie/";
