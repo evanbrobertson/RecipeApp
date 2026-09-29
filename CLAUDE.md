@@ -21,9 +21,14 @@ in a clean UI. Also a remote MCP connector for Claude.
 - **Icons:** `lucide` via `web/src/components/Icon.astro` in `.astro` files, `@lucide/svelte` in `.svelte`
 - **Database:** SQLite (WAL). Schema is raw SQL in `src/db.rs`, created/upgraded on start
 - **Scraping:** `wreq` with Firefox then Safari browser fingerprints (reqwest for APIs and the image fallback), JSON-LD first,
-  HTML/microdata fallback. If both profiles were blocked: the site's WordPress API (`src/scraper/fallbacks.rs`), then
-  `crumb-relay`s on other networks over Tailscale (`src/relay.rs`, `SCRAPE_RELAYS`), then the Internet Archive's copy.
-  Headless Chromium over CDP comes last, for sites that still block or need JavaScript
+  HTML/microdata fallback. Order per link (`scraper::scrape_plan`): site memory (`src/sites.rs`, `sites.db`: what worked on
+  the host) → a recognised platform's API (WordPress: `src/scraper/platforms.rs`, `fallbacks.rs`) hedged with the page
+  (Firefox, Safari if blocked; the API starts if the page hasn't answered in 300 ms, first recipe wins) → if both profiles
+  were blocked: the API, then `crumb-relay`s over Tailscale (`src/relay.rs`, `SCRAPE_RELAYS`) and the Internet Archive's
+  copy together → headless Chromium over CDP last, for sites that still block or need JavaScript. Never several requests
+  at one site at once bar that hedge; Chromium and videos never race. Every fetch of a link a cook supplies refuses private
+  addresses (`crumb_fetch::guard`, redirects and DNS too; Chromium goes through `crumb_fetch::proxy`); the relay client is
+  the one exception (Tailscale)
 - **Videos:** TikTok / Instagram Reels / YouTube (videos and Shorts) links go to `src/video.rs`: the caption first, else `yt-dlp`
   download → local whisper.cpp transcript + `ffmpeg` stills → one Wee Chef vision call. Tools are in the Docker image
   (`video` stage; bump `YT_DLP_VERSION` when imports break) and optional everywhere else. Videos run as jobs in
@@ -60,7 +65,7 @@ crates/
   crumb-core/     # Pure logic shared by the server and every client; the server re-exports it (crumb::model, ...)
   crumb-client/   # Typed API client, tested against the real router
   crumb-ffi/      # UniFFI bindings (uniffi.toml: Kotlin package app.crumb.core, Swift module CrumbCore)
-  crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard; the server re-exports it in scraper.rs
+  crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard (guard.rs) and Chromium's guarded proxy (proxy.rs); the server re-exports it in scraper.rs
   crumb-relay/    # Relay binary (axum): POST /fetch behind a bearer token, rate limits; Dockerfile, systemd unit
 src/
   main.rs         # Boot: config, DB, browser, listen
@@ -80,6 +85,8 @@ src/
   preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
+  sites.rs        # Site memory: sites.db (server-wide, host facts only): platform, API root, winning method, blocks_server
+  scraper/platforms.rs # Platform detection (WordPress Link header / head links), WPRM/Mediavine/Tasty ids and card markup
   scraper/page.rs # A recipe the extension read in the cook's browser (`page`): capped, parsed, never fetched
   images.rs       # /img resizer (WebP, disk cache), hero preload Link header
   telemetry.rs    # Sentry: init, scrubbing, request transactions, browser Server-Timing hint

@@ -6,8 +6,9 @@
 //! fingerprint alone, whatever its User-Agent says. [`Profile`] picks Firefox or Safari.
 //!
 //! Two ways to fetch:
-//! - [`fetch`] follows redirects and connects anywhere. The server uses it for the links its
-//!   own cooks paste.
+//! - [`fetch`] follows redirects, but never into a private address (the server's own guard,
+//!   see [`guard::server_redirects`]); the caller checks the first link
+//!   ([`guard::check_resolved`]). The server uses it for the links its own cooks paste.
 //! - [`fetch_public`] (see [`guard`]) is for a service that fetches on behalf of someone else
 //!   (`crumb-relay`): it refuses anything that isn't a public web address, on every redirect.
 
@@ -17,9 +18,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 pub mod guard;
+pub mod proxy;
 pub mod wire;
 
-pub use guard::{Forbidden, check_url, fetch_public, is_public_ip};
+pub use guard::{
+    Forbidden, check_resolved, check_target, check_url, fetch_public, is_public_ip, resolve_public,
+};
 
 /// One request's time, from connecting to the last byte of the body.
 pub const PAGE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -55,8 +59,13 @@ impl Profile {
 /// What one fetch attempt got back.
 #[derive(Debug)]
 pub enum Fetched {
-    /// A response. The body is only read for a 2xx.
-    Page { status: u16, html: String },
+    /// A response. The body is only read for a 2xx. `link` is the response's `Link` headers
+    /// joined with ", " (WordPress names its REST API and the post's own endpoint there).
+    Page {
+        status: u16,
+        html: String,
+        link: Option<String>,
+    },
     /// No response (DNS, connection, TLS, timeout); the reason is for the log.
     Unreachable(String),
 }
@@ -95,7 +104,9 @@ pub fn client(profile: Profile) -> Option<&'static wreq::Client> {
         built(
             profile,
             // wreq doesn't follow redirects unless told to
-            builder(profile).redirect(wreq::redirect::Policy::limited(10)),
+            builder(profile)
+                .redirect(guard::server_redirects())
+                .dns_resolver(guard::PublicResolver),
         )
     })
     .as_ref()
@@ -148,19 +159,33 @@ pub async fn read_capped(mut res: wreq::Response, cap: usize) -> Result<Vec<u8>,
     Ok(body)
 }
 
+/// All of a response's `Link` headers as one value.
+fn link_header(res: &wreq::Response) -> Option<String> {
+    let all: Vec<&str> = res
+        .headers()
+        .get_all(wreq::header::LINK)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    Some(all.join(", ")).filter(|l| !l.is_empty())
+}
+
 /// A final response as [`Fetched`]: the body is read only for a 2xx.
 pub(crate) async fn page_of(res: wreq::Response) -> Fetched {
     let status = res.status().as_u16();
+    let link = link_header(&res);
     if !res.status().is_success() {
         return Fetched::Page {
             status,
             html: String::new(),
+            link,
         };
     }
     match read_capped(res, MAX_PAGE_BYTES).await {
         Ok(body) => Fetched::Page {
             status,
             html: String::from_utf8_lossy(&body).into_owned(),
+            link,
         },
         Err(ReadError::TooLarge) => Fetched::Unreachable("page too large".into()),
         Err(ReadError::Failed(e)) => Fetched::Unreachable(e),
@@ -168,6 +193,10 @@ pub(crate) async fn page_of(res: wreq::Response) -> Fetched {
 }
 
 /// Fetches a page with one of the browser profiles. The profile sets every header.
+///
+/// Redirects are followed, but not into a private address or a name that resolves to one
+/// (see [`guard::server_redirects`]). The first link is the caller's to check
+/// ([`guard::check_resolved`]) so a refusal can be told from a failure.
 pub async fn fetch(profile: Profile, url: &str) -> Fetched {
     let Some(client) = client(profile) else {
         return Fetched::Unreachable("client unavailable".into());
@@ -209,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_reads_a_2xx_body_and_only_the_status_otherwise() {
         let addr = serve(vec![http("200 OK", "", "<p>hi</p>")]).await;
-        let Fetched::Page { status, html } =
+        let Fetched::Page { status, html, .. } =
             fetch(Profile::Firefox, &format!("http://{addr}/")).await
         else {
             panic!("expected a page");
@@ -217,7 +246,7 @@ mod tests {
         assert_eq!((status, html.as_str()), (200, "<p>hi</p>"));
 
         let addr = serve(vec![http("403 Forbidden", "", "blocked")]).await;
-        let Fetched::Page { status, html } =
+        let Fetched::Page { status, html, .. } =
             fetch(Profile::Safari, &format!("http://{addr}/")).await
         else {
             panic!("expected a page");
@@ -226,19 +255,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_follows_redirects() {
-        let landing = serve(vec![http("200 OK", "", "landed")]).await;
-        let addr = serve(vec![http(
-            "302 Found",
-            &format!("Location: http://{landing}/final\r\n"),
-            "",
-        )])
-        .await;
-        let Fetched::Page { html, .. } = fetch(Profile::Firefox, &format!("http://{addr}/")).await
-        else {
-            panic!("expected a page");
-        };
-        assert_eq!(html, "landed");
+    async fn fetch_follows_a_redirect_only_to_the_public_web() {
+        // The first link is the caller's to check; where a site sends us on is checked here
+        for target in [
+            "http://169.254.169.254/latest/meta-data",
+            "http://127.0.0.1:1/",
+            "http://10.0.0.5/admin",
+            "http://[::1]/",
+            "http://localhost/",
+        ] {
+            let addr = serve(vec![http(
+                "302 Found",
+                &format!("Location: {target}\r\n"),
+                "",
+            )])
+            .await;
+            let fetched = fetch(Profile::Firefox, &format!("http://{addr}/")).await;
+            assert!(
+                matches!(fetched, Fetched::Unreachable(_)),
+                "{target}: {fetched:?}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -25,6 +25,7 @@ pub mod recipes;
 pub mod relay;
 pub mod scraper;
 pub mod share;
+pub mod sites;
 pub mod social;
 pub mod suggestions;
 pub mod telemetry;
@@ -82,6 +83,8 @@ pub struct AppState {
     pub video_jobs: Arc<video_jobs::VideoJobs>,
     /// `crumb-relay`s asked for pages the server's own fetches were blocked on (see [`relay`]).
     pub relays: Arc<relay::Relays>,
+    /// How each recipe site was last read, across households (see [`sites`]).
+    pub sites: Arc<sites::Sites>,
 }
 
 impl AppState {
@@ -97,6 +100,13 @@ impl AppState {
             .build()
             .expect("HTTP client");
         let relays = Arc::new(relay::Relays::from_config(&config));
+        let sites = Arc::new(
+            match &config.sites_db {
+                Some(path) => sites::Sites::open(path),
+                None => sites::Sites::open_in_memory(),
+            }
+            .expect("sites database"),
+        );
         let households = Arc::new(households::Households::new(
             db,
             config.households_dir.clone(),
@@ -144,6 +154,7 @@ impl AppState {
             rates: Arc::default(),
             video_jobs,
             relays,
+            sites,
         }
     }
 }

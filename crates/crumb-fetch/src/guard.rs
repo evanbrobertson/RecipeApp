@@ -17,8 +17,13 @@
 //! differently. (The lookup made first, to answer a bad name with a clear error, is only for
 //! the message.) Proxies are off for the same reason: a proxy would resolve the name itself.
 //!
-//! Not covered: this checks where a connection goes, not what a public site says. It does
-//! not use the server's own fetches; adopting it there is a separate choice.
+//! Not covered: this checks where a connection goes, not what a public site says.
+//!
+//! The server's own fetches of links its cooks paste use a lighter form of the same guard:
+//! [`check_resolved`] on the first link (any port: recipe sites do run on 8080), and on
+//! every redirect [`server_redirects`], with [`PublicResolver`] as the client's resolver.
+//! Unlike the relay's it lets a proxy configured in the environment stand, since the
+//! operator chose it.
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -114,6 +119,15 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
 /// and, when the host is an address, that it is a public one. A host name is checked when it
 /// is resolved.
 pub fn check_url(url: &Url) -> Result<(), Forbidden> {
+    check(url, true)
+}
+
+/// [`check_url`] for the server's own fetches: the same, but any port.
+fn check_any_port(url: &Url) -> Result<(), Forbidden> {
+    check(url, false)
+}
+
+fn check(url: &Url, ports: bool) -> Result<(), Forbidden> {
     if !matches!(url.scheme(), "http" | "https") {
         return forbidden("Only http and https links can be fetched.");
     }
@@ -121,7 +135,7 @@ pub fn check_url(url: &Url) -> Result<(), Forbidden> {
         return forbidden("Links with a user name or password can't be fetched.");
     }
     // `port()` is None for the scheme's own default
-    if url.port().is_some_and(|p| p != 80 && p != 443) {
+    if ports && url.port().is_some_and(|p| p != 80 && p != 443) {
         return forbidden("Only ports 80 and 443 can be fetched.");
     }
     match url.host() {
@@ -163,6 +177,52 @@ async fn lookup_public(host: &str) -> Result<Vec<SocketAddr>, LookupError> {
     Ok(addrs)
 }
 
+/// Why a connection through [`crate::proxy`] may not be made.
+#[derive(Debug)]
+pub(crate) enum TargetError {
+    /// The target is not a public address.
+    Forbidden,
+    /// It couldn't be resolved.
+    Failed(String),
+}
+
+/// The addresses to connect to for `host:port`, all public: the address itself if the host
+/// is one, else what the name resolves to (every answer must be public). `allow_private`
+/// skips the check, for the proxy's tests.
+pub(crate) async fn public_targets(
+    host: &str,
+    port: u16,
+    allow_private: bool,
+) -> Result<Vec<SocketAddr>, TargetError> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if allow_private || is_public_ip(ip) {
+            Ok(vec![SocketAddr::new(ip, port)])
+        } else {
+            Err(TargetError::Forbidden)
+        };
+    }
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    if !allow_private && (name == "localhost" || name.ends_with(".localhost")) {
+        return Err(TargetError::Forbidden);
+    }
+    let resolved = if allow_private {
+        tokio::net::lookup_host((name.as_str(), 0))
+            .await
+            .map(|found| found.collect::<Vec<_>>())
+            .map_err(|e| LookupError::Failed(e.to_string()))
+    } else {
+        lookup_public(&name).await
+    };
+    match resolved {
+        Ok(addrs) => Ok(addrs
+            .into_iter()
+            .map(|a| SocketAddr::new(a.ip(), port))
+            .collect()),
+        Err(LookupError::Forbidden) => Err(TargetError::Forbidden),
+        Err(LookupError::Failed(why)) => Err(TargetError::Failed(why)),
+    }
+}
+
 /// The resolver of the client behind [`fetch_public`]: the system's, minus any answer that
 /// isn't public. Because `wreq` connects to what this returns, a name can't be checked as one
 /// address and then connected to as another.
@@ -178,6 +238,51 @@ impl Resolve for PublicResolver {
             }
         })
     }
+}
+
+/// Whether the server may fetch `url` at all: what [`check_url`] refuses (bar the port), and a
+/// name that resolves to a private address. A lookup that fails is not a refusal (the fetch
+/// will say what went wrong). For the first link of a server-side fetch, so the cook can be
+/// told the link points somewhere private.
+pub async fn check_resolved(url: &Url) -> Result<(), Forbidden> {
+    check_any_port(url)?;
+    if let Some(Host::Domain(name)) = url.host()
+        && let Err(LookupError::Forbidden) = lookup_public(name).await
+    {
+        return forbidden("That host isn't public.");
+    }
+    Ok(())
+}
+
+/// [`check_url`] without the port rule, for a client that follows redirects by itself (each
+/// hop is checked with this; the name is caught by its resolver).
+pub fn check_target(url: &Url) -> Result<(), Forbidden> {
+    check_any_port(url)
+}
+
+/// The addresses `host` resolves to, only if every one is public: the resolver for a client
+/// that isn't wreq (the image fallback's `reqwest`).
+pub async fn resolve_public(host: &str) -> Result<Vec<SocketAddr>, String> {
+    lookup_public(host).await.map_err(|e| match e {
+        LookupError::Forbidden => "host resolves to a non-public address".to_string(),
+        LookupError::Failed(why) => why,
+    })
+}
+
+/// The redirect policy of the server's clients: at most [`MAX_REDIRECTS`], none to an address
+/// that isn't public or to `localhost`. (A name is caught by [`PublicResolver`] when the client
+/// connects.)
+pub fn server_redirects() -> wreq::redirect::Policy {
+    wreq::redirect::Policy::custom(|attempt| {
+        if attempt.previous.len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match Url::parse(&attempt.uri.to_string()).map(|u| check_any_port(&u)) {
+            Ok(Ok(())) => attempt.follow(),
+            Ok(Err(Forbidden(why))) => attempt.error(why),
+            Err(_) => attempt.error("the site redirected somewhere that isn't a valid link"),
+        }
+    })
 }
 
 /// Fetches `url` with `profile`, only from public web addresses: the address, every redirect
@@ -455,5 +560,32 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn the_servers_own_check_refuses_private_targets_on_any_port() {
+        for url in [
+            "http://127.0.0.1:3000/api",
+            "http://localhost:8080/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.1.2.3/",
+            "http://192.168.0.1:8443/",
+            "http://100.100.100.100/",
+            "http://[::1]:3000/",
+            "http://[fd00::1]/",
+            "http://user:pw@example.com/",
+            "file:///etc/passwd",
+        ] {
+            let url = Url::parse(url).unwrap();
+            assert!(
+                check_resolved(&url).await.is_err(),
+                "{url} should be refused"
+            );
+        }
+        // Public addresses pass, on the ports recipe sites really use too
+        for url in ["http://93.184.216.34:8080/r", "https://1.1.1.1/"] {
+            let url = Url::parse(url).unwrap();
+            assert_eq!(check_resolved(&url).await, Ok(()), "{url}");
+        }
     }
 }

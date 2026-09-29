@@ -485,7 +485,7 @@ async fn drop_dead_photo(state: &AppState, fields: &mut RecipeFields, page_url: 
     let Some(image) = fields.image.as_deref().filter(|i| !i.is_empty()) else {
         return false;
     };
-    if !crate::images::photo_is_dead(&state.http, image, Some(page_url)).await {
+    if !crate::images::photo_is_dead(state, image, Some(page_url)).await {
         return false;
     }
     fields.image = None;
@@ -500,7 +500,7 @@ async fn keep_shared_photo(state: &AppState, image: &mut Option<String>, share_u
     let Some(photo) = image.as_deref().filter(|i| served_by_share(i, share_url)) else {
         return;
     };
-    *image = crate::images::fetch_to_embed(&state.http, photo).await;
+    *image = crate::images::fetch_to_embed(state, photo).await;
 }
 
 /// Whether `image` is a file under the share at `share_url` (on its host, below its path).

@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path as UrlPath, Query};
@@ -439,7 +439,7 @@ pub async fn serve_photo(
     } else {
         Failure::Gone
     };
-    let original = match load_source(&state.http, &image, page_url.as_deref()).await {
+    let original = match load_source(state, &image, page_url.as_deref()).await {
         Ok(b) => b,
         Err(err) => {
             tracing::info!("[img] recipe {id}: {err}");
@@ -480,9 +480,32 @@ pub async fn serve_photo(
     }
 }
 
+/// The `reqwest` client of the image fallback for links the cook supplied: it connects only to
+/// public addresses, whether the link names one or a redirect does (the wreq clients do the
+/// same, see `crumb_fetch::guard`).
+fn guarded_http() -> &'static reqwest::Client {
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .dns_resolver(Arc::new(crate::scraper::PublicResolver))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 10 {
+                    attempt.error("too many redirects")
+                } else if crumb_fetch::check_target(attempt.url()).is_err() {
+                    attempt.error("redirected to a private address")
+                } else {
+                    attempt.follow()
+                }
+            }))
+            .build()
+            .expect("HTTP client")
+    });
+    &CLIENT
+}
+
 /// The original image bytes, from a `data:` URI or over HTTP.
 async fn load_source(
-    http: &reqwest::Client,
+    state: &AppState,
     image: &str,
     referer: Option<&str>,
 ) -> Result<Vec<u8>, LoadError> {
@@ -496,6 +519,12 @@ async fn load_source(
             "unsupported image URL scheme {}",
             parsed.scheme()
         )));
+    }
+    // A photo link is the recipe site's to name, so it can name anything: never the server's
+    // own network
+    let allow_private = state.config.scrape_allow_private;
+    if !allow_private && crumb_fetch::check_resolved(&parsed).await.is_err() {
+        return Err(LoadError::dead("the image link points somewhere private"));
     }
     // What a browser on the recipe's page would send; some CDNs refuse hotlinks without it
     let referer = referer.filter(|r| r.starts_with("http"));
@@ -511,6 +540,11 @@ async fn load_source(
             ),
         }
     }
+    let http = if allow_private {
+        &state.http
+    } else {
+        guarded_http()
+    };
     load_with_reqwest(http, parsed, referer).await
 }
 
@@ -684,11 +718,11 @@ async fn load_with_reqwest(
 /// Whether a new recipe's photo link is dead, fetched as the resizer would. Only a link the
 /// site itself refuses counts (see [`LoadError::dead`]); a slow or failing site gets the
 /// benefit of the doubt. An embedded photo is never dead here: it was read when kept.
-pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<&str>) -> bool {
+pub async fn photo_is_dead(state: &AppState, image: &str, referer: Option<&str>) -> bool {
     if image.starts_with("data:") {
         return false;
     }
-    match load_source(http, image, referer).await {
+    match load_source(state, image, referer).await {
         Ok(_) => false,
         Err(err) => {
             tracing::info!(
@@ -703,8 +737,8 @@ pub async fn photo_is_dead(http: &reqwest::Client, image: &str, referer: Option<
 
 /// Fetches a photo (as the resizer would) to keep in the recipe itself: a `data:` URI, or
 /// None when it can't be had or isn't a JPEG, PNG or WebP.
-pub async fn fetch_to_embed(http: &reqwest::Client, url: &str) -> Option<String> {
-    match load_source(http, url, None).await {
+pub async fn fetch_to_embed(state: &AppState, url: &str) -> Option<String> {
+    match load_source(state, url, None).await {
         Ok(bytes) => embed(&bytes),
         Err(err) => {
             tracing::info!(

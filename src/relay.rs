@@ -224,6 +224,7 @@ impl Relays {
             Fetched::Page {
                 status: reply.status,
                 html: reply.body,
+                link: None,
             },
         ))
     }
@@ -307,7 +308,7 @@ mod tests {
     }
 
     fn accepts_ok(fetched: &Fetched) -> bool {
-        matches!(fetched, Fetched::Page { status: 200, html } if !html.is_empty())
+        matches!(fetched, Fetched::Page { status: 200, html, .. } if !html.is_empty())
     }
 
     fn relays(urls: &[&str]) -> Relays {

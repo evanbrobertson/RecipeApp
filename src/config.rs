@@ -160,6 +160,14 @@ pub struct Config {
     pub open_signup: bool,
     /// With accounts, where `accounts.db` is (next to the database). None = in memory.
     pub accounts_db: Option<PathBuf>,
+    /// Where `sites.db` is (next to the database): what worked the last time a recipe was
+    /// read from each host (see `src/sites.rs`). None = in memory.
+    pub sites_db: Option<PathBuf>,
+    /// `SCRAPE_SITE_MEMORY=off`: don't remember (or use) how each site was read last time.
+    pub scrape_site_memory: bool,
+    /// Whether a link to a private address may be fetched. Off, always, outside the tests:
+    /// they serve recipes from `127.0.0.1`.
+    pub scrape_allow_private: bool,
     /// Hosted: the auth service's internal URL (`AUTH_SERVICE_URL`), e.g.
     /// `http://crumb-auth.railway.internal:3100`.
     pub auth_service_url: Option<String>,
@@ -230,6 +238,9 @@ impl Default for Config {
             auth_mode: AuthMode::Password,
             open_signup: false,
             accounts_db: None,
+            sites_db: None,
+            scrape_site_memory: true,
+            scrape_allow_private: false,
             auth_service_url: None,
             auth_internal_secret: None,
             hosted_home_owner: None,
@@ -378,6 +389,9 @@ impl Config {
             accounts_db: Some(crate::accounts::accounts_db_path(
                 &crate::db::database_path(),
             )),
+            sites_db: Some(crate::sites::sites_db_path(&crate::db::database_path())),
+            scrape_site_memory: !switched_off("SCRAPE_SITE_MEMORY"),
+            scrape_allow_private: false,
             auth_service_url: env(&["AUTH_SERVICE_URL"]).map(|u| u.trim_end_matches('/').into()),
             auth_internal_secret: env(&["AUTH_INTERNAL_SECRET"]),
             hosted_home_owner: env(&["HOSTED_HOME_OWNER"]),

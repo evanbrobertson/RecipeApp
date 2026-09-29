@@ -2,7 +2,11 @@
 //!
 //! - **WordPress**: most recipe blogs run WordPress, whose REST API is often left open when the
 //!   pages are behind a bot check. The post's content holds the recipe card, and WP Recipe Maker
-//!   (WPRM) also serves the card as structured data.
+//!   (WPRM) and Mediavine Create also serve it as structured data; a site's recipe post type may
+//!   serve the whole schema.org recipe (`recipe_schema`). Where the API is, and which post, comes
+//!   from the page when it was fetched (see [`super::platforms`]), else it is asked by slug.
+//!   Also asked first, or beside the page, for a site known to be WordPress (see
+//!   [`super::scrape_plan`]).
 //! - **Archive**: the Internet Archive's newest copy of the page.
 //!
 //! Both are kept to the page they were asked for: the recipe's source stays the original link.
@@ -14,10 +18,15 @@ use serde_json::Value;
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use super::platforms::{
+    WpLead, WpRoot, mediavine_id, recipe_from_tasty_markup, recipe_from_wprm_fallback,
+    wprm_recipe_id,
+};
 use super::{
-    Fetched, MAX_PAGE_BYTES, Method, ReadError, Scraped, block_lines, compute_additional_time,
-    decode_text, fetch_wreq, finish, format_duration, is_block_status, notes_from_html,
-    parse_recipe_html, read_capped, sel, text_of, video_from_html, wreq_client,
+    ApiNote, Fetched, MAX_PAGE_BYTES, Method, ReadError, Scraped, block_lines,
+    compute_additional_time, decode_text, fetch_wreq, finish, format_duration, is_block_status,
+    notes_from_html, parse_recipe_html, read_capped, recipe_from_json_ld, sel, text_of,
+    video_from_html, wreq_client,
 };
 use crate::model::{RecipeFields, Section};
 
@@ -29,12 +38,23 @@ const ARCHIVE_TIMEOUT: Duration = Duration::from_secs(25);
 
 // ---------- WordPress ----------
 
+/// The fields asked of a post: its address (to tell it from another post with the same slug),
+/// its title and content, and `recipe_schema`, which some sites' recipe post types serve as a
+/// whole schema.org Recipe. A field a site doesn't have is left out of the answer.
+const POST_FIELDS: &str = "_fields=link,title,content,recipe_schema";
+
 /// The recipe in the site's own WordPress REST API, or why there isn't one (for the log).
-pub async fn fetch_wordpress(url: &str) -> Fetched {
-    match read_wordpress(url).await {
-        Ok(recipe) => Fetched::Recipe(Box::new(Scraped {
-            recipe,
+/// `lead` is what is already known of the site's API: from site memory, or from the page's
+/// `Link` header and head (see [`super::platforms::wp_lead`]).
+pub async fn fetch_wordpress(url: &str, lead: Option<WpLead>) -> Fetched {
+    match read_wordpress(url, lead.unwrap_or_default()).await {
+        Ok(read) => Fetched::Recipe(Box::new(Scraped {
+            recipe: read.recipe,
             crumb: None,
+            api: Some(ApiNote {
+                root: read.root.as_address(),
+                kind: read.kind,
+            }),
         })),
         Err(why) => {
             tracing::debug!(
@@ -46,39 +66,181 @@ pub async fn fetch_wordpress(url: &str) -> Fetched {
     }
 }
 
-async fn read_wordpress(url: &str) -> Result<RecipeFields, String> {
+/// What the API gave: the recipe, where the API is and which of the site's plugins had it.
+struct Read {
+    recipe: RecipeFields,
+    root: WpRoot,
+    kind: &'static str,
+}
+
+async fn read_wordpress(url: &str, lead: WpLead) -> Result<Read, String> {
     let page = url::Url::parse(url).map_err(|e| e.to_string())?;
-    let origin = page.origin().ascii_serialization();
-    let slug = slug_of(&page).ok_or("the link has no post name")?;
-    let posts = get_json(&format!(
-        "{origin}/wp-json/wp/v2/posts?slug={slug}&_fields=link,title,content"
-    ))
-    .await?;
-    let post = find_post(&posts, url).ok_or("no post at that link")?;
-    // The structured card is a bonus: the post's own markup still gives a recipe without it
-    let card = match wprm_recipe_id(&post.content) {
-        Some(id) => get_json(&format!("{origin}/wp-json/wp/v2/wprm_recipe/{id}"))
-            .await
-            .ok(),
-        None => None,
-    };
-    recipe_from_post(&post, url, card.as_ref()).ok_or_else(|| "no recipe in the post".into())
+    let root = lead
+        .root
+        .clone()
+        .unwrap_or_else(|| WpRoot::at_origin(&page.origin().ascii_serialization()));
+    let mut api = Api::new(root);
+    let post = api.find_post(&page, url, lead.post.as_ref()).await?;
+
+    // The recipe plugins' own data are a bonus: the post's content still gives a recipe
+    // without them. A site's recipe post type that carries the whole recipe needs neither.
+    let mut cards = Cards::default();
+    if post.schema.is_none() {
+        if let Some(id) = wprm_recipe_id(&post.content) {
+            cards.wprm = api.get(&format!("/wp/v2/wprm_recipe/{id}"), "").await.ok();
+        }
+        if let Some(id) = mediavine_id(&post.content) {
+            cards.mediavine = api
+                .get(&format!("/mv-create/v1/creations/{id}/json_ld"), "")
+                .await
+                .ok();
+        }
+    }
+    let (recipe, kind) = recipe_from_post(&post, url, &cards).ok_or("no recipe in the post")?;
+    Ok(Read {
+        recipe,
+        root: api.root,
+        kind,
+    })
+}
+
+/// Why a REST call gave no JSON.
+enum Miss {
+    /// Not served here: a 404, or a page instead of JSON. The other form of the API's
+    /// address may be.
+    NotFound(String),
+    Other(String),
+}
+
+impl Miss {
+    fn why(self) -> String {
+        match self {
+            Miss::NotFound(why) | Miss::Other(why) => why,
+        }
+    }
 }
 
 /// A JSON answer from a REST endpoint. A refusal is retried with the other browser profile.
-async fn get_json(url: &str) -> Result<Value, String> {
+async fn get_json(url: &str) -> Result<Value, Miss> {
     for method in [Method::Firefox, Method::Safari] {
         match fetch_wreq(method, url).await {
-            Fetched::Page { status, html } if (200..300).contains(&status) => {
-                return serde_json::from_str(&html).map_err(|_| "the answer wasn't JSON".into());
+            Fetched::Page { status, html, .. } if (200..300).contains(&status) => {
+                return serde_json::from_str(&html)
+                    .map_err(|_| Miss::NotFound("the answer wasn't JSON".into()));
             }
             Fetched::Page { status, .. } if is_block_status(status) => continue,
-            Fetched::Page { status, .. } => return Err(format!("responded with {status}")),
-            Fetched::Unreachable(why) => return Err(why),
+            Fetched::Page { status: 404, .. } => {
+                return Err(Miss::NotFound("responded with 404".into()));
+            }
+            Fetched::Page { status, .. } => {
+                return Err(Miss::Other(format!("responded with {status}")));
+            }
+            Fetched::Unreachable(why) => return Err(Miss::Other(why)),
             Fetched::Recipe(_) => unreachable!("a wreq fetch gives pages"),
         }
     }
-    Err("refused".into())
+    Err(Miss::Other("refused".into()))
+}
+
+/// A site's REST API, asked politely: one request at a time.
+struct Api {
+    root: WpRoot,
+    /// Something answered, so the address is right and needs no second form.
+    confirmed: bool,
+}
+
+impl Api {
+    fn new(root: WpRoot) -> Self {
+        Self {
+            root,
+            confirmed: false,
+        }
+    }
+
+    /// `route` (`/wp/v2/posts`) with its query. Until something has answered, a 404 is tried
+    /// once more the other way round: a site without pretty permalinks serves `/wp-json/...`
+    /// only as `/?rest_route=/...`.
+    async fn get(&mut self, route: &str, query: &str) -> Result<Value, String> {
+        match get_json(&self.root.endpoint(route, query)).await {
+            Ok(v) => {
+                self.confirmed = true;
+                Ok(v)
+            }
+            Err(Miss::NotFound(why)) if !self.confirmed => {
+                let other = self.root.other_form();
+                match get_json(&other.endpoint(route, query)).await {
+                    Ok(v) => {
+                        self.root = other;
+                        self.confirmed = true;
+                        Ok(v)
+                    }
+                    Err(_) => Err(why),
+                }
+            }
+            Err(miss) => Err(miss.why()),
+        }
+    }
+
+    /// The post at `url`: its own endpoint when the page named it, else a search by slug in
+    /// the posts and then in a recipe post type of the site's.
+    async fn find_post(
+        &mut self,
+        page: &url::Url,
+        url: &str,
+        named: Option<&(String, u64)>,
+    ) -> Result<Post, String> {
+        if let Some((base, id)) = named
+            && let Ok(v) = self.get(&format!("/wp/v2/{base}/{id}"), POST_FIELDS).await
+            && let Some(post) = post_from_object(&v)
+        {
+            return Ok(post);
+        }
+        let slug = slug_of(page).ok_or("the link has no post name")?;
+        let query = format!("slug={slug}&{POST_FIELDS}");
+        let mut last = "no post at that link".to_string();
+        match self.get("/wp/v2/posts", &query).await {
+            Ok(posts) => {
+                if let Some(post) = find_post(&posts, url) {
+                    return Ok(post);
+                }
+            }
+            Err(why) => last = why,
+        }
+        // Some sites keep recipes in a post type of their own (Taste of Home's `recipe`)
+        for base in self.recipe_types().await {
+            if let Ok(found) = self.get(&format!("/wp/v2/{base}"), &query).await
+                && let Some(post) = find_post(&found, url)
+            {
+                return Ok(post);
+            }
+        }
+        Err(last)
+    }
+
+    /// The `rest_base` of the site's post types that look like recipes (`recipe` at least).
+    async fn recipe_types(&mut self) -> Vec<String> {
+        let mut bases = vec!["recipe".to_string()];
+        if let Ok(types) = self.get("/wp/v2/types", "").await
+            && let Some(types) = types.as_object()
+        {
+            for t in types.values() {
+                let Some(base) = t.get("rest_base").and_then(Value::as_str) else {
+                    continue;
+                };
+                if base.contains("recipe")
+                    && !base.starts_with("wprm_")
+                    && !bases.iter().any(|b| b == base)
+                    && base
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                {
+                    bases.push(base.to_string());
+                }
+            }
+        }
+        bases.truncate(3);
+        bases
+    }
 }
 
 /// The post's name in its address: the last part of the path ("/2020/11/21/gingerbread/"
@@ -108,63 +270,118 @@ fn same_page(a: &str, b: &str) -> bool {
 struct Post {
     title: String,
     content: String,
+    /// The whole recipe as schema.org data, when the post type serves it (`recipe_schema`).
+    schema: Option<Value>,
 }
 
-/// The post at `url` among the API's answers for its slug (another post can share a slug
-/// under another date, so the link decides).
-fn find_post(posts: &Value, url: &str) -> Option<Post> {
-    let rendered = |post: &Value, key: &str| {
+/// A post from the API's object for it. `None` when it has neither content nor a schema.
+fn post_from_object(post: &Value) -> Option<Post> {
+    let rendered = |key: &str| {
         post.get(key)
             .and_then(|v| v.get("rendered"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string()
     };
+    // As data, or as the JSON text of it
+    let schema = match post.get("recipe_schema") {
+        None => None,
+        Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+        Some(other) => Some(other.clone()),
+    }
+    .filter(|s| s.is_object() || s.is_array());
+    let content = rendered("content");
+    (!content.trim().is_empty() || schema.is_some()).then(|| Post {
+        title: rendered("title"),
+        content,
+        schema,
+    })
+}
+
+/// The post at `url` among the API's answers for its slug (another post can share a slug
+/// under another date, so the link decides).
+fn find_post(posts: &Value, url: &str) -> Option<Post> {
     let post = posts.as_array()?.iter().find(|p| {
         p.get("link")
             .and_then(Value::as_str)
             .is_some_and(|link| same_page(link, url))
     })?;
-    let content = rendered(post, "content");
-    (!content.trim().is_empty()).then(|| Post {
-        title: rendered(post, "title"),
-        content,
-    })
+    post_from_object(post)
 }
 
-/// The id of the WPRM recipe card in a post's content.
-fn wprm_recipe_id(content: &str) -> Option<u64> {
-    static ID: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?:wprm-recipe-container-|data-recipe-id=["'])(\d+)"#).unwrap()
-    });
-    ID.captures(content)?[1].parse().ok()
+/// What the recipe plugins' own endpoints gave for a post.
+#[derive(Default)]
+struct Cards {
+    /// WP Recipe Maker's card data (`/wp/v2/wprm_recipe/{id}`).
+    wprm: Option<Value>,
+    /// Mediavine Create's JSON-LD (`/mv-create/v1/creations/{id}/json_ld`).
+    mediavine: Option<Value>,
 }
 
-/// The recipe in a post: the WPRM data when the API gave it, filled in from the card's markup
-/// (or any microdata) in the post's content.
-fn recipe_from_post(post: &Post, url: &str, wprm: Option<&Value>) -> Option<RecipeFields> {
+/// The recipe in a post, and which plugin's data it came from (for site memory): a schema the
+/// post type serves whole; else Mediavine's JSON-LD; else WPRM's data filled in from the
+/// card's markup; else the markup alone (JSON-LD or microdata in the content, which WPZOOM's
+/// blocks and others leave, then WPRM's, Tasty's and WPRM's fallback card).
+fn recipe_from_post(post: &Post, url: &str, cards: &Cards) -> Option<(RecipeFields, &'static str)> {
+    let found = |mut recipe: RecipeFields, kind| {
+        if recipe.title == UNTITLED {
+            recipe.title = decode_text(&post.title);
+            if recipe.title.is_empty() {
+                recipe.title = UNTITLED.into();
+            }
+        }
+        recipe.url = Some(url.to_string());
+        Some((recipe, kind))
+    };
+    if let Some(recipe) = post
+        .schema
+        .as_ref()
+        .and_then(|schema| recipe_from_json_ld(schema, url))
+    {
+        return found(recipe, "recipe_schema");
+    }
+    if let Some(recipe) = cards
+        .mediavine
+        .as_ref()
+        .and_then(|data| recipe_from_json_ld(data, url))
+    {
+        return found(recipe, "mediavine");
+    }
+
     let page = format!(
         "<!doctype html><html><head><title>{}</title></head><body>{}</body></html>",
         post.title, post.content
     );
+    let doc = Html::parse_document(&page);
     let markup = parse_recipe_html(&page, url)
-        .or_else(|| recipe_from_wprm_markup(&Html::parse_document(&page), url));
-    let mut recipe = match (wprm.and_then(|data| recipe_from_wprm(data, url)), markup) {
-        (Some(mut recipe), Some(markup)) => {
+        .map(|r| {
+            (
+                r,
+                if page.contains("ld+json") {
+                    "json-ld"
+                } else {
+                    "microdata"
+                },
+            )
+        })
+        .or_else(|| recipe_from_wprm_markup(&doc, url).map(|r| (r, "wprm-markup")))
+        .or_else(|| recipe_from_tasty_markup(&doc, url).map(|r| (r, "tasty")))
+        .or_else(|| recipe_from_wprm_fallback(&doc, url).map(|r| (r, "wprm-fallback")));
+    match (
+        cards
+            .wprm
+            .as_ref()
+            .and_then(|data| recipe_from_wprm(data, url)),
+        markup,
+    ) {
+        (Some(mut recipe), Some((markup, _))) => {
             fill_from(&mut recipe, markup);
-            recipe
+            found(recipe, "wprm")
         }
-        (Some(only), None) | (None, Some(only)) => only,
-        (None, None) => return None,
-    };
-    if recipe.title == UNTITLED {
-        recipe.title = decode_text(&post.title);
-        if recipe.title.is_empty() {
-            recipe.title = UNTITLED.into();
-        }
+        (Some(only), None) => found(only, "wprm"),
+        (None, Some((only, kind))) => found(only, kind),
+        (None, None) => None,
     }
-    recipe.url = Some(url.to_string());
-    Some(recipe)
 }
 
 /// Gives `recipe` what it lacks from `other`.
@@ -443,6 +660,7 @@ pub async fn fetch_archive(url: &str) -> Fetched {
         return Fetched::Page {
             status,
             html: String::new(),
+            link: None,
         };
     }
     // Where the archive redirected to names the copy's date
@@ -455,6 +673,7 @@ pub async fn fetch_archive(url: &str) -> Fetched {
         Ok(body) => Fetched::Page {
             status,
             html: String::from_utf8_lossy(&body).into_owned(),
+            link: None,
         },
         Err(ReadError::TooLarge) => Fetched::Unreachable("page too large".into()),
         Err(ReadError::Failed(e)) => Fetched::Unreachable(e),
@@ -537,19 +756,6 @@ mod tests {
         assert!(find_post(&json!({"code": "rest_no_route"}), URL).is_none());
         let empty = json!([{"link": URL, "content": {"rendered": "  "}}]);
         assert!(find_post(&empty, URL).is_none());
-    }
-
-    #[test]
-    fn finds_the_card_id() {
-        assert_eq!(
-            wprm_recipe_id(r#"<div id="wprm-recipe-container-16841" class="x">"#),
-            Some(16841)
-        );
-        assert_eq!(
-            wprm_recipe_id(r#"<div class="wprm-recipe" data-recipe-id="77">"#),
-            Some(77)
-        );
-        assert_eq!(wprm_recipe_id("<p>no card</p>"), None);
     }
 
     /// Hand-written in the shape of WPRM's REST data.
@@ -658,13 +864,15 @@ mod tests {
         Post {
             title: "Ginger Cookies!".into(),
             content: CONTENT.into(),
+            schema: None,
         }
     }
 
     #[test]
     fn reads_a_recipe_from_the_posts_card_markup() {
         // No card data: the markup alone, like a page with no JSON-LD
-        let r = recipe_from_post(&post(), URL, None).unwrap();
+        let (r, kind) = recipe_from_post(&post(), URL, &Cards::default()).unwrap();
+        assert_eq!(kind, "wprm-markup");
         assert_eq!(r.url.as_deref(), Some(URL));
         assert_eq!(r.title, "Ginger Cookies");
         assert_eq!(r.description.as_deref(), Some("Soft and spicy."));
@@ -688,7 +896,12 @@ mod tests {
     fn the_cards_data_wins_and_the_markup_fills_the_gaps() {
         let data = json!({"recipe": {"name": "Ginger Cookies (data)", "prep_time": 20,
             "ingredients": [{"ingredients": [{"amount": "3", "name": "eggs"}]}]}});
-        let r = recipe_from_post(&post(), URL, Some(&data)).unwrap();
+        let cards = Cards {
+            wprm: Some(data),
+            ..Default::default()
+        };
+        let (r, kind) = recipe_from_post(&post(), URL, &cards).unwrap();
+        assert_eq!(kind, "wprm");
         assert_eq!(r.title, "Ginger Cookies (data)");
         assert_eq!(r.prep_time.as_deref(), Some("20m"));
         assert_eq!(r.ingredients.len(), 1);
@@ -705,8 +918,9 @@ mod tests {
         let post = Post {
             title: "Mac &amp; Cheese".into(),
             content: "<div class=\"wprm-recipe-ingredient-group\"><ul><li class=\"wprm-recipe-ingredient\">1 lb macaroni</li></ul></div>".into(),
+            schema: None,
         };
-        let r = recipe_from_post(&post, URL, None).unwrap();
+        let (r, _) = recipe_from_post(&post, URL, &Cards::default()).unwrap();
         assert_eq!(r.title, "Mac & Cheese");
         assert_eq!(r.ingredients[0].items, ["1 lb macaroni"]);
     }
@@ -716,8 +930,202 @@ mod tests {
         let post = Post {
             title: "Life update".into(),
             content: "<p>We moved house.</p>".into(),
+            schema: None,
         };
-        assert!(recipe_from_post(&post, URL, None).is_none());
+        assert!(recipe_from_post(&post, URL, &Cards::default()).is_none());
+    }
+
+    fn content_post(content: &str) -> Post {
+        Post {
+            title: "Some Post".into(),
+            content: content.into(),
+            schema: None,
+        }
+    }
+
+    /// A schema.org Recipe as a site's recipe post type serves it (hand-written).
+    fn schema() -> Value {
+        json!({"@context": "https://schema.org", "@type": "Recipe", "name": "Stuffed Peppers",
+            "recipeYield": "4 servings", "prepTime": "PT20M", "cookTime": "PT45M",
+            "recipeIngredient": ["4 bell peppers", "1 cup cooked rice"],
+            "recipeInstructions": [{"@type": "HowToStep", "text": "Fill the peppers."},
+                                   {"@type": "HowToStep", "text": "Bake."}]})
+    }
+
+    #[test]
+    fn a_recipe_post_type_serving_its_schema_is_read_as_json_ld() {
+        // As an object, or as the JSON text of one
+        for schema in [schema(), Value::String(schema().to_string())] {
+            let posts = json!([{"link": URL, "title": {"rendered": "Peppers"},
+                "content": {"rendered": ""}, "recipe_schema": schema}]);
+            let post = find_post(&posts, URL).expect("a schema stands in for content");
+            let (r, kind) = recipe_from_post(&post, URL, &Cards::default()).unwrap();
+            assert_eq!(kind, "recipe_schema");
+            assert_eq!(r.title, "Stuffed Peppers");
+            assert_eq!(
+                r.ingredients[0].items,
+                ["4 bell peppers", "1 cup cooked rice"]
+            );
+            assert_eq!(r.instructions[0].items, ["Fill the peppers.", "Bake."]);
+            assert_eq!(r.prep_time.as_deref(), Some("20m"));
+            assert_eq!(r.url.as_deref(), Some(URL));
+        }
+        // Junk in the field is no schema
+        let posts = json!([{"link": URL, "content": {"rendered": "  "}, "recipe_schema": "nope"}]);
+        assert!(find_post(&posts, URL).is_none());
+    }
+
+    #[test]
+    fn mediavine_json_ld_becomes_the_recipe() {
+        // What /mv-create/v1/creations/{id}/json_ld answers (hand-written)
+        let cards = Cards {
+            mediavine: Some(schema()),
+            ..Default::default()
+        };
+        let post =
+            content_post(r#"<div id="mv-creation-903" class="mv-create-wrapper">card</div>"#);
+        assert_eq!(mediavine_id(&post.content), Some(903));
+        let (r, kind) = recipe_from_post(&post, URL, &cards).unwrap();
+        assert_eq!(kind, "mediavine");
+        assert_eq!(r.title, "Stuffed Peppers");
+        assert_eq!(r.recipe_yield.as_deref(), Some("4 servings"));
+        assert_eq!(r.instructions[0].items.len(), 2);
+    }
+
+    #[test]
+    fn json_ld_left_in_the_content_is_read() {
+        // WPZOOM's Recipe Card blocks write the structured data into the block's content
+        let post = content_post(&format!(
+            r#"<div class="wp-block-wpzoom-recipe-card-block-recipe-card"><script type="application/ld+json">{}</script></div>"#,
+            schema()
+        ));
+        let (r, kind) = recipe_from_post(&post, URL, &Cards::default()).unwrap();
+        assert_eq!(kind, "json-ld");
+        assert_eq!(r.title, "Stuffed Peppers");
+    }
+
+    #[test]
+    fn a_tasty_card_in_the_content_is_read() {
+        let post = content_post(
+            r#"<div class="tasty-recipes"><h2 class="tasty-recipes-title">Skillet Pie</h2>
+               <div class="tasty-recipes-ingredients-body"><ul>
+                 <li><span data-amount="2" data-unit="cups">2 cups</span> flour</li></ul></div>
+               <div class="tasty-recipes-instructions-body"><ol><li>Bake.</li></ol></div></div>"#,
+        );
+        let (r, kind) = recipe_from_post(&post, URL, &Cards::default()).unwrap();
+        assert_eq!(kind, "tasty");
+        assert_eq!(r.title, "Skillet Pie");
+        assert_eq!(r.ingredients[0].items, ["2 cups flour"]);
+    }
+
+    #[test]
+    fn the_wprm_fallback_card_and_its_comment_marker_are_read() {
+        // Just One Cookbook's REST content: a comment marker and the fallback card, no
+        // container id and no JSON-LD
+        let post = content_post(
+            r#"<p>Intro.</p><!--WPRM Recipe 4521-->
+               <div class="wprm-fallback-recipe"><h2 class="wprm-fallback-recipe-name">Miso Soup</h2>
+               <ul class="wprm-fallback-recipe-ingredients"><li class="wprm-fallback-recipe-ingredient">4 cups dashi</li></ul>
+               <ol class="wprm-fallback-recipe-instructions"><li class="wprm-fallback-recipe-instruction">Warm it.</li></ol></div>"#,
+        );
+        assert_eq!(wprm_recipe_id(&post.content), Some(4521));
+        let (r, kind) = recipe_from_post(&post, URL, &Cards::default()).unwrap();
+        assert_eq!(kind, "wprm-fallback");
+        assert_eq!(r.title, "Miso Soup");
+        assert_eq!(r.instructions[0].items, ["Warm it."]);
+    }
+
+    /// Answers each request with `answer(path_and_query)`: (status, body). Returns the origin.
+    async fn serve_paths(answer: fn(&str) -> (u16, String)) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let (status, body) = answer(&path);
+                    let response = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        origin
+    }
+
+    #[tokio::test]
+    async fn a_site_without_wp_json_is_asked_through_rest_route() {
+        // /wp-json is a 404 page; the same API answers under ?rest_route=
+        let origin = serve_paths(|path| {
+            if path.starts_with("/?rest_route=/wp/v2/posts") {
+                let link = "http://SITE/2020/11/21/ginger-cookies/";
+                (
+                    200,
+                    json!([{"link": link, "title": {"rendered": "Peppers"},
+                        "content": {"rendered": ""}, "recipe_schema": schema()}])
+                    .to_string(),
+                )
+            } else {
+                (404, "<html>not found</html>".into())
+            }
+        })
+        .await;
+        // The site's own links name the same host as the pasted one
+        let url = format!("{origin}/2020/11/21/ginger-cookies/");
+        let host = origin.trim_start_matches("http://");
+        let mut api = Api::new(WpRoot::at_origin(&origin));
+        let posts = api
+            .get("/wp/v2/posts", "slug=ginger-cookies")
+            .await
+            .expect("the query form answers");
+        assert!(api.root.is_query_form());
+        let text = posts.to_string().replace("SITE", host);
+        let posts: Value = serde_json::from_str(&text).unwrap();
+        assert!(find_post(&posts, &url).is_some());
+    }
+
+    #[tokio::test]
+    async fn the_post_the_page_named_is_fetched_by_id_and_a_missing_api_is_an_error() {
+        let origin = serve_paths(|path| {
+            if path.starts_with("/wp-json/wp/v2/recipe/77") {
+                (
+                    200,
+                    json!({"link": "http://x.test/r", "title": {"rendered": "Peppers"},
+                        "content": {"rendered": ""}, "recipe_schema": schema()})
+                    .to_string(),
+                )
+            } else {
+                (404, "{}".into())
+            }
+        })
+        .await;
+        let url = format!("{origin}/some/other-name/");
+        let lead = WpLead {
+            root: None,
+            post: Some(("recipe".into(), 77)),
+        };
+        let read = read_wordpress(&url, lead).await.expect("read by its id");
+        assert_eq!(read.kind, "recipe_schema");
+        assert_eq!(read.recipe.title, "Stuffed Peppers");
+        assert!(!read.root.is_query_form());
+
+        // Nothing there at all
+        let dead = serve_paths(|_| (404, "nope".into())).await;
+        let err = read_wordpress(&format!("{dead}/a/b/"), WpLead::default())
+            .await
+            .err()
+            .expect("no API");
+        assert!(!err.is_empty());
     }
 
     #[test]

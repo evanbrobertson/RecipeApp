@@ -58,6 +58,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
+# Paused time, for the hedging tests
+tokio = { version = "1", features = ["test-util"] }
 # Captures what would be sent to Sentry, for the telemetry tests
 sentry = { version = "0.49", default-features = false, features = ["test"] }
 
