@@ -32,6 +32,29 @@ fn lines(json: &str) -> Vec<String> {
     parse(json).unwrap_or_default()
 }
 
+/// A full date as the web's `toLocaleDateString([], {day, month:"short", year:"numeric"})`
+/// prints it in en-US: "Mar 11, 2025". `ms` is Unix milliseconds; `offset_minutes` is the
+/// viewer's UTC offset (east positive), so the date is their local one. This is the `day()`
+/// of `MoreSettings.svelte` (a shared link) and `AccountPage.svelte` (a connected app).
+///
+/// TODO: this belongs in `crumb-core` beside `home::day_label`, for every client.
+pub fn date_label(ms: i64, offset_minutes: i32) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    // Days since the Unix epoch in the viewer's local time (Howard Hinnant's civil_from_days).
+    let days = (ms + i64::from(offset_minutes) * 60_000).div_euclid(86_400_000) + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{} {}, {}", MONTHS[(month - 1) as usize], day, year)
+}
+
 /// A shelf book from `{id, name, color, recipeCount}`.
 fn shelf_book(json: &str) -> Option<books::ShelfBook> {
     parse(json)
@@ -242,6 +265,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "cookProgress"]
         fn cook_progress(self: &Core, step: i32, steps: i32) -> QString;
+        /// "Mar 11, 2025": a local calendar date, for a shared link or a connected app.
+        #[qinvokable]
+        #[cxx_name = "dateLabel"]
+        fn date_label(self: &Core, ms: f64, offset_minutes: i32) -> QString;
 
         // ─── Add box ───
         /// `{mode, summary}`: mode is auto, link, text or scratch.
@@ -451,6 +478,9 @@ impl qobject::Core {
             (step >= 0).then_some(i64::from(step)),
             (steps >= 0).then_some(i64::from(steps)),
         )))
+    }
+    pub fn date_label(&self, ms: f64, offset: i32) -> QString {
+        q(date_label(ms as i64, offset))
     }
 
     pub fn detect(&self, text: QString) -> QString {
@@ -665,6 +695,16 @@ impl qobject::Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_cross_as_the_webs_en_us() {
+        // 2025-03-11T00:00:00Z
+        assert_eq!(date_label(1_741_651_200_000, 0), "Mar 11, 2025");
+        // 2025-03-11T23:30:00Z: +120 minutes rolls into the 12th
+        assert_eq!(date_label(1_741_735_800_000, 120), "Mar 12, 2025");
+        // A leap day
+        assert_eq!(date_label(1_709_208_000_000, 0), "Feb 29, 2024");
+    }
 
     #[test]
     fn books_cross_as_json() {
