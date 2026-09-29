@@ -417,6 +417,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "metaFields"]
         fn meta_fields(self: &Core) -> QString;
+        /// A device's user agent as "Firefox on Linux" (`""` for an unknown one).
+        #[qinvokable]
+        #[cxx_name = "deviceName"]
+        fn device_name(self: &Core, agent: QString) -> QString;
     }
 }
 
@@ -541,6 +545,9 @@ impl qobject::Core {
             &refs,
             some(&link.to_string()),
         ))
+    }
+    pub fn device_name(&self, agent: QString) -> QString {
+        q(client::device_name(some(&agent.to_string())))
     }
     pub fn video_embed(&self, url: QString) -> QString {
         q(out(embed::video_embed(&url.to_string())))
