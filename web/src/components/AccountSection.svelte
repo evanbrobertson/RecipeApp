@@ -45,8 +45,8 @@
   let confirming = $state<string | null>(null)
   let inviting = $state(false)
   let inviteEmail = $state("")
-  /** The last link made, to copy (self-hosted invites are only ever links). */
-  let madeLink = $state<string | null>(null)
+  /** Self-hosted links made here, by invite id: the server only keeps a hash of the token. */
+  let links = $state<Record<string, string>>({})
   let renaming = $state(false)
   let newName = $state("")
 
@@ -144,10 +144,10 @@
     busy = false
   }
 
-  async function copy(url: string) {
+  async function copy(url: string, description?: string) {
     try {
       await navigator.clipboard.writeText(url)
-      toast({ title: "Invite link copied" })
+      toast({ title: "Invite link copied", description })
     } catch {
       toast({ title: "Couldn't copy", tone: "error" })
     }
@@ -158,14 +158,14 @@
     busy = true
     try {
       const made = await client!.invite(hosted ? inviteEmail.trim() : undefined)
-      madeLink = made.url
+      links[made.id] = made.url
       await loadHousehold()
       if (hosted) {
         toast({ title: `Invite sent to ${inviteEmail.trim()}` })
         inviteEmail = ""
         inviting = false
       } else {
-        await copy(made.url)
+        await copy(made.url, "Works once, for a week. Send it to who you're inviting.")
       }
     } catch (err) {
       toast({ title: errorMessage(err, "Couldn't make an invite"), tone: "error" })
@@ -216,6 +216,8 @@
       busy = false
     }
   }
+
+  const linkFor = (i: PendingInvite) => i.url ?? links[i.id]
 
   const inviteMeta = (i: PendingInvite) =>
     [i.email ?? (i.createdBy ? `Link made by ${i.createdBy}` : "Invite link"), `until ${day(i.expiresAt)}`].join(
@@ -329,166 +331,50 @@
   {#if household}
     <section>
       <h2 class="settings-heading" id="household-title">Household</h2>
-      <div class="list-card" role="group" aria-labelledby="household-title">
-        <div class="list-row settings-row">
-          <House class="settings-icon" />
-          {#if renaming}
-            <form class="flex min-w-0 flex-1 gap-2" onsubmit={rename}>
-              <label class="sr-only" for="household-name">Household name</label>
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                id="household-name"
-                class="input min-w-0 flex-1"
-                maxlength="80"
-                bind:value={newName}
-                autofocus
-                required
-              />
-              <button type="submit" class="btn btn-ghost" disabled={busy}>Save</button>
-            </form>
-          {:else}
-            <span class="min-w-0 flex-1">
-              <span class="block truncate font-bold">{household.name}</span>
-              <span class="text-ink-muted block text-sm">
-                {household.members.length === 1
-                  ? "Just you"
-                  : `${household.members.length} people share these recipes`}
-              </span>
-            </span>
-            {#if owner}
-              <button
-                type="button"
-                class="btn btn-ghost btn-icon flex-none"
-                aria-label="Rename the household"
-                title="Rename"
-                onclick={() => {
-                  newName = household!.name
-                  renaming = true
-                }}
-              >
-                <Pencil />
-              </button>
-            {/if}
-          {/if}
-        </div>
-        {#each household.members as m (m.id)}
-          <div class="list-row settings-row flex-wrap">
-            <UserRound class="settings-icon" />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate font-bold">{m.you ? `${m.name} (you)` : m.name}</span>
-              <span class="text-ink-muted block truncate text-sm">
-                {m.role === "owner" ? "Owner" : "Member"} · {m.email}
-              </span>
-            </span>
-            {#if owner && !m.you && m.role !== "owner"}
-              {#if confirming === `remove:${m.id}`}
-                <span class="flex w-full flex-wrap items-center justify-end gap-2 pl-[2.125rem]">
-                  <span class="text-ink-muted mr-auto text-sm">
-                    They lose these recipes. Their account stays.
-                  </span>
-                  <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
-                    Keep
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-danger"
-                    disabled={busy}
-                    onclick={() => removeMember(m)}
-                  >
-                    Remove
-                  </button>
+      <div class="space-y-3">
+        <div class="list-card" role="group" aria-labelledby="household-title">
+          <div class="list-row settings-row">
+            <House class="settings-icon" />
+            {#if renaming}
+              <form class="flex min-w-0 flex-1 gap-2" onsubmit={rename}>
+                <label class="sr-only" for="household-name">Household name</label>
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  id="household-name"
+                  class="input min-w-0 flex-1"
+                  maxlength="80"
+                  bind:value={newName}
+                  autofocus
+                  required
+                />
+                <button type="submit" class="btn btn-ghost" disabled={busy}>Save</button>
+              </form>
+            {:else}
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-bold">{household.name}</span>
+                <span class="text-ink-muted block text-sm">
+                  {household.members.length === 1
+                    ? "Just you"
+                    : `${household.members.length} people share these recipes`}
                 </span>
-              {:else}
+              </span>
+              {#if owner}
                 <button
                   type="button"
                   class="btn btn-ghost btn-icon flex-none"
-                  aria-label={`Remove ${m.name} from the household`}
-                  title="Remove"
-                  onclick={() => (confirming = `remove:${m.id}`)}
+                  aria-label="Rename the household"
+                  title="Rename"
+                  onclick={() => {
+                    newName = household!.name
+                    renaming = true
+                  }}
                 >
-                  <UserMinus />
+                  <Pencil />
                 </button>
               {/if}
             {/if}
           </div>
-        {/each}
-        {#if owner}
-          {#each household.invites as i (i.id)}
-            <div class="list-row settings-row">
-              {#if i.email}<Mail class="settings-icon" />{:else}<Link class="settings-icon" />{/if}
-              <span class="min-w-0 flex-1">
-                <span class="block truncate font-bold">Invited</span>
-                <span class="text-ink-muted block truncate text-sm">{inviteMeta(i)}</span>
-              </span>
-              <button
-                type="button"
-                class="btn btn-ghost flex-none"
-                disabled={busy}
-                onclick={() => cancelInvite(i)}
-              >
-                Cancel
-              </button>
-            </div>
-          {/each}
-          {#if madeLink}
-            <div class="list-row settings-row">
-              <Link class="settings-icon" />
-              <span class="min-w-0 flex-1">
-                <span class="block truncate font-bold">New invite link</span>
-                <span class="text-ink-muted block text-sm">
-                  {hosted
-                    ? "Only works for the address it went to."
-                    : "Works once, for a week. Send it to who you're inviting."}
-                </span>
-              </span>
-              <button
-                type="button"
-                class="btn btn-ghost btn-icon flex-none"
-                aria-label="Copy the invite link"
-                title="Copy link"
-                onclick={() => copy(madeLink!)}
-              >
-                <Copy />
-              </button>
-            </div>
-          {/if}
-          {#if hosted && inviting}
-            <div class="list-row settings-row">
-              <UserPlus class="settings-icon" />
-              <form class="flex min-w-0 flex-1 gap-2" onsubmit={invite}>
-                <label class="sr-only" for="invite-email">Their email</label>
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  id="invite-email"
-                  type="email"
-                  class="input min-w-0 flex-1"
-                  placeholder="Their email"
-                  autocomplete="off"
-                  bind:value={inviteEmail}
-                  autofocus
-                  required
-                />
-                <button type="submit" class="btn btn-ghost" disabled={busy}>Send</button>
-              </form>
-            </div>
-          {:else}
-              <button
-                type="button"
-                class="list-row settings-row w-full text-left"
-                disabled={busy}
-                onclick={() => (hosted ? (inviting = true) : invite())}
-              >
-                <UserPlus class="settings-icon" />
-                <span class="min-w-0 flex-1">
-                  <span class="block font-bold">Invite someone</span>
-                  <span class="text-ink-muted block text-sm">
-                    {hosted ? "By email" : "Makes a link to copy and send"}
-                  </span>
-                </span>
-              </button>
-          {/if}
-        {/if}
-        {#each others as h (h.id)}
+          {#each others as h (h.id)}
             <button
               type="button"
               class="list-row settings-row w-full text-left"
@@ -501,31 +387,142 @@
                 <span class="text-ink-muted block text-sm">Another household you're in</span>
               </span>
             </button>
-        {/each}
-        {#if !owner}
-          {#if confirming === "leave"}
+          {/each}
+          {#if !owner}
+            {#if confirming === "leave"}
+              <div class="list-row settings-row flex-wrap">
+                <DoorOpen class="settings-icon" />
+                <span class="min-w-0 flex-1 text-sm">
+                  You'll stop seeing {household.name}'s recipes.
+                </span>
+                <span class="flex flex-none gap-2">
+                  <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+                    Stay
+                  </button>
+                  <button type="button" class="btn btn-danger" disabled={busy} onclick={leave}>
+                    Leave
+                  </button>
+                </span>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="list-row settings-row w-full text-left"
+                onclick={() => (confirming = "leave")}
+              >
+                <DoorOpen class="settings-icon" />
+                <span class="min-w-0 flex-1 font-bold">Leave household</span>
+              </button>
+            {/if}
+          {/if}
+        </div>
+
+        <div class="list-card" role="group" aria-label="People in the household">
+          {#each household.members as m (m.id)}
             <div class="list-row settings-row flex-wrap">
-              <DoorOpen class="settings-icon" />
-              <span class="min-w-0 flex-1 text-sm">
-                You'll stop seeing {household.name}'s recipes.
+              <UserRound class="settings-icon" />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-bold">{m.you ? `${m.name} (you)` : m.name}</span>
+                <span class="text-ink-muted block truncate text-sm">
+                  {m.role === "owner" ? "Owner" : "Member"} · {m.email}
+                </span>
               </span>
-              <span class="flex flex-none gap-2">
-                <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
-                  Stay
-                </button>
-                <button type="button" class="btn btn-danger" disabled={busy} onclick={leave}>
-                  Leave
-                </button>
-              </span>
+              {#if owner && !m.you && m.role !== "owner"}
+                {#if confirming === `remove:${m.id}`}
+                  <span class="flex w-full flex-wrap items-center justify-end gap-2 pl-[2.125rem]">
+                    <span class="text-ink-muted mr-auto text-sm">
+                      They lose these recipes. Their account stays.
+                    </span>
+                    <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+                      Keep
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-danger"
+                      disabled={busy}
+                      onclick={() => removeMember(m)}
+                    >
+                      Remove
+                    </button>
+                  </span>
+                {:else}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-icon flex-none"
+                    aria-label={`Remove ${m.name} from the household`}
+                    title="Remove"
+                    onclick={() => (confirming = `remove:${m.id}`)}
+                  >
+                    <UserMinus />
+                  </button>
+                {/if}
+              {/if}
             </div>
+          {/each}
+          {#if owner}
+            {#each household.invites as i (i.id)}
+              {@const link = linkFor(i)}
+              <div class="list-row settings-row">
+                {#if i.email}<Mail class="settings-icon" />{:else}<Link class="settings-icon" />{/if}
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate font-bold">Invited</span>
+                  <span class="text-ink-muted block truncate text-sm">{inviteMeta(i)}</span>
+                </span>
+                <span class="flex flex-none items-center gap-1">
+                  {#if link}
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-icon"
+                      aria-label={`Copy the invite link${i.email ? ` for ${i.email}` : ""}`}
+                      title="Copy link"
+                      onclick={() => copy(link)}
+                    >
+                      <Copy />
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    disabled={busy}
+                    onclick={() => cancelInvite(i)}
+                  >
+                    Cancel
+                  </button>
+                </span>
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        {#if owner}
+          {#if hosted && inviting}
+            <form class="flex gap-2" onsubmit={invite}>
+              <label class="sr-only" for="invite-email">Their email</label>
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                id="invite-email"
+                type="email"
+                class="input min-w-0 flex-1"
+                placeholder="Their email"
+                autocomplete="off"
+                bind:value={inviteEmail}
+                autofocus
+                required
+              />
+              <button type="button" class="btn btn-ghost" onclick={() => (inviting = false)}>
+                Cancel
+              </button>
+              <button type="submit" class="btn btn-outline" disabled={busy}>Send invite</button>
+            </form>
           {:else}
             <button
               type="button"
-              class="list-row settings-row w-full text-left"
-              onclick={() => (confirming = "leave")}
+              class="btn btn-outline"
+              disabled={busy}
+              onclick={() => (hosted ? (inviting = true) : invite())}
             >
-              <DoorOpen class="settings-icon" />
-              <span class="min-w-0 flex-1 font-bold">Leave household</span>
+              <UserPlus />
+              Invite someone
             </button>
           {/if}
         {/if}

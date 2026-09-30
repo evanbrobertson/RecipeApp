@@ -45,6 +45,8 @@ export type PendingInvite = {
   createdBy?: string | null
   /** Unix seconds. */
   expiresAt: number
+  /** Hosted: the link to pass on. Self-hosted links are only known when made (`invite`). */
+  url?: string
 }
 
 export type Household = {
@@ -141,7 +143,7 @@ export interface Accounts {
   household(): Promise<Household>
   rename(name: string): Promise<void>
   /** Self-hosted: a link to hand over. Hosted: an email is sent to `email` (and the link returned too). */
-  invite(email?: string): Promise<{ url: string }>
+  invite(email?: string): Promise<{ id: string; url: string }>
   cancelInvite(i: PendingInvite): Promise<void>
   removeMember(m: Member): Promise<void>
   leave(h: Household): Promise<void>
@@ -229,7 +231,8 @@ const own: Accounts = {
     await api("/api/auth/household", { method: "PATCH", body: { name } })
   },
   async invite() {
-    return api<{ url: string }>("/api/auth/invites", { method: "POST" })
+    const made = await api<{ id: number; url: string }>("/api/auth/invites", { method: "POST" })
+    return { id: String(made.id), url: made.url }
   },
   async cancelInvite(i) {
     await api(`/api/auth/invites/${i.id}`, { method: "DELETE" })
@@ -438,7 +441,12 @@ const hosted: Accounts = {
       members,
       invites: org.invitations
         .filter((i) => i.status === "pending" && secs(i.expiresAt) > Date.now() / 1000)
-        .map((i) => ({ id: i.id, email: i.email, expiresAt: secs(i.expiresAt) })),
+        .map((i) => ({
+          id: i.id,
+          email: i.email,
+          expiresAt: secs(i.expiresAt),
+          url: `${location.origin}/invite#${i.id}`,
+        })),
       households: orgs.map((o) => ({ id: o.id, name: o.name })),
     }
   },
@@ -450,7 +458,7 @@ const hosted: Accounts = {
       method: "POST",
       body: { email, role: "member" },
     })
-    return { url: `${location.origin}/invite#${made.id}` }
+    return { id: made.id, url: `${location.origin}/invite#${made.id}` }
   },
   async cancelInvite(i) {
     await api("/api/auth/organization/cancel-invitation", {
