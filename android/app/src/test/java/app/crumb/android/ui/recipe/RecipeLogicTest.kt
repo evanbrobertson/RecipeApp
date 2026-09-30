@@ -1,0 +1,106 @@
+package app.crumb.android.ui.recipe
+
+import app.crumb.android.data.Flag
+import app.crumb.android.data.RecipeChecks
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class RecipeLogicTest {
+    @Test fun heroIsCappedByTheWebWidthAndTheShortSide() {
+        assertEquals(640f, heroMaxWidth(1200f), 0.01f)
+        assertEquals(506.4f, heroMaxWidth(844f), 0.1f)
+        assertEquals(216f, heroMaxWidth(360f), 0.01f) // a landscape phone: the title stays on screen
+    }
+
+    private val day = 86_400_000L
+    private val start = 1_767_225_600_000L // 2026-01-01T00:00:00Z
+
+    @Test
+    fun cookedLineReadsLikeTheWeb() {
+        val at = "2026-01-01T00:00:00Z"
+        assertNull(cookedLine(null))
+        assertNull(cookedLine(CookStats(0, at)))
+        assertEquals("Cooked once", cookedLine(CookStats(1, null)))
+        assertEquals("Cooked 2 times", cookedLine(CookStats(2, null)))
+        assertEquals("Cooked once · last today", cookedLine(CookStats(1, at), start + day / 2))
+        assertEquals("Cooked 3 times · last yesterday", cookedLine(CookStats(3, at), start + day + day / 2))
+        assertEquals("Cooked 3 times · last 5 days ago", cookedLine(CookStats(3, at), start + 5 * day))
+        assertEquals("Cooked 2 times · last 2 weeks ago", cookedLine(CookStats(2, at), start + 14 * day))
+        assertEquals("Cooked 2 times · last 3 months ago", cookedLine(CookStats(2, at), start + 90 * day))
+        assertEquals("Cooked 2 times · last 2 years ago", cookedLine(CookStats(2, at), start + 730 * day))
+    }
+
+    @Test
+    fun fixTextMatchesEachFix() {
+        assertEquals("Made “Sauce:” a section heading", fixText(flag(fix = "heading", text = "Sauce:")))
+        assertEquals("Removed “Share this”", fixText(flag(fix = "removed", text = "Share this")))
+        assertEquals("Moved a tip to the notes: “Use less salt”", fixText(flag(fix = "notes", text = "Use less salt")))
+        assertEquals("Joined a step that was split in two: “and stir”", fixText(flag(fix = "joined", text = "and stir")))
+        assertEquals(
+            "Cleaned up stray checkboxes, web codes, repeated lines, quantities or times",
+            fixText(flag(fix = "tidy")),
+        )
+        assertEquals(
+            "Changed the category from “Puddings” to Dessert",
+            fixText(flag(fix = "category", extras = mapOf("category" to "Dessert", "was" to "Puddings"))),
+        )
+        assertEquals("Set the category to Dessert", fixText(flag(fix = "category", extras = mapOf("category" to "Dessert"))))
+        assertEquals(
+            "Cleared the category “Puddings”: it isn't one of Crumb's",
+            fixText(flag(fix = "category", extras = mapOf("was" to "Puddings"))),
+        )
+        assertEquals("Tidied “a stray line”", fixText(flag(text = "a stray line")))
+    }
+
+    @Test
+    fun nutritionValuesPrintPlainly() {
+        assertEquals("1g", nutritionValue(JsonPrimitive("1g")))
+        assertEquals("12", nutritionValue(JsonPrimitive(12)))
+        assertNull(nutritionValue(null))
+    }
+
+    @Test
+    fun newlyFixedCountSkipsEarlierFixesAndCountsTidy() {
+        val flags = listOf(
+            Flag(1, "recipe", state = "fixed", kind = "tidy", detail = buildJsonObject { put("fix", "tidy"); put("count", 3) }),
+            Flag(2, "ingredients", state = "fixed", kind = "junk", detail = buildJsonObject { put("fix", "removed") }),
+            Flag(3, "instructions", state = "fixed", kind = "tidy", detail = buildJsonObject { put("fix", "tidy") }),
+            Flag(4, "ingredients", state = "review", kind = "heading"),
+        )
+        assertEquals(2, newlyFixedCount(flags, setOf(1L)))
+        assertEquals(5, newlyFixedCount(flags, emptySet()))
+    }
+
+    @Test
+    fun checkToastCountsThisChecksFixesAndSkipsThePhoto() {
+        val flags = listOf(
+            Flag(1, "recipe", state = "fixed", kind = "tidy", detail = buildJsonObject { put("fix", "tidy"); put("count", 3) }),
+            Flag(2, "instructions", state = "review", kind = "fragment"),
+            Flag(3, "image", state = "review", kind = "dead_photo"),
+        )
+        val toast = checkToast(RecipeChecks("done", flags = flags), emptySet())
+        assertEquals("Wee Chef tidied 3 things", toast.title)
+        assertEquals("1 line might need a look", toast.description)
+        assertEquals("Wee Chef found nothing to change", checkToast(RecipeChecks("done", flags = flags.drop(2)), emptySet()).title)
+    }
+
+    private fun flag(
+        fix: String? = null,
+        text: String? = "line",
+        extras: Map<String, String> = emptyMap(),
+    ): Flag = Flag(
+        id = 1,
+        field = "recipe",
+        itemText = text,
+        kind = "tidy",
+        state = "fixed",
+        detail = if (fix == null && extras.isEmpty()) null else buildJsonObject {
+            fix?.let { put("fix", it) }
+            extras.forEach { (k, v) -> put(k, v) }
+        },
+    )
+}

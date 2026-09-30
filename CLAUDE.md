@@ -108,6 +108,7 @@ src/
   popular.rs      # Popular: links several households saved, counted in memory
   scraper.rs, importers.rs, llm.rs
 tests/api.rs      # Router integration tests against a temp DB
+android/          # Native Android app (Kotlin + Jetpack Compose), a REST client linking crumb-core; see android/README.md
 desktop/linux/    # Native Linux desktop app (Qt6/QML via cxx-qt), a crumb-client app following the Omarchy theme
 auth/             # Hosted edition's Better Auth service (Bun, bun:sqlite, organization plugin); bun test
 extension/        # Browser extension (MV3, Chrome + Firefox builds, Bun): asks "Read this recipe in Crumb?", reads the recipe in the page, opens /preview

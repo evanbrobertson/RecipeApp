@@ -1,0 +1,329 @@
+package app.crumb.android.data
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+
+// Shapes of the Crumb server's JSON (src/model.rs). Fields the app doesn't use yet are
+// skipped by the decoder, so the server can add fields freely.
+
+@Serializable
+data class Section(
+    val name: String? = null,
+    val items: List<String> = emptyList(),
+)
+
+/** How the recipe page plays its `video` in place (crumb-core `VideoEmbed`, sent as `videoEmbed`). */
+@Serializable
+data class VideoEmbed(
+    /** `youtube`, `vimeo`, `tiktok`, `instagram`, `dailymotion`, `jwplayer` or `file`. */
+    val provider: String,
+    /** "YouTube", "Vimeo", … ("Video" for a file). */
+    val label: String,
+    /** The iframe's address, or the file itself for `file`. */
+    val embedUrl: String,
+    val watchUrl: String,
+    val thumbnail: String? = null,
+    /** Shorts, TikTok, Reels: 9:16. */
+    val vertical: Boolean = false,
+)
+
+@Serializable
+data class Recipe(
+    val id: Long,
+    val title: String,
+    val url: String? = null,
+    val source: String = "manual",
+    val description: String? = null,
+    val image: String? = null,
+    /** A cooking video's link; [videoEmbed] says how to play it. */
+    val video: String? = null,
+    val author: String? = null,
+    val prepTime: String? = null,
+    val cookTime: String? = null,
+    val totalTime: String? = null,
+    val recipeYield: String? = null,
+    val recipeCategory: String? = null,
+    val recipeCuisine: String? = null,
+    val ingredients: List<Section> = emptyList(),
+    val instructions: List<Section> = emptyList(),
+    val notes: String? = null,
+    /** Null when [video] is on a site that can't play in place (link to it instead). */
+    val videoEmbed: VideoEmbed? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val freezeTime: String? = null,
+    /** Nutrition values may be strings or numbers, so the object is kept raw. */
+    val nutrition: JsonObject? = null,
+    /** The original source of a recipe saved from another Crumb's share. */
+    val originalUrl: String? = null,
+)
+
+@Serializable
+data class RecipeSummary(
+    val id: Long,
+    val title: String,
+    val image: String? = null,
+    val totalTime: String? = null,
+    val recipeYield: String? = null,
+    val recipeCategory: String? = null,
+    val recipeCuisine: String? = null,
+    val source: String = "manual",
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class CookbookListItem(
+    val id: Long,
+    val name: String,
+    val description: String? = null,
+    val color: String? = null,
+    val recipeCount: Long = 0,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class Cookbook(
+    val id: Long,
+    val name: String,
+    val description: String? = null,
+    val color: String? = null,
+    val recipes: List<RecipeSummary> = emptyList(),
+)
+
+@Serializable
+data class ImportedCookbook(
+    val id: Long,
+    val name: String,
+    val added: Int = 0,
+    val duplicates: Int = 0,
+    val skipped: Int = 0,
+)
+
+/** `POST /api/recipes/import`: the recipe (or, for a shared cookbook link, the cookbook). */
+@Serializable
+data class ImportResult(
+    val id: Long,
+    val title: String,
+    val isNew: Boolean,
+    val cookbook: ImportedCookbook? = null,
+    /** The site's photo link didn't work, so the recipe was saved without one. */
+    val droppedPhoto: Boolean = false,
+    /** A cooking video Wee Chef watched in the server's queue. */
+    val fromVideo: Boolean = false,
+)
+
+/**
+ * A cooking video's place in the server's queue: the 202 answer to `POST /api/recipes/import`
+ * and `GET /api/import/jobs/{id}`. [status] is `queued`, `running`, `done` or `failed`.
+ */
+@Serializable
+data class ImportJob(
+    val jobId: String? = null,
+    val status: String = "",
+    /** 1 = next. */
+    val position: Int? = null,
+    val recipe: JobRecipe? = null,
+    val statusCode: Int? = null,
+    val message: String? = null,
+)
+
+/** The recipe a finished video job saved. */
+@Serializable
+data class JobRecipe(val id: Long, val title: String, val isNew: Boolean)
+
+/** A recipe in the trash (`GET /api/trash`): restorable until [purgeAt] (both ISO-8601). */
+@Serializable
+data class Trashed(
+    val id: Long,
+    val title: String,
+    val url: String? = null,
+    val image: String? = null,
+    val deletedAt: String,
+    val purgeAt: String,
+)
+
+/**
+ * `POST /api/trash/{id}/restore`: the recipe that's back. [isNew] is false when its link was
+ * saved again meanwhile: [id] is then that other recipe, and the deleted copy is gone.
+ */
+@Serializable
+data class Restored(val id: Long, val title: String, val isNew: Boolean = true)
+
+/** `POST /api/recipes/{id}/cooked`: the cook stats plus the new event (`null` if deduped). */
+@Serializable
+data class Cooked(
+    val count: Int = 0,
+    val lastCookedAt: String? = null,
+    val eventId: Long? = null,
+)
+
+/** A downloaded file: `{fileName, mimeType, bytes}`. */
+data class Download(
+    val fileName: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)
+
+/** One file for `POST /api/import/files`. */
+data class UploadFile(
+    val name: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)
+
+/** One recipe saved by an import file. */
+@Serializable
+data class CreatedRecipe(
+    val id: Long,
+    val title: String,
+)
+
+/** `POST /api/import/files`: what one uploaded file gave. */
+@Serializable
+data class ImportSummary(
+    val file: String,
+    val created: List<CreatedRecipe> = emptyList(),
+    val duplicates: Int = 0,
+    val skipped: Int = 0,
+    val error: String? = null,
+)
+
+/** One "Try next" card: a recipe and why Wee Chef or the algorithm picked it. */
+@Serializable
+data class Suggestion(
+    val recipe: RecipeSummary,
+    val reason: String,
+    val reasonKind: String,
+    val ai: Boolean? = null,
+)
+
+/** A dish Wee Chef thinks the cook would like that isn't in their box. */
+@Serializable
+data class Idea(
+    val title: String,
+    val why: String,
+    val searchUrl: String,
+)
+
+/** `GET /api/suggestions`: the cards, the AI status (`ready`/`pending`/`off`) and an idea. */
+@Serializable
+data class Suggestions(
+    val items: List<Suggestion> = emptyList(),
+    val ai: String = "off",
+    val idea: Idea? = null,
+)
+
+/** One line Wee Chef flagged: what it saw and what was done about it. */
+@Serializable
+data class Flag(
+    val id: Long,
+    val field: String,
+    val itemText: String? = null,
+    val kind: String,
+    val state: String,
+    /** The fix's data (`{p, fix, ...}`), kept raw as the server sends an object. */
+    val detail: JsonElement? = null,
+)
+
+/**
+ * `GET`/`POST /api/recipes/{id}/checks`: `null` when the recipe was never checked. Its [status]
+ * is null too when only the photo link is flagged (never checked, as the web's RecipeChecks).
+ */
+@Serializable
+data class RecipeChecks(
+    val status: String? = null,
+    val canUndo: Boolean = false,
+    val flags: List<Flag> = emptyList(),
+)
+
+/** `POST /api/recipes/{id}/checks/undo`: the restored recipe and its new check. */
+@Serializable
+data class UndoResult(
+    val recipe: Recipe,
+    val checks: RecipeChecks? = null,
+)
+
+/** `GET`/`POST /api/checks`: Wee Chef's import check progress. */
+@Serializable
+data class ChecksStatus(
+    val enabled: Boolean = false,
+    val eligible: Int = 0,
+    val checked: Int = 0,
+    val pending: Int = 0,
+    val failed: Int = 0,
+    val tidied: Int = 0,
+    val toCheck: Int = 0,
+    val due: Int = 0,
+    val restored: Int = 0,
+    val edited: Int = 0,
+    /** Only on `POST /api/checks`: how many "Check all" queued. */
+    val queued: Int = 0,
+)
+
+/** An ingredient many of the box's recipes use, lowercase ("olive oil"). */
+@Serializable
+data class Staple(val name: String, val recipes: Int)
+
+/**
+ * `GET /api/staples`: Wee Chef's "keep these on hand" tip. [recipes] is how many are in the
+ * box; [staples] are most-used first, and empty for a box too small to tell.
+ */
+@Serializable
+data class Staples(val recipes: Int = 0, val staples: List<Staple> = emptyList())
+
+/** One recipe on the Suggestions page with how many flags it has per field. */
+@Serializable
+data class ReviewRecipe(
+    val id: Long,
+    val title: String,
+    val image: String? = null,
+    val count: Int = 0,
+    val fields: Map<String, Int> = emptyMap(),
+)
+
+/** Which kind of thing a share link shows. `path` is the API path segment. */
+enum class ShareKind(val path: String) {
+    Recipe("recipes"),
+    Cookbook("cookbooks"),
+}
+
+/** `POST`/`PATCH`/`DELETE /api/{recipes|cookbooks}/{id}/share`. */
+@Serializable
+data class Share(
+    val token: String,
+    val url: String,
+    val includeNotes: Boolean = true,
+    val createdAt: String? = null,
+)
+
+/** `GET /api/shares`: one live share link, newest first. */
+@Serializable
+data class SharedLink(
+    val kind: String,
+    val id: Long,
+    val title: String,
+    val url: String,
+    val includeNotes: Boolean = false,
+    val createdAt: String? = null,
+    val lastOpenedAt: String? = null,
+)
+
+/** `GET /api/connector`: what this server has configured. */
+@Serializable
+data class ConnectorInfo(
+    val mcpUrl: String = "",
+    val authEnabled: Boolean = false,
+    val weeChef: Boolean = false,
+    val claudeParsing: Boolean = false,
+    val aiProvider: String? = null,
+    val vision: Boolean = false,
+    val browserScraping: Boolean = false,
+    val weeChefChecks: Boolean = false,
+)
+
+/** What `POST /api/recipes/import` answered for a link: a saved recipe, or a cooking video's job. */
+sealed interface ImportStart {
+    data class Done(val result: ImportResult) : ImportStart
+    data class Queued(val job: ImportJob) : ImportStart
+}
