@@ -71,7 +71,13 @@ pub fn run() {
             .release();
     }
     if let Some(mut engine) = engine.as_mut() {
-        native::install_network(engine.as_mut());
+        // Smoke runs keep no photos on disk
+        let photo_cache = if smoke_mode {
+            QString::default()
+        } else {
+            QString::from(&*config::photo_cache_dir().to_string_lossy())
+        };
+        native::install_network(engine.as_mut(), &photo_cache);
         engine.load(&QUrl::from(MAIN_QML));
     }
 
