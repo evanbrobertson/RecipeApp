@@ -1,10 +1,12 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Effects
 
 import app.crumb.desktop 1.0
 
 // A recipe photo, as the web's Photo.svelte: the server's resized WebP at the width shown,
-// 12px corners (or `radius`), a tint while it loads or when there's none.
+// 12px corners (or `radius`), a tint while it loads or when there's none. Once shown it's kept
+// decoded for a while (PhotoKeep in Main.qml), so coming back to a page shows it at once.
 Item {
     id: photo
 
@@ -51,6 +53,14 @@ Item {
                    : Api.photoUrl(photo.recipeId, Math.ceil(photo.width * Screen.devicePixelRatio), photo.image))
                 : ""
         layer.enabled: photo.shaders
+        onStatusChanged: {
+            var window = photo.ApplicationWindow.window
+            if (status === Image.Ready && String(source).indexOf("qrc:") !== 0 && window && window.keepPhoto) {
+                var dpr = Screen.devicePixelRatio
+                window.keepPhoto(String(source), sourceSize.width,
+                                 implicitWidth * implicitHeight * dpr * dpr * 4)
+            }
+        }
     }
 
     Rectangle {

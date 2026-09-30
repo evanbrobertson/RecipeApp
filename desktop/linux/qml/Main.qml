@@ -31,6 +31,18 @@ ApplicationWindow {
 
     Session {
         id: appSession
+
+        // Signed out: let the last box's photos go
+        onStateChanged: if (state !== "ready") photoKeep.clear()
+    }
+
+    // Photos keep themselves here once shown: `ApplicationWindow.window.keepPhoto(...)`
+    function keepPhoto(url, width, bytes) {
+        photoKeep.hold(url, width, bytes)
+    }
+
+    PhotoKeep {
+        id: photoKeep
     }
 
     // ─── Routes ───
