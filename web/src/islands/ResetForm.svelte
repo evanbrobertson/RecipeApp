@@ -1,6 +1,7 @@
 <script lang="ts">
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { onMount } from "svelte"
+  import PasswordInput from "../components/PasswordInput.svelte"
   import { type Accounts, accounts, authStatus } from "../lib/account"
   import { errorMessage } from "../lib/api"
   import { flash } from "../lib/toast"
@@ -75,18 +76,15 @@
     {#if token}
       <div>
         <label class="label" for="password">New password</label>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <PasswordInput
           id="password"
-          type="password"
           bind:value={password}
           autocomplete="new-password"
-          minlength="8"
-          class="input input-lg"
+          minlength={8}
           autofocus
-          required
+          describedby="password-hint"
         />
-        <p class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
+        <p id="password-hint" class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
       </div>
     {:else}
       <div>
@@ -94,9 +92,12 @@
         <!-- svelte-ignore a11y_autofocus -->
         <input
           id="email"
+          name="email"
           type="email"
           bind:value={email}
           autocomplete="email"
+          autocapitalize="none"
+          spellcheck="false"
           class="input input-lg"
           autofocus
           required

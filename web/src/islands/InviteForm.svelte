@@ -1,6 +1,7 @@
 <script lang="ts">
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
   import { onMount } from "svelte"
+  import PasswordInput from "../components/PasswordInput.svelte"
   import SocialButtons from "../components/SocialButtons.svelte"
   import {
     type Accounts,
@@ -161,6 +162,7 @@
           <label class="label" for="name">Your name</label>
           <input
             id="name"
+            name="name"
             bind:value={name}
             autocomplete="name"
             class="input input-lg"
@@ -173,26 +175,27 @@
         <label class="label" for="email">Email</label>
         <input
           id="email"
+          name="email"
           type="email"
           bind:value={email}
-          autocomplete="email"
+          autocomplete={tab === "new" ? "email" : "username"}
+          autocapitalize="none"
+          spellcheck="false"
           class="input input-lg"
           required
         />
       </div>
       <div>
         <label class="label" for="password">Password</label>
-        <input
+        <PasswordInput
           id="password"
-          type="password"
           bind:value={password}
           autocomplete={tab === "new" ? "new-password" : "current-password"}
           minlength={tab === "new" ? 8 : undefined}
-          class="input input-lg"
-          required
+          describedby={tab === "new" ? "password-hint" : undefined}
         />
         {#if tab === "new"}
-          <p class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
+          <p id="password-hint" class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
         {/if}
       </div>
       {#if error}<p class="text-error text-sm" role="alert">{error}</p>{/if}

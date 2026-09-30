@@ -11,6 +11,7 @@
   import LinkOff from "@lucide/svelte/icons/unlink"
   import { onMount } from "svelte"
   import AccountSection from "../components/AccountSection.svelte"
+  import PasswordInput from "../components/PasswordInput.svelte"
   import SocialButtons from "../components/SocialButtons.svelte"
   import {
     type ConnectedApp,
@@ -213,13 +214,11 @@
                     {#if methods.password}
                       <div>
                         <label class="label" for="email-password">Your password</label>
-                        <input
+                        <PasswordInput
                           id="email-password"
-                          type="password"
-                          class="input"
+                          large={false}
                           autocomplete="current-password"
                           bind:value={emailPassword}
-                          required
                         />
                       </div>
                     {/if}
@@ -412,15 +411,12 @@
                 {#if methods?.password}
                   <div>
                     <label class="label" for="delete-password">Your password</label>
-                    <!-- svelte-ignore a11y_autofocus -->
-                    <input
+                    <PasswordInput
                       id="delete-password"
-                      type="password"
-                      class="input"
+                      large={false}
                       autocomplete="current-password"
                       bind:value={password}
                       autofocus
-                      required
                     />
                   </div>
                 {:else}
