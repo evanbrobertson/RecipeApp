@@ -2,6 +2,7 @@
   import KeyRound from "@lucide/svelte/icons/key-round"
   import LoaderCircle from "@lucide/svelte/icons/loader-circle"
 import { onMount, tick } from "svelte"
+  import PasswordInput from "../components/PasswordInput.svelte"
   import SocialButtons from "../components/SocialButtons.svelte"
   import { type Status, accounts as client, authStatus, safeNext, socialError } from "../lib/account"
   import { api, errorMessage } from "../lib/api"
@@ -135,6 +136,7 @@ import { onMount, tick } from "svelte"
       <!-- svelte-ignore a11y_autofocus -->
       <input
         id="name"
+        name="name"
         bind:value={name}
         autocomplete="name"
         class="input input-lg"
@@ -150,9 +152,14 @@ import { onMount, tick } from "svelte"
       <!-- svelte-ignore a11y_autofocus -->
       <input
         id="email"
+        name="email"
         type="email"
         bind:value={email}
-        autocomplete={withPasskey ? "email webauthn" : "email"}
+        autocomplete={
+          (kind === "login" ? "username" : "email") + (withPasskey ? " webauthn" : "")
+        }
+        autocapitalize="none"
+        spellcheck="false"
         class="input input-lg"
         autofocus={kind === "login"}
         required
@@ -161,32 +168,22 @@ import { onMount, tick } from "svelte"
   {/if}
   <div>
     <label class="label" for="password">Password</label>
-    <!-- svelte-ignore a11y_autofocus -->
-    <input
+    <PasswordInput
       id="password"
-      type="password"
       bind:value={password}
       autocomplete={kind === "login" ? "current-password" : "new-password"}
       minlength={kind === "login" ? undefined : 8}
-      class="input input-lg"
       autofocus={kind === "login" && !accounts}
-      required
+      describedby={kind !== "login" ? "password-hint" : undefined}
     />
     {#if kind !== "login"}
-      <p class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
+      <p id="password-hint" class="text-ink-muted mt-1.5 text-sm">At least 8 characters.</p>
     {/if}
   </div>
   {#if kind === "setup" && status?.setupNeedsAppPassword}
     <div>
       <label class="label" for="app-password">Current app password</label>
-      <input
-        id="app-password"
-        type="password"
-        bind:value={appPassword}
-        autocomplete="off"
-        class="input input-lg"
-        required
-      />
+      <PasswordInput id="app-password" name="app-password" bind:value={appPassword} autocomplete="off" />
       <p class="text-ink-muted mt-1.5 text-sm">The one this box used before accounts.</p>
     </div>
   {/if}
