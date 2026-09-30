@@ -1,5 +1,6 @@
 //! Server URL settings, kept in `$XDG_CONFIG_HOME/crumb-desktop/config.json` (falling
-//! back to `~/.config/...`). `CRUMB_SERVER` overrides the file.
+//! back to `~/.config/...`). `CRUMB_SERVER` overrides the file. Also where the photo cache
+//! lives.
 //!
 //! Everything here takes the base directory as a parameter, so tests never touch the
 //! real config or the process environment.
@@ -28,11 +29,21 @@ struct FileConfig {
 
 /// `$XDG_CONFIG_HOME/crumb-desktop`, or `~/.config/crumb-desktop`.
 pub fn config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    xdg_dir("XDG_CONFIG_HOME", ".config")
+}
+
+/// `$XDG_CACHE_HOME/crumb-desktop/photos`, or `~/.cache/crumb-desktop/photos`: the photo
+/// loader's disk cache (`native.cpp`), emptied on sign-out.
+pub fn photo_cache_dir() -> PathBuf {
+    xdg_dir("XDG_CACHE_HOME", ".cache").join("photos")
+}
+
+fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
+    let base = std::env::var_os(variable)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(|| PathBuf::from(".config"));
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(fallback)))
+        .unwrap_or_else(|| PathBuf::from(fallback));
     base.join("crumb-desktop")
 }
 

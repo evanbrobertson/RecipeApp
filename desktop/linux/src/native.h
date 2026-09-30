@@ -17,9 +17,11 @@ class QQmlApplicationEngine;
 
 /// Gives the QML engine network managers that send the Crumb session cookie to the
 /// configured server (and only there), so `Image` can load `/img/...` photos, and the
-/// `image://icon/<name>/<color>` provider for the bundled lucide icons.
-void crumbInstallNetwork(QQmlApplicationEngine &engine);
+/// `image://icon/<name>/<color>` provider for the bundled lucide icons. The managers keep
+/// photos in a disk cache at `photoCache` (none when empty).
+void crumbInstallNetwork(QQmlApplicationEngine &engine, const QString &photoCache);
 
 /// The server origin (`https://host[:port]`) and `Cookie` header value photo requests get.
-/// Empty values sign the photo loader out. Safe to call from any thread.
+/// Empty values sign the photo loader out and empty its disk cache. Safe to call from any
+/// thread.
 void crumbSetPhotoSession(const QString &origin, const QString &cookie);

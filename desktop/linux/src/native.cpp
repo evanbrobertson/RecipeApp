@@ -3,6 +3,7 @@
 
 #include "native.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QMutex>
 #include <QtCore/QMutexLocker>
 #include <QtCore/QStringList>
@@ -11,6 +12,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
 #include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkDiskCache>
 #include <QtNetwork/QNetworkRequest>
 #include <QtCore/QFile>
 #include <QtGui/QImage>
@@ -19,6 +21,8 @@
 #include <QtQuick/QQuickImageProvider>
 #include <QtSvg/QSvgRenderer>
 #include <QtQml/QQmlNetworkAccessManagerFactory>
+
+#include <atomic>
 
 int crumbAddApplicationFont(const QString &path) {
     return QFontDatabase::addApplicationFont(path);
@@ -44,12 +48,22 @@ bool crumbPrefersDark() {
 // made whenever the engine likes (often before sign-in). So the session isn't baked into a
 // manager: each request reads the current one, and gets the cookie only when its scheme,
 // host and port are exactly the server's.
+//
+// Every manager keeps what it loads in the same disk cache folder, so a page that comes back
+// paints from disk. `/img` URLs carry the photo's key (`?v=`) and answer `immutable`, so a
+// cached copy never goes stale. Signing out deletes the folder and bumps the generation; each
+// manager then clears its own cache (on its own thread) before its next request.
 
 namespace {
+
+// As Android's photo cache
+constexpr qint64 kPhotoCacheBytes = 200 * 1024 * 1024;
 
 QMutex g_sessionLock;
 QString g_origin;
 QString g_cookie;
+QString g_photoCache;
+std::atomic<int> g_photoGeneration{0};
 
 QString originOf(const QUrl &url) {
     const QString scheme = url.scheme().toLower();
@@ -69,11 +83,30 @@ QString originOf(const QUrl &url) {
 
 class SessionManager : public QNetworkAccessManager {
 public:
-    using QNetworkAccessManager::QNetworkAccessManager;
+    explicit SessionManager(QObject *parent) : QNetworkAccessManager(parent) {
+        QString dir;
+        {
+            QMutexLocker lock(&g_sessionLock);
+            dir = g_photoCache;
+        }
+        if (!dir.isEmpty()) {
+            auto *cache = new QNetworkDiskCache(this);
+            cache->setCacheDirectory(dir);
+            cache->setMaximumCacheSize(kPhotoCacheBytes);
+            setCache(cache);
+        }
+    }
 
 protected:
     QNetworkReply *createRequest(Operation op, const QNetworkRequest &original,
                                  QIODevice *data) override {
+        const int generation = g_photoGeneration.load();
+        if (generation != m_generation) {
+            m_generation = generation;
+            if (cache()) {
+                cache()->clear();
+            }
+        }
         QNetworkRequest request(original);
         QString origin;
         QString cookie;
@@ -87,6 +120,9 @@ protected:
         }
         return QNetworkAccessManager::createRequest(op, request, data);
     }
+
+private:
+    int m_generation = g_photoGeneration.load();
 };
 
 class SessionFactory : public QQmlNetworkAccessManagerFactory {
@@ -139,7 +175,11 @@ public:
 
 } // namespace
 
-void crumbInstallNetwork(QQmlApplicationEngine &engine) {
+void crumbInstallNetwork(QQmlApplicationEngine &engine, const QString &photoCache) {
+    {
+        QMutexLocker lock(&g_sessionLock);
+        g_photoCache = photoCache;
+    }
     // The engine takes ownership of the factory and the provider
     engine.setNetworkAccessManagerFactory(new SessionFactory);
     engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
@@ -149,4 +189,9 @@ void crumbSetPhotoSession(const QString &origin, const QString &cookie) {
     QMutexLocker lock(&g_sessionLock);
     g_origin = origin;
     g_cookie = cookie;
+    // Signed out: no one's photos stay on disk for whoever signs in next
+    if (cookie.isEmpty() && !g_photoCache.isEmpty()) {
+        g_photoGeneration.fetch_add(1);
+        QDir(g_photoCache).removeRecursively();
+    }
 }

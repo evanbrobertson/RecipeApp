@@ -5,7 +5,9 @@
 //! installs a `QQmlNetworkAccessManagerFactory` whose managers add the current session to
 //! each request for the configured server's exact origin (scheme, host and port, default
 //! ports normalized: [`origin_of`]), and to nothing else. [`sync`] sets that session
-//! whenever someone signs in or out; [`origin_allows`] is the same rule, tested here.
+//! whenever someone signs in or out; [`origin_allows`] is the same rule, tested here. The
+//! managers also share a disk cache of photos (`config::photo_cache_dir`), which signing
+//! out empties.
 
 use url::{Host, Url};
 

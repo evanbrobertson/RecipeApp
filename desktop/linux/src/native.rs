@@ -22,7 +22,7 @@ pub mod qobject {
         fn crumbPrefersDark() -> bool;
 
         #[rust_name = "install_network"]
-        fn crumbInstallNetwork(engine: Pin<&mut QQmlApplicationEngine>);
+        fn crumbInstallNetwork(engine: Pin<&mut QQmlApplicationEngine>, photo_cache: &QString);
 
         #[rust_name = "set_photo_session"]
         fn crumbSetPhotoSession(origin: &QString, cookie: &QString);
