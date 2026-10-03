@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path as UrlPath, Query};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing};
@@ -241,7 +241,95 @@ fn prune(dir: &Path, target: u64) -> u64 {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/img/{id}/{width}", routing::get(serve))
+    Router::new()
+        .route("/img/{id}/{width}", routing::get(serve))
+        .route(
+            "/img/s/{household}/{id}/{width}",
+            routing::get(serve_signed),
+        )
+}
+
+/// How long a signed photo link works. The ChatGPT widget is handed these because it runs in a
+/// frame on another origin with no sign-in cookie.
+const SIGNED_PHOTO_SECS: i64 = 60 * 60;
+
+fn photo_signature(
+    secret: &[u8],
+    household: crate::households::HouseholdId,
+    id: i64,
+    width: u32,
+    expires: i64,
+) -> hmac::Hmac<sha2::Sha256> {
+    use hmac::Mac;
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret).expect("any key length");
+    mac.update(format!("photo:{household}:{id}:{width}:{expires}").as_bytes());
+    mac
+}
+
+/// An absolute, short-lived link to one household's recipe photo that needs no sign-in:
+/// `{origin}/img/s/{household}/{id}/{width}?v=…&exp=…&sig=…`. It opens that one photo at that
+/// one size, for an hour.
+pub fn signed_url(state: &AppState, origin: &str, id: i64, width: u32, image: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use hmac::Mac;
+    let width = snap_width(width);
+    let expires = crate::model::now_secs() + SIGNED_PHOTO_SECS;
+    let sig = URL_SAFE_NO_PAD.encode(
+        photo_signature(
+            &state.config.session_secret,
+            state.household,
+            id,
+            width,
+            expires,
+        )
+        .finalize()
+        .into_bytes(),
+    );
+    format!(
+        "{origin}/img/s/{}/{id}/{width}?v={}&exp={expires}&sig={sig}",
+        state.household,
+        image_key(image)
+    )
+}
+
+async fn serve_signed(
+    State(state): State<AppState>,
+    UrlPath((household, id, width)): UrlPath<(String, String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use hmac::Mac;
+    let (Some(household), Some(id), Some(width)) = (
+        digits::<crate::households::HouseholdId>(&household),
+        digits::<i64>(&id),
+        parse_width(&width),
+    ) else {
+        return not_found();
+    };
+    let expires = q.get("exp").and_then(|e| digits::<i64>(e));
+    let sig = q.get("sig").and_then(|s| URL_SAFE_NO_PAD.decode(s).ok());
+    let (Some(expires), Some(sig)) = (expires, sig) else {
+        return not_found();
+    };
+    let genuine = photo_signature(&state.config.session_secret, household, id, width, expires)
+        .verify_slice(&sig)
+        .is_ok();
+    if !genuine || expires < crate::model::now_secs() {
+        return not_found();
+    }
+    let Ok(state) = state.for_household(household) else {
+        return not_found();
+    };
+    serve_photo(
+        &state,
+        id,
+        Variant::Webp(width),
+        q.get("v").map(String::as_str),
+        Caching::Private,
+    )
+    .await
 }
 
 /// Why a photo couldn't be made, as remembered for [`FAILURE_TTL`].

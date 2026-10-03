@@ -183,6 +183,13 @@ web/src/
   means Claude's `/mcp`), so one app's token never opens the other's endpoint; authorization responses carry `iss` (RFC 9207).
   `OPENAI_APPS_CHALLENGE` is served at `/.well-known/openai-apps-challenge`. The MCP origin can't change once a plugin is
   published, so the dev URL never goes in anything submitted.
+  **The shelf widget** (`web/widget/`, `src/mcp_ui.rs`): `list_cookbooks`, `get_cookbook`, `get_recipe` and `save_recipe` link to one
+  MCP Apps resource, `ui://crumb/shelf-v1.html`, that `web/scripts/build-widget.mjs` builds (after `astro build`, in the same
+  `bun run build`) into a single HTML file at `shell/chatgpt/shelf.html`, reusing `Bookshelf.svelte`. The server swaps
+  `__CRUMB_ORIGIN__` for its own address on read (fonts come from the public `/fonts/`, the CSP names the origin). It is read-only: the
+  tool results hold what it draws in `structuredContent` (which the model reads) and the photo links in `_meta` (widget only).
+  The frame has no cookie, so photos are signed, hour-long, one-photo-one-size links, `/img/s/{household}/{id}/{width}`
+  (`images::signed_url`, HMAC with the session secret). Claude's results are unchanged. Test the widget in a browser with a stub host.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Trash:** `recipes::delete_recipes` moves recipes to `recipe_trash` (`src/trash.rs`): the whole row as JSON, its cookbooks
   and cooks; restored under its own id within 30 days, then purged. Nothing else needs to skip deleted recipes. The

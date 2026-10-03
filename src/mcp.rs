@@ -211,6 +211,16 @@ fn scrape_error(err: AppError) -> Value {
     tool_error(err.message)
 }
 
+fn book_json(b: &CookbookListItem) -> Value {
+    json!({
+        "id": b.id,
+        "name": b.name,
+        "description": b.description,
+        "color": b.color,
+        "recipeCount": b.recipe_count,
+    })
+}
+
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
@@ -279,8 +289,18 @@ impl Ctx<'_> {
         format!("- [{}] {}{meta} — {}", r.id, r.title, self.link(r.id))
     }
 
+    /// For ChatGPT, a result the widget draws as well as the text: the structured content
+    /// says what to draw, the hidden `_meta` carries the photo links.
+    fn with_ui(&self, result: Value, structured: Value, photos: Value) -> Value {
+        if self.flavor == Flavor::ChatGpt {
+            crate::mcp_ui::with_ui(result, structured, photos)
+        } else {
+            result
+        }
+    }
+
     fn saved(&self, r: &Recipe, is_new: bool) -> Value {
-        text(format!(
+        let result = text(format!(
             "{}: \"{}\" (id {})\n{}\n\n{} ingredients, {} steps.",
             if is_new { "Saved" } else { "Already saved" },
             r.title,
@@ -288,7 +308,16 @@ impl Ctx<'_> {
             self.link(r.id),
             count_items(&r.ingredients),
             count_items(&r.instructions),
-        ))
+        ));
+        if self.flavor != Flavor::ChatGpt {
+            return result;
+        }
+        let photos = crate::mcp_ui::photos(self.state, self.origin, [(r.id, r.image.as_deref())]);
+        self.with_ui(
+            result,
+            json!({"view": "saved", "isNew": is_new, "recipe": crate::mcp_ui::card(self.origin, r)}),
+            photos,
+        )
     }
 
     /// Handles one JSON-RPC message; None for notifications.
@@ -313,14 +342,29 @@ impl Ctx<'_> {
                 } else {
                     PROTOCOL_VERSIONS[0]
                 };
+                let mut capabilities = json!({"tools": {"listChanged": false}});
+                if self.flavor == Flavor::ChatGpt {
+                    capabilities["resources"] = json!({"listChanged": false});
+                }
                 json!({
                     "protocolVersion": version,
-                    "capabilities": {"tools": {"listChanged": false}},
+                    "capabilities": capabilities,
                     "serverInfo": {"name": "crumb", "title": "Crumb", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": self.flavor.instructions(),
                 })
             }
             "ping" => json!({}),
+            "resources/list" if self.flavor == Flavor::ChatGpt => crate::mcp_ui::resource_list(),
+            "resources/read" if self.flavor == Flavor::ChatGpt => {
+                let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+                let found = (uri == crate::mcp_ui::SHELF_URI)
+                    .then(|| crate::mcp_ui::read_resource(self.state, self.origin))
+                    .flatten();
+                match found {
+                    Some(r) => r,
+                    None => return Some(rpc_error(&id, -32002, "Resource not found")),
+                }
+            }
             "tools/list" => json!({"tools": tool_definitions_for(self.flavor)}),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
@@ -412,12 +456,24 @@ impl Ctx<'_> {
                     return Some(invalid("id must be an integer"));
                 };
                 match recipes::get_recipe(&db.lock(), id) {
-                    Ok(Some(r)) => text(format!(
-                        "{}\n\nRecipe id: {} · {}",
-                        recipe_to_markdown(&r),
-                        r.id,
-                        self.link(r.id)
-                    )),
+                    Ok(Some(r)) => {
+                        let result = text(format!(
+                            "{}\n\nRecipe id: {} · {}",
+                            recipe_to_markdown(&r),
+                            r.id,
+                            self.link(r.id)
+                        ));
+                        let photos = crate::mcp_ui::photos(
+                            self.state,
+                            self.origin,
+                            [(r.id, r.image.as_deref())],
+                        );
+                        self.with_ui(
+                            result,
+                            json!({"view": "recipe", "recipe": crate::mcp_ui::card(self.origin, &r)}),
+                            photos,
+                        )
+                    }
                     Ok(None) => tool_error(format!("No recipe with id {id}")),
                     Err(err) => tool_error(err.message),
                 }
@@ -572,20 +628,31 @@ impl Ctx<'_> {
                 }
             }
             "list_cookbooks" => match recipes::list_cookbooks(&db.lock()) {
-                Ok(books) if books.is_empty() => text("No cookbooks yet."),
-                Ok(books) => text(
-                    books
-                        .iter()
-                        .map(|b| {
-                            let color = b.color.as_deref().unwrap_or("no colour");
-                            format!(
-                                "- [{}] {} ({} recipes, {color})",
-                                b.id, b.name, b.recipe_count
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                ),
+                Ok(books) => {
+                    let result = if books.is_empty() {
+                        text("No cookbooks yet.")
+                    } else {
+                        text(
+                            books
+                                .iter()
+                                .map(|b| {
+                                    let color = b.color.as_deref().unwrap_or("no colour");
+                                    format!(
+                                        "- [{}] {} ({} recipes, {color})",
+                                        b.id, b.name, b.recipe_count
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )
+                    };
+                    let shelf: Vec<Value> = books.iter().map(book_json).collect();
+                    self.with_ui(
+                        result,
+                        json!({"view": "shelf", "books": shelf}),
+                        json!({"origin": self.origin}),
+                    )
+                }
                 Err(err) => tool_error(err.message),
             },
             "get_cookbook" => {
@@ -616,7 +683,28 @@ impl Ctx<'_> {
                             full.recipes.iter().map(|r| self.recipe_line(r)).collect();
                         out.push_str(&lines.join("\n"));
                     }
-                    Ok(text(out))
+                    let photos = crate::mcp_ui::photos(
+                        self.state,
+                        self.origin,
+                        full.recipes.iter().map(|r| (r.id, r.image.as_deref())),
+                    );
+                    let structured = json!({
+                        "view": "book",
+                        "book": {
+                            "id": full.id,
+                            "name": full.name,
+                            "description": full.description,
+                            "color": full.color,
+                            "recipeCount": full.recipes.len(),
+                            "link": self.book_link(full.id),
+                        },
+                        "recipes": full
+                            .recipes
+                            .iter()
+                            .map(|r| crate::mcp_ui::summary_card(self.origin, r))
+                            .collect::<Vec<_>>(),
+                    });
+                    Ok(self.with_ui(text(out), structured, photos))
                 })();
                 result.unwrap_or_else(|err| tool_error(err.message))
             }
@@ -1013,6 +1101,10 @@ pub fn tool_definitions_for(flavor: Flavor) -> Vec<Value> {
         tool["annotations"] = Value::Object(full);
         if flavor == Flavor::ChatGpt {
             tool["securitySchemes"] = json!([{"type": "oauth2", "scopes": ["recipes"]}]);
+            if let Some(meta) = tool["name"].as_str().and_then(crate::mcp_ui::tool_meta) {
+                tool["_meta"] = meta;
+                tool["outputSchema"] = crate::mcp_ui::output_schema();
+            }
         }
     }
     tools

@@ -168,13 +168,15 @@ pub fn logout_cookie(headers: &HeaderMap) -> HeaderValue {
 }
 
 /// `/s/` is share links (src/share.rs): a token gives one recipe, read-only.
-const PUBLIC_PREFIXES: [&str; 8] = [
+const PUBLIC_PREFIXES: [&str; 9] = [
     "/_astro/",
     // Accounts: signing in with Google or Apple, and where they send people back
     "/api/auth/social/",
     // The native apps' Google and Apple sign-in (src/app_sign_in.rs)
     "/api/auth/app/",
     "/fonts/",
+    // A recipe photo behind a signed, hour-long link (src/images.rs): the ChatGPT widget's
+    "/img/s/",
     "/oauth/",
     "/.well-known/",
     "/mcp",
