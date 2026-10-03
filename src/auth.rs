@@ -294,7 +294,8 @@ pub async fn require_login(
 ) -> Response {
     // An API token (`Authorization: Bearer crumb_pat_…`) stands in for the cookie. Not on /mcp,
     // which has its own bearer check (OAuth) and answers a token it doesn't know with its 401
-    if !req.uri().path().starts_with("/mcp")
+    if req.uri().path() != "/mcp"
+        && !req.uri().path().starts_with("/mcp/")
         && let Some(token) = crate::tokens::bearer(req.headers())
     {
         return crate::tokens::serve(&state, &token, req, next).await;
