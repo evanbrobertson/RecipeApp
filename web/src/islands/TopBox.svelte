@@ -15,7 +15,11 @@
     { mode: "text", label: "Recipe text", hint: "Paste the whole recipe" },
     { mode: "photo", label: "Photo", hint: "Snap or upload the pages of a recipe" },
     { mode: "file", label: "File", hint: "PDF, saved web page, text or backup" },
-    { mode: "claude", label: "Claude", hint: "Send a recipe from a Claude chat" },
+    {
+      mode: "claude",
+      label: "Claude or ChatGPT",
+      hint: "Send a recipe from a Claude or ChatGPT chat",
+    },
     { mode: "scratch", label: "From scratch", hint: "Write it out yourself" },
     { mode: "apps", label: "Other apps", hint: "Import from another recipe app" },
   ]

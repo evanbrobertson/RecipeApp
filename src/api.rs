@@ -178,6 +178,7 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
 pub fn connector_info(state: &AppState, headers: &HeaderMap) -> Value {
     json!({
         "mcpUrl": format!("{}/mcp", state.config.public_origin(headers)),
+        "chatgptUrl": format!("{}/mcp/chatgpt", state.config.public_origin(headers)),
         "authEnabled": state.config.auth_enabled(),
         // Wee Chef (the AI helper) is on whenever a key is configured
         "weeChef": crate::llm::available(state),

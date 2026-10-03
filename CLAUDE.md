@@ -191,6 +191,9 @@ web/src/
   tool results hold what it draws in `structuredContent` (which the model reads) and the photo links in `_meta` (widget only).
   The frame has no cookie, so photos are signed, hour-long, one-photo-one-size links, `/img/s/{household}/{id}/{width}`
   (`images::signed_url`, HMAC with the session secret). Claude's results are unchanged. Test the widget in a browser with a stub host.
+  **The package** (`plugin/chatgpt/`): `build.mjs` fills `plugin.json` and `mcp.json` for an origin passed on the command line and writes
+  the ZIP (`bun test plugin/chatgpt`); a `*.railway.app` or localhost origin only makes a `-dev` ZIP. `/connect` has a ChatGPT section
+  (`/api/connector` also returns `chatgptUrl`). The README there lists what submitting still needs.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Trash:** `recipes::delete_recipes` moves recipes to `recipe_trash` (`src/trash.rs`): the whole row as JSON, its cookbooks
   and cooks; restored under its own id within 30 days, then purged. Nothing else needs to skip deleted recipes. The

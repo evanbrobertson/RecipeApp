@@ -2687,6 +2687,19 @@ fn decoded_size(b64: &str) -> (u32, u32) {
 }
 
 #[tokio::test]
+async fn the_connector_info_names_both_endpoints() {
+    let t = TestApp::new(None);
+    let (_, info) = t.json("GET", "/api/connector", None).await;
+    assert!(info["mcpUrl"].as_str().unwrap().ends_with("/mcp"));
+    assert!(
+        info["chatgptUrl"]
+            .as_str()
+            .unwrap()
+            .ends_with("/mcp/chatgpt")
+    );
+}
+
+#[tokio::test]
 async fn photo_import_needs_wee_chef() {
     let t = TestApp::new(None);
     let (status, body) = post_photos(&t, &[exif_jpeg(64, 48, 1)], None).await;
