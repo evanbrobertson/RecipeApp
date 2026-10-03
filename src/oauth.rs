@@ -218,7 +218,7 @@ fn get_str<'a>(m: &'a Map<String, Value>, k: &str) -> Option<&'a str> {
 const REGISTRATIONS_PER_IP: u32 = 10;
 const REGISTRATIONS_TOTAL: u32 = 120;
 /// Registered clients kept. Registration is open by design (Claude registers itself), so
-/// clients nobody has connected are dropped after a week, and sooner when the table is full.
+/// clients nobody has connected are dropped after 90 days, and sooner when the table is full.
 const MAX_CLIENTS: i64 = 1000;
 const UNUSED_CLIENT_TTL: i64 = 90 * DAY;
 
@@ -963,9 +963,13 @@ async fn authorize(
     let resource = if params.resource.is_empty() {
         None
     } else {
-        let path = params.resource.strip_prefix(origin.as_str());
-        match path.filter(|p| matches!(*p, "/mcp" | "/mcp/chatgpt")) {
-            Some(p) => Some(p.to_string()),
+        // Only the path matters: tokens live in this server's database, and the address a
+        // client was given can differ from the public origin (a proxy, a trailing slash)
+        let path = url::Url::parse(&params.resource)
+            .ok()
+            .map(|u| u.path().trim_end_matches('/').to_string());
+        match path.filter(|p| matches!(p.as_str(), "/mcp" | "/mcp/chatgpt")) {
+            Some(p) => Some(p),
             None => {
                 return redirect_back(
                     &params.redirect_uri,
@@ -1122,7 +1126,7 @@ async fn authorize(
 
 /// Hosts whose apps may be called by the name they registered with: Claude's and ChatGPT's own.
 fn is_known_host(host: &str) -> bool {
-    ["claude.ai", "claude.com", "chatgpt.com", "openai.com"]
+    ["claude.ai", "claude.com", "chatgpt.com"]
         .iter()
         .any(|k| host == *k || host.ends_with(&format!(".{k}")))
 }

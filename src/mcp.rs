@@ -990,8 +990,9 @@ fn props(v: Value) -> Map<String, Value> {
     v.as_object().unwrap().clone()
 }
 
-/// The tools a given app sees. Every tool states `readOnlyHint`, `destructiveHint` and
-/// `openWorldHint` (ChatGPT's review rejects a tool that leaves one out); ChatGPT also gets
+/// The tools a given app sees. For ChatGPT every tool states `readOnlyHint`, `destructiveHint`
+/// and `openWorldHint` (its review rejects a tool that leaves one out; Claude's list is as it
+/// was); ChatGPT also gets
 /// `securitySchemes` and none of the tools where Crumb fetches pages itself.
 pub fn tool_definitions_for(flavor: Flavor) -> Vec<Value> {
     let mut tools = tool_definitions();
@@ -1003,15 +1004,18 @@ pub fn tool_definitions_for(flavor: Flavor) -> Vec<Value> {
         });
     }
     for tool in &mut tools {
-        let annotations = tool["annotations"].as_object().cloned().unwrap_or_default();
-        let read_only = annotations.get("readOnlyHint") == Some(&json!(true));
-        let mut full = annotations;
-        full.entry("readOnlyHint").or_insert(json!(false));
-        full.entry("destructiveHint").or_insert(json!(false));
-        full.entry("openWorldHint").or_insert(json!(false));
-        full.entry("idempotentHint").or_insert(json!(read_only));
-        tool["annotations"] = Value::Object(full);
         if flavor == Flavor::ChatGpt {
+            let name = tool["name"].as_str().unwrap_or_default().to_string();
+            let annotations = tool["annotations"].as_object().cloned().unwrap_or_default();
+            let read_only = annotations.get("readOnlyHint") == Some(&json!(true));
+            let mut full = annotations;
+            full.entry("readOnlyHint").or_insert(json!(false));
+            // These replace what the user wrote, so they say so
+            let replaces = matches!(name.as_str(), "update_recipe" | "update_cookbook");
+            full.entry("destructiveHint").or_insert(json!(replaces));
+            full.entry("openWorldHint").or_insert(json!(false));
+            full.entry("idempotentHint").or_insert(json!(read_only));
+            tool["annotations"] = Value::Object(full);
             tool["securitySchemes"] = json!([{"type": "oauth2", "scopes": ["recipes"]}]);
         }
     }

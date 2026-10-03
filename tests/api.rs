@@ -930,12 +930,40 @@ async fn chatgpt_connects_to_its_own_endpoint() {
     let (status, _) = mcp_rpc(&t, "/mcp/chatgpt", &claude, ping).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // The address a client was given can differ from the public origin (proxy, trailing slash)
+    let (_, token) = connect_app(
+        &t,
+        "ChatGPT",
+        redirect,
+        Some("https://other.example/mcp/chatgpt/"),
+    )
+    .await;
+    assert!(token.is_some());
+    // Claude's tool list keeps its own hints: nothing is filled in
+    let (_, claude_tools) = mcp_rpc(
+        &t,
+        "/mcp",
+        &claude,
+        json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}),
+    )
+    .await;
+    let update = claude_tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "update_recipe")
+        .unwrap();
+    assert!(update["annotations"].get("destructiveHint").is_none());
+    assert!(update.get("securitySchemes").is_none());
+    let chatgpt_update = tools.iter().find(|t| t["name"] == "update_recipe").unwrap();
+    assert_eq!(chatgpt_update["annotations"]["destructiveHint"], true);
+
     // A resource that isn't ours is refused
     let (query, token) = connect_app(
         &t,
         "ChatGPT",
         redirect,
-        Some("https://elsewhere.example/mcp"),
+        Some("https://elsewhere.example/admin"),
     )
     .await;
     assert!(token.is_none());
