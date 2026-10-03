@@ -1,6 +1,6 @@
 # `crumb`: the command-line surface
 
-A spec, not an implementation. The CLI is another thin client like desktop and Android: it links
+A spec, with phase 1 built in `crates/crumb-cli` (see "Built so far" at the end). The CLI is another thin client like desktop and Android: it links
 `crumb-client` (and `crumb-core` for pure logic) and re-implements nothing. It is built **mostly for agents** that have a shell but not the MCP connector, and for scripts. It is not a TUI:
 no command takes over the screen, everything is line-oriented and works with no TTY. Three kinds of use, in priority order:
 
@@ -205,3 +205,20 @@ crumb api <METHOD> <path> [--data JSON]   # escape hatch like `gh api`, for anyt
 1. **Shopping list:** client-only `shop` for now; a server-side list would be a separate, cross-surface feature.
 2. **Fuzzy title lookup** (`crumb show "lemon pasta"`): client-side over `recipes` search for v1; may want a server
    `resolve` endpoint if boxes get large.
+
+## Built so far
+
+Phase 1, on a token-only sign-in: `login`, `logout`, `whoami`, `doctor`, `ls`, `show`, `add`, `cooked`,
+`export` (one recipe), `random`, `next`, `completions`, with `--json`, `-q` and the exit codes above. Where it differs
+from the sketch:
+
+- **Credentials:** one `0600` file, `$XDG_CONFIG_HOME/crumb/credentials.toml` (profiles with a server and a token),
+  written only by `crumb login`; no OS keyring yet. `--token` / `CRUMB_TOKEN` always win, which is what agents use.
+- **No password login yet.** A person makes a token on the account page (More → Account → API tokens). Password and
+  accounts sign-in, browser sign-in and `--device` come later; none is needed by an agent.
+- **`ls QUERY`** is positional, because `-q` is the global "ids only" flag. `--cookbook`, `--sort` and `--tag` wait for
+  the server's list to support them.
+- **`add`** previews a link first (so `-n` works and a dedupe says so), then imports; text comes from `-` or a file.
+  Sources that need a browser (`--page`, photos, zips) come later.
+- **`show --scale N`** multiplies the ingredient lines with `crumb_core::ingredients::scale_ingredient`;
+  `--servings` isn't built.
