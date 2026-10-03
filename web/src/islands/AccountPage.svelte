@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Copy from "@lucide/svelte/icons/copy"
   import Download from "@lucide/svelte/icons/download"
   import KeyRound from "@lucide/svelte/icons/key-round"
   import Link2 from "@lucide/svelte/icons/link-2"
@@ -14,7 +15,11 @@
   import PasswordInput from "../components/PasswordInput.svelte"
   import SocialButtons from "../components/SocialButtons.svelte"
   import {
+    type ApiToken,
     type ConnectedApp,
+    apiTokens,
+    createApiToken,
+    revokeApiToken,
     type Provider,
     type SignInMethods,
     type Status,
@@ -38,8 +43,15 @@
   let status = $state<Status | null>(null)
   let methods = $state<SignInMethods | null>(null)
   let apps = $state<ConnectedApp[] | null>(null)
+  let tokens = $state<ApiToken[] | null>(null)
+  let tokenName = $state("")
+  let tokenScope = $state<"read" | "write">("write")
+  let tokenDays = $state("")
+  let tokenError = $state("")
+  /** A token just made: shown once, here, and nowhere after. */
+  let fresh = $state<{ name: string; token: string } | null>(null)
   let busy = $state(false)
-  /** The row asking to confirm: `app:<id>`, `unlink:<provider>`, `email` or `delete`. */
+  /** The row asking to confirm: `app:<id>`, `token:<id>`, `unlink:<provider>`, `email` or `delete`. */
   let confirming = $state<string | null>(null)
   let password = $state("")
   let typedEmail = $state("")
@@ -66,7 +78,7 @@
     if (linked || failed) history.replaceState(null, "", location.pathname)
 
     status = await authStatus()
-    await Promise.all([loadApps(), signedIn ? loadMethods() : null])
+    await Promise.all([loadApps(), loadTokens(), signedIn ? loadMethods() : null])
   })
 
   async function loadMethods() {
@@ -77,6 +89,51 @@
 
   async function loadApps() {
     apps = await connectedApps().catch(() => [])
+  }
+
+  async function loadTokens() {
+    tokens = await apiTokens().catch(() => [])
+  }
+
+  async function makeToken(e: SubmitEvent) {
+    e.preventDefault()
+    busy = true
+    tokenError = ""
+    try {
+      const made = await createApiToken(
+        tokenName.trim(),
+        tokenScope,
+        tokenDays ? Number(tokenDays) : undefined,
+      )
+      fresh = { name: tokenName.trim(), token: made.token }
+      tokenName = ""
+      await loadTokens()
+    } catch (err) {
+      tokenError = errorMessage(err, "Couldn't make the token")
+    }
+    busy = false
+  }
+
+  async function revoke(token: ApiToken) {
+    busy = true
+    try {
+      await revokeApiToken(token)
+      confirming = null
+      await loadTokens()
+      toast({ title: `${token.name} revoked`, description: "It stopped working." })
+    } catch (err) {
+      toast({ title: errorMessage(err, "Couldn't revoke it"), tone: "error" })
+    }
+    busy = false
+  }
+
+  async function copyToken() {
+    try {
+      await navigator.clipboard.writeText(fresh!.token)
+      toast({ title: "Token copied" })
+    } catch {
+      toast({ title: "Couldn't copy. Select it and copy by hand", tone: "error" })
+    }
   }
 
   const day = (secs: number) =>
@@ -383,6 +440,133 @@
           {/each}
         {/if}
       </ul>
+    </section>
+
+    <section>
+      <h2 class="settings-heading" id="tokens-title">API tokens</h2>
+      <p class="text-ink-muted mb-2 text-sm">
+        For scripts and agents that can't sign in through a browser, like the Crumb command line. A
+        token works on this household only, and can never empty the Trash or touch your account.
+      </p>
+      {#if fresh}
+        <div class="list-card mb-3 p-4" role="status">
+          <p class="font-bold">Copy “{fresh.name}” now</p>
+          <p class="text-ink-muted mb-2 text-sm">It won't be shown again.</p>
+          <div class="flex items-center gap-2">
+            <code class="input min-w-0 flex-1 truncate select-all">{fresh.token}</code>
+            <button
+              type="button"
+              class="btn btn-ghost btn-icon flex-none"
+              aria-label="Copy the token"
+              onclick={copyToken}
+            >
+              <Copy />
+            </button>
+          </div>
+          <button type="button" class="btn btn-ghost mt-2" onclick={() => (fresh = null)}>
+            Done
+          </button>
+        </div>
+      {/if}
+      <ul class="list-card" aria-labelledby="tokens-title">
+        {#if tokens === null}
+          <li class="list-row settings-row">
+            <LoaderCircle class="settings-icon animate-spin" />
+            <span class="text-ink-muted flex-1">Loading…</span>
+          </li>
+        {:else if tokens.length === 0}
+          <li class="list-row settings-row">
+            <KeyRound class="settings-icon" />
+            <span class="text-ink-muted flex-1">No tokens yet</span>
+          </li>
+        {:else}
+          {#each tokens as token (token.id)}
+            <li class="list-row settings-row flex-wrap">
+              <KeyRound class="settings-icon" />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-bold">{token.name}</span>
+                <span class="text-ink-muted block text-sm">
+                  {[
+                    token.scope === "write" ? "Can read and change" : "Read only",
+                    token.household?.name,
+                    token.expired
+                      ? "expired"
+                      : token.expiresAt
+                        ? `expires ${day(token.expiresAt)}`
+                        : null,
+                    token.lastUsedAt ? `used ${day(token.lastUsedAt)}` : "never used",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </span>
+              {#if confirming === `token:${token.id}`}
+                <span class="flex w-full flex-wrap items-center justify-end gap-2 pl-[2.125rem]">
+                  <span class="text-ink-muted mr-auto text-sm">Anything using it stops working.</span>
+                  <button type="button" class="btn btn-ghost" onclick={() => (confirming = null)}>
+                    Keep
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    disabled={busy}
+                    onclick={() => revoke(token)}
+                  >
+                    Revoke
+                  </button>
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-icon flex-none"
+                  aria-label={`Revoke ${token.name}`}
+                  title="Revoke"
+                  onclick={() => (confirming = `token:${token.id}`)}
+                >
+                  <Trash2 />
+                </button>
+              {/if}
+            </li>
+          {/each}
+        {/if}
+      </ul>
+      <form class="list-card mt-3 grid gap-3 p-4" onsubmit={makeToken}>
+        <div>
+          <label class="label" for="token-name">Name</label>
+          <input
+            id="token-name"
+            class="input"
+            bind:value={tokenName}
+            maxlength="80"
+            placeholder="Laptop, my agent…"
+            required
+          />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label" for="token-scope">Can</label>
+            <select id="token-scope" class="input" bind:value={tokenScope}>
+              <option value="write">Read and change</option>
+              <option value="read">Only read</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="token-days">Lasts</label>
+            <select id="token-days" class="input" bind:value={tokenDays}>
+              <option value="">Until revoked</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+          </div>
+        </div>
+        {#if tokenError}
+          <p class="text-error text-sm" role="alert">{tokenError}</p>
+        {/if}
+        <button class="btn btn-primary justify-self-start" disabled={busy || !tokenName.trim()}>
+          Make a token
+        </button>
+      </form>
     </section>
 
     {#if signedIn}

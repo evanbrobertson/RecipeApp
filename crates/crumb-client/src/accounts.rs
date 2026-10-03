@@ -172,6 +172,44 @@ pub struct ConnectedApp {
     pub connected_at: i64,
 }
 
+/// What an API token may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenScope {
+    /// GET requests only.
+    Read,
+    /// Everything but what no token may do (the Trash's emptying, the account, sign-in).
+    Write,
+}
+
+/// One of the signed-in person's API tokens, as listed; the secret is never in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiToken {
+    pub id: i64,
+    pub name: String,
+    pub scope: TokenScope,
+    pub household: Option<ConnectedHousehold>,
+    /// Unix seconds.
+    pub created_at: i64,
+    pub last_used_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub expired: bool,
+}
+
+/// A token just made: `token` is shown this once and kept nowhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewApiToken {
+    pub id: i64,
+    pub name: String,
+    pub scope: TokenScope,
+    pub token: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectedHousehold {
     pub id: i64,
@@ -248,6 +286,32 @@ impl Client {
     /// `GET /api/connections`: the apps connected to this account.
     pub async fn connected_apps(&self) -> Result<Vec<ConnectedApp>, Error> {
         self.fetch(self.http.get(self.endpoint("api/connections")))
+            .await
+    }
+
+    /// `GET /api/tokens`: the signed-in person's API tokens. A token can't ask (403).
+    pub async fn api_tokens(&self) -> Result<Vec<ApiToken>, Error> {
+        self.fetch(self.http.get(self.endpoint("api/tokens"))).await
+    }
+
+    /// `POST /api/tokens`: makes an API token, good for `expires_in_days` or until revoked.
+    pub async fn create_api_token(
+        &self,
+        name: &str,
+        scope: TokenScope,
+        expires_in_days: Option<u32>,
+    ) -> Result<NewApiToken, Error> {
+        self.fetch(self.http.post(self.endpoint("api/tokens")).json(&json!({
+            "name": name,
+            "scope": scope,
+            "expiresInDays": expires_in_days,
+        })))
+        .await
+    }
+
+    /// `DELETE /api/tokens/{id}`: it stops working at once.
+    pub async fn revoke_api_token(&self, id: i64) -> Result<(), Error> {
+        self.call(self.http.delete(self.endpoint(&format!("api/tokens/{id}"))))
             .await
     }
 

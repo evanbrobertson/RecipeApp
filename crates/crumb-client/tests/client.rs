@@ -4,7 +4,7 @@ use crumb::{AppState, app, browser::Browser, config::Config, db};
 use crumb_client::{
     AiStatus, Client, CookStats, Cooked, Credentials, Device, Error, ImportInput, Imported,
     ImportedCookbook, Mode, Preview, Provider, Recipe, RecipeFormat, SESSION_COOKIE, Section,
-    ShareKind, Status, StatusHousehold,
+    ShareKind, Status, StatusHousehold, TokenScope,
 };
 use serde_json::{Value, json};
 
@@ -1389,4 +1389,42 @@ async fn apps_start_a_google_sign_in_in_the_browser() {
         Err(Error::Api { status: 410, .. })
     ));
     assert!(!client.auth_status().await.signed_in);
+}
+
+#[tokio::test]
+async fn an_api_token_stands_in_for_a_session() {
+    let server = Server::start(Some("pw")).await;
+    let person = Client::new(&server.origin).unwrap();
+    person.login("pw").await.unwrap();
+
+    let made = person
+        .create_api_token("script", TokenScope::Write, Some(30))
+        .await
+        .unwrap();
+    assert!(made.token.starts_with("crumb_pat_") && made.expires_at.is_some());
+    let listed = person.api_tokens().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].scope, TokenScope::Write);
+
+    // The token alone signs in: it lists, but it can't see or make tokens
+    let script = Client::with_token(&server.origin, &made.token).unwrap();
+    assert!(script.session_cookie().is_none());
+    script.recipes(None, None).await.unwrap();
+    assert!(matches!(
+        script.api_tokens().await,
+        Err(Error::Api { status: 403, .. })
+    ));
+    assert!(matches!(
+        Client::with_token(&server.origin, "crumb_pat_wrong")
+            .unwrap()
+            .recipes(None, None)
+            .await,
+        Err(Error::Unauthorized)
+    ));
+
+    person.revoke_api_token(made.id).await.unwrap();
+    assert!(matches!(
+        script.recipes(None, None).await,
+        Err(Error::Unauthorized)
+    ));
 }
