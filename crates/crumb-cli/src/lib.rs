@@ -5,6 +5,7 @@
 
 mod config;
 mod error;
+mod organise;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -105,10 +106,91 @@ enum Command {
         #[arg(long, default_value_t = 5)]
         limit: u32,
     },
+    /// Change fields on a recipe: crumb set 12 title="New" servings=4 notes=""
+    Set {
+        id: i64,
+        /// field=value pairs; an empty value clears the field
+        #[arg(required = true)]
+        fields: Vec<String>,
+    },
+    /// Move recipes to the Trash (restorable for 30 days)
+    Rm {
+        #[arg(required = true)]
+        ids: Vec<i64>,
+        /// Needed to delete more than one at once
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// The Trash: list it, or restore a recipe. Emptying is only in the browser
+    Trash {
+        #[command(subcommand)]
+        action: Option<TrashAction>,
+    },
+    /// Cookbooks
+    Books {
+        #[command(subcommand)]
+        action: Option<BooksAction>,
+    },
+    /// A public link to a recipe (or a cookbook with --book); prints just the URL
+    Share {
+        id: i64,
+        /// The id is a cookbook's
+        #[arg(long)]
+        book: bool,
+        /// Stop sharing it
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Call any /api route: crumb api GET /api/health
+    Api {
+        method: String,
+        path: String,
+        /// A JSON body
+        #[arg(long)]
+        data: Option<String>,
+    },
     /// Check the server and the token
     Doctor,
     /// Print a shell completion script
     Completions { shell: clap_complete::Shell },
+}
+
+#[derive(Subcommand)]
+enum TrashAction {
+    /// What's in the Trash
+    Ls,
+    /// Put a recipe back
+    Restore { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum BooksAction {
+    /// The cookbooks
+    Ls,
+    /// A cookbook and its recipes
+    Show { id: i64 },
+    /// Make a cookbook
+    New {
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Rename a cookbook
+    Rename { id: i64, name: String },
+    /// Delete a cookbook (its recipes stay in the box)
+    Rm {
+        id: i64,
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Put recipes in a cookbook
+    Add {
+        book: i64,
+        #[arg(required = true)]
+        ids: Vec<i64>,
+    },
+    /// Take a recipe out of a cookbook
+    Remove { book: i64, id: i64 },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -248,6 +330,12 @@ impl Run<'_> {
             }
             Command::Random => self.random().await,
             Command::Next { limit } => self.next(*limit).await,
+            Command::Set { id, fields } => self.set(*id, fields).await,
+            Command::Rm { ids, yes } => self.rm(ids, *yes).await,
+            Command::Trash { action } => self.trash(action.as_ref()).await,
+            Command::Books { action } => self.books(action.as_ref()).await,
+            Command::Share { id, book, stop } => self.share(*id, *book, *stop).await,
+            Command::Api { method, path, data } => self.api(method, path, data.as_deref()).await,
             Command::Doctor => self.doctor().await,
             Command::Completions { shell } => {
                 let mut bytes = Vec::new();

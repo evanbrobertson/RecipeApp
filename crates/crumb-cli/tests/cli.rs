@@ -284,3 +284,97 @@ async fn errors_are_json_on_stderr_when_asked() {
     down.server = "http://127.0.0.1:1".into();
     assert_eq!(down.run(&["ls"]).await.code, 6);
 }
+
+#[tokio::test]
+async fn set_rm_trash_books_share_and_api() {
+    let server = Server::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = server.crumb(&dir);
+    let a = save(&server, "Plain Rice").await;
+    let b = save(&server, "Plain Beans").await;
+
+    // set: aliases, clearing, and unknown fields
+    let out = c
+        .run(&[
+            "set",
+            &a.to_string(),
+            "title=Garlic Rice",
+            "servings=6",
+            "notes=Rinse it.",
+        ])
+        .await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let shown = c.run(&["--json", "show", &a.to_string()]).await.stdout;
+    let shown: Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(shown["title"], "Garlic Rice");
+    assert_eq!(shown["recipeYield"], "6");
+    assert_eq!(shown["notes"], "Rinse it.");
+    c.run(&["set", &a.to_string(), "notes="]).await;
+    let shown = c.run(&["--json", "show", &a.to_string()]).await.stdout;
+    assert!(serde_json::from_str::<Value>(&shown).unwrap()["notes"].is_null());
+    assert_eq!(c.run(&["set", &a.to_string(), "colour=red"]).await.code, 2);
+    assert_eq!(c.run(&["set", &a.to_string(), "nonsense"]).await.code, 2);
+    assert_eq!(c.run(&["set", "999999", "title=x"]).await.code, 5);
+
+    // books
+    let out = c.run(&["-q", "books", "new", "Weeknights"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let book = out.stdout.trim().to_string();
+    let out = c
+        .run(&["books", "add", &book, &a.to_string(), &b.to_string()])
+        .await;
+    assert!(
+        out.stdout.contains("Added 2"),
+        "{}{}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(c.run(&["books"]).await.stdout.contains("Weeknights\t2"));
+    let out = c.run(&["-q", "books", "show", &book]).await;
+    assert_eq!(out.stdout.lines().count(), 2);
+    c.run(&["books", "remove", &book, &b.to_string()]).await;
+    assert_eq!(
+        c.run(&["-q", "books", "show", &book])
+            .await
+            .stdout
+            .lines()
+            .count(),
+        1
+    );
+    c.run(&["books", "rename", &book, "Dinners"]).await;
+    assert!(c.run(&["books"]).await.stdout.contains("Dinners"));
+    assert_eq!(c.run(&["books", "rm", &book]).await.code, 2);
+    assert_eq!(c.run(&["books", "rm", &book, "-y"]).await.code, 0);
+
+    // share
+    let out = c.run(&["share", &a.to_string()]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.trim().starts_with("http") && out.stdout.trim().lines().count() == 1);
+    assert_eq!(c.run(&["share", &a.to_string(), "--stop"]).await.code, 0);
+
+    // rm: one is plain, several need -y; the Trash lists and restores, and can't be emptied
+    let out = c.run(&["rm", &a.to_string(), &b.to_string()]).await;
+    assert_eq!(out.code, 2);
+    assert!(c.run(&["-q", "ls"]).await.stdout.contains(&a.to_string()));
+    let out = c.run(&["rm", &a.to_string(), &b.to_string(), "-y"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.contains("crumb trash restore"));
+    assert!(c.run(&["-q", "ls"]).await.stdout.is_empty());
+    assert_eq!(c.run(&["-q", "trash"]).await.stdout.lines().count(), 2);
+    let out = c.run(&["trash", "restore", &a.to_string()]).await;
+    assert!(out.stdout.starts_with("Restored"), "{}", out.stdout);
+    assert_eq!(c.run(&["-q", "ls"]).await.stdout.trim(), a.to_string());
+
+    // api: any route, but not the ones tokens can't use, and nothing outside /api
+    let out = c.run(&["api", "GET", "/api/health"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(c.run(&["api", "GET", "/api/tokens"]).await.code, 3);
+    assert_eq!(c.run(&["api", "DELETE", "/api/trash"]).await.code, 3);
+    assert_eq!(c.run(&["api", "GET", "/recipes"]).await.code, 2);
+    assert_eq!(
+        c.run(&["api", "POST", "/api/recipes", "--data", "{oops"])
+            .await
+            .code,
+        2
+    );
+}

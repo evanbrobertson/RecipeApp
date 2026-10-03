@@ -208,8 +208,8 @@ crumb api <METHOD> <path> [--data JSON]   # escape hatch like `gh api`, for anyt
 
 ## Built so far
 
-Phase 1, on a token-only sign-in: `login`, `logout`, `whoami`, `doctor`, `ls`, `show`, `add`, `cooked`,
-`export` (one recipe), `random`, `next`, `completions`, with `--json`, `-q` and the exit codes above. Where it differs
+Phases 1 and most of 2, on a token-only sign-in: `login`, `logout`, `whoami`, `doctor`, `ls`, `show`, `add`, `cooked`,
+`export` (one recipe), `random`, `next`, `completions`, `set`, `rm`, `trash` (list, restore), `books`, `share`, `api`, with `--json`, `-q` and the exit codes above. Where it differs
 from the sketch:
 
 - **Credentials:** one `0600` file, `$XDG_CONFIG_HOME/crumb/credentials.toml` (profiles with a server and a token),
@@ -222,3 +222,12 @@ from the sketch:
   Sources that need a browser (`--page`, photos, zips) come later.
 - **`show --scale N`** multiplies the ingredient lines with `crumb_core::ingredients::scale_ingredient`;
   `--servings` isn't built.
+- **`set`** takes `field=value` pairs (title, description, notes, author, servings, category, cuisine, url, video, and the
+  three times; an empty value clears it). Ingredients and steps go through `crumb api PATCH /api/recipes/<id>`. There is
+  no `edit` ($EDITOR): this is for agents.
+- **`rm`** of one recipe just does it and prints how to restore; several need `-y`, since the CLI never prompts.
+  `books rm` needs `-y` too.
+- **`trash`** lists and restores only. `purge` can't work with a token, by design, so it's the browser's.
+- **`api`** is limited to `/api/…` and gets the same 403s as everything else a token can't do.
+- **Not built yet:** `refresh` (no REST route; the connector has it, so it wants a server change first), `checks`, `open`,
+  photo and file import, `popular`, `prep`, `shop`, the release workflow (musl binary, AUR `crumb-cli`).
