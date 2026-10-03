@@ -204,6 +204,9 @@ pub struct Config {
     /// Wee Chef's import checks: on with a TYPESAFE_API_KEY, unless CHECKS_AI=off.
     pub typesafe: Option<TypesafeConfig>,
     pub site_url: Option<String>,
+    /// What OpenAI asks to be served at `/.well-known/openai-apps-challenge` to verify the
+    /// domain before a ChatGPT plugin is submitted.
+    pub openai_apps_challenge: Option<String>,
     pub railway_domain: Option<String>,
     /// Behind Railway's proxy (`RAILWAY_ENVIRONMENT` is set): the client's address is
     /// `X-Real-IP`, else the last `X-Forwarded-For` hop. Otherwise forwarded headers are ignored.
@@ -274,6 +277,7 @@ impl Default for Config {
             idea_one_in: 3,
             typesafe: None,
             site_url: None,
+            openai_apps_challenge: None,
             railway_domain: None,
             trust_proxy_headers: false,
             web_dist: PathBuf::from("web/dist"),
@@ -427,6 +431,7 @@ impl Config {
             idea_one_in: d.idea_one_in,
             typesafe: typesafe_from_env(),
             site_url: env(&["SITE_URL", "NUXT_PUBLIC_SITE_URL"]),
+            openai_apps_challenge: env(&["OPENAI_APPS_CHALLENGE"]),
             railway_domain: env(&["RAILWAY_PUBLIC_DOMAIN"]),
             trust_proxy_headers: env(&["RAILWAY_ENVIRONMENT"]).is_some(),
             web_dist: env(&["WEB_DIST"]).map(PathBuf::from).unwrap_or(d.web_dist),

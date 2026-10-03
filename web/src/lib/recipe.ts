@@ -5,7 +5,7 @@ export interface RecipeSection {
   items: string[]
 }
 
-export type RecipeSource = "url" | "text" | "claude" | "manual" | "import" | "video"
+export type RecipeSource = "url" | "text" | "claude" | "chatgpt" | "manual" | "import" | "video"
 
 export interface RecipeFields {
   title: string

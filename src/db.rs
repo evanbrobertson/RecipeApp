@@ -292,6 +292,11 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
             ))?;
         }
     }
+    // Which endpoint a token is for (/mcp for Claude, /mcp/chatgpt); NULL from before this
+    // column, which is Claude's
+    if !tokens.iter().any(|c| c.name == "resource") {
+        conn.execute_batch("ALTER TABLE oauth_tokens ADD COLUMN resource text")?;
+    }
     // Wee Chef's checks: what a fix wrote (for Undo), why a recipe was queued, and the
     // recipe's updated_at when a check last left it (so later edits are re-checked)
     let checks = columns(conn, "recipe_checks")?;
