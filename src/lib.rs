@@ -34,6 +34,7 @@ pub mod social;
 pub mod suggestions;
 pub mod telemetry;
 pub mod throttle;
+pub mod tokens;
 pub mod trash;
 pub mod video;
 pub mod video_jobs;
@@ -240,6 +241,7 @@ pub fn app(state: AppState) -> Router {
         // Hosted: the rest of /api/auth/* is Better Auth's
         .route("/api/auth/{*rest}", axum::routing::any(hosted::proxy))
         .merge(oauth::routes())
+        .merge(tokens::routes())
         .merge(mcp::routes())
         .merge(images::routes())
         .merge(share::api_routes())

@@ -149,6 +149,29 @@ impl Client {
         })
     }
 
+    /// Signs in with an API token (`crumb_pat_…`, made on the account page) instead of a
+    /// session: every request carries it as a bearer token, and there is no cookie to keep.
+    pub fn with_token(base_url: &str, token: &str) -> Result<Self, Error> {
+        let (base, url) = parse_base(base_url)?;
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.trim()))
+            .map_err(|_| Error::Network("that token has characters a token can't".into()))?;
+        value.set_sensitive(true);
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+        let jar = Arc::new(Jar::default());
+        let http = HttpClient::builder()
+            .cookie_provider(jar.clone())
+            .default_headers(headers)
+            .build()
+            .map_err(|err| Error::Network(err.to_string()))?;
+        Ok(Self {
+            base,
+            url,
+            http,
+            jar,
+        })
+    }
+
     /// Restores a session from a previously saved [`Client::session_cookie`] value: a bare
     /// `crumb_session` value, or `name=value` for the hosted edition's cookie.
     pub fn with_session(base_url: &str, cookie: &str) -> Result<Self, Error> {

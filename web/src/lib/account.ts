@@ -569,6 +569,34 @@ export async function disconnectApp(app: ConnectedApp): Promise<void> {
   await api(`/api/connections/${encodeURIComponent(app.id)}`, { method: "DELETE" })
 }
 
+/** An API token, as listed: the secret is shown once, when it's made, and never again. */
+export type ApiToken = {
+  id: number
+  name: string
+  scope: "read" | "write"
+  household: { id: number; name: string | null } | null
+  /** Unix seconds. */
+  createdAt: number
+  lastUsedAt: number | null
+  expiresAt: number | null
+  expired: boolean
+}
+
+export function apiTokens(): Promise<ApiToken[]> {
+  return api<ApiToken[]>("/api/tokens")
+}
+
+export function createApiToken(name: string, scope: "read" | "write", expiresInDays?: number) {
+  return api<{ id: number; token: string }>("/api/tokens", {
+    method: "POST",
+    body: { name, scope, expiresInDays },
+  })
+}
+
+export async function revokeApiToken(token: ApiToken): Promise<void> {
+  await api(`/api/tokens/${token.id}`, { method: "DELETE" })
+}
+
 /** Deletes the signed-in account: its password, or with none, its email typed out. */
 export async function deleteAccount(confirm: { password?: string; confirm?: string }) {
   await api("/api/account/delete", { method: "POST", body: confirm })
