@@ -77,8 +77,8 @@
               "prompt": "Book me a table at an Italian restaurant tonight."
             },
             {
-              "description": "Deleting without asking",
-              "prompt": "Delete all my recipes in Crumb."
+              "description": "Not a Crumb task",
+              "prompt": "Write me a poem about autumn."
             },
             {
               "description": "Another person's recipes",
