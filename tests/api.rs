@@ -7049,6 +7049,22 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     let (status, text) = mcp_search(&t, &token).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert!(text.contains("Old Faithful"), "{text}");
+    // An API token works there too (the household is checked with Better Auth, and the
+    // token never stands in for a signed-in person)
+    let made = signed(
+        &t,
+        bob,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "script", "scope": "write"})),
+    )
+    .await;
+    let pat = made["token"].as_str().unwrap().to_string();
+    let (status, list) = with_token(&t, &pat, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list[0]["title"], "Old Faithful");
+    let (status, _) = with_token(&t, &pat, "GET", "/api/tokens", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _, _) = t
         .send(
             Request::builder()
@@ -7062,6 +7078,12 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = mcp_search(&t, &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = with_token(&t, &pat, "GET", "/api/recipes", None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "his API token went with his membership"
+    );
     let list = signed(&t, bob, "GET", "/api/recipes", None).await;
     assert_eq!(list[0]["title"], "Bob's Pie", "back in his own box");
     let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
@@ -9005,4 +9027,307 @@ async fn popular_lists_links_enough_households_saved() {
     crumb::popular::set_opted_out(&t.state.for_household(ids[2]).unwrap().db.lock(), true).unwrap();
     t.state.popular.forget().await;
     assert!(crumb::popular::for_household(&home).await.is_empty());
+}
+
+/// A JSON request carrying an API token.
+async fn with_token(
+    t: &TestApp,
+    token: &str,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let body = match body {
+        Some(b) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(b.to_string())
+        }
+        None => Body::empty(),
+    };
+    let (status, _, text) = t.send(req.body(body).unwrap()).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn api_tokens_work_with_one_password_and_stay_in_their_lane() {
+    let t = TestApp::new(Some("pw"));
+    let cookie = sign_in(&t, "pw").await;
+
+    // No sign-in, no tokens; a made-up token is refused
+    let (status, _) = call(
+        &t,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "x", "scope": "read"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = with_token(&t, "crumb_pat_nope", "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Names and scopes are checked
+    for bad in [
+        json!({"scope": "read"}),
+        json!({"name": "x", "scope": "admin"}),
+    ] {
+        let (status, _) = call(&t, "POST", "/api/tokens", Some(bad), Some(&cookie)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    let reader = signed(
+        &t,
+        &cookie,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "agent", "scope": "read"})),
+    )
+    .await;
+    let writer = signed(
+        &t,
+        &cookie,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "cli", "scope": "write"})),
+    )
+    .await;
+    let (read, write) = (
+        reader["token"].as_str().unwrap(),
+        writer["token"].as_str().unwrap(),
+    );
+    assert!(read.starts_with("crumb_pat_"));
+
+    // Listed without the secret
+    let list = signed(&t, &cookie, "GET", "/api/tokens", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert!(list.to_string().find("crumb_pat_").is_none());
+
+    // Read reads, can't write; write does both
+    let (status, _) = with_token(&t, read, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let recipe = book_recipe("Token Soup", None, "");
+    let (status, err) = with_token(&t, read, "POST", "/api/recipes", Some(recipe.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{err}");
+    let (status, made) = with_token(&t, write, "POST", "/api/recipes", Some(recipe)).await;
+    assert!(status.is_success(), "{made}");
+    let id = made["id"].as_i64().unwrap();
+
+    // Never: tokens, sign-in, account, connected apps, emptying or purging the Trash
+    for (method, path) in [
+        ("GET", "/api/tokens".to_string()),
+        ("POST", "/api/tokens".to_string()),
+        ("DELETE", "/api/tokens/1".to_string()),
+        ("GET", "/api/connections".to_string()),
+        ("GET", "/api/account/export".to_string()),
+        ("DELETE", "/api/trash".to_string()),
+        ("DELETE", "/api/trash/1".to_string()),
+    ] {
+        let (status, _) = with_token(&t, write, method, &path, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
+    }
+    // Deleting a recipe is the Trash, which a write token may do and the web may restore
+    let (status, _) = with_token(&t, write, "DELETE", &format!("/api/recipes/{id}"), None).await;
+    assert!(status.is_success());
+    let (status, _) = with_token(&t, write, "GET", "/api/trash", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Revoking stops it at once
+    let rid = reader["id"].as_i64().unwrap();
+    signed(&t, &cookie, "DELETE", &format!("/api/tokens/{rid}"), None).await;
+    let (status, _) = with_token(&t, read, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = call(
+        &t,
+        "DELETE",
+        &format!("/api/tokens/{rid}"),
+        None,
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A token on /mcp isn't the connector's: its own 401, nothing from the token layer
+    let (status, _) = with_token(&t, write, "POST", "/mcp", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // An expired one stops working too
+    let short = signed(
+        &t,
+        &cookie,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "short", "scope": "read", "expiresInDays": 1})),
+    )
+    .await;
+    t.state
+        .households
+        .home()
+        .db
+        .lock()
+        .execute("UPDATE api_tokens SET expires_at = 1", [])
+        .unwrap();
+    let (status, _) = with_token(
+        &t,
+        short["token"].as_str().unwrap(),
+        "GET",
+        "/api/recipes",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_tokens_follow_their_person_and_household_with_accounts() {
+    let t = accounts_app(None, true);
+    let (_, ann, _) = auth_post(
+        &t,
+        "/api/auth/setup",
+        json!({"email": "ann@example.com", "name": "Ann", "password": "correct horse"}),
+    )
+    .await;
+    let ann = ann.unwrap();
+    let (_, bob, _) = auth_post(
+        &t,
+        "/api/auth/signup",
+        json!({"email": "bob@example.com", "name": "Bob", "password": "another pass"}),
+    )
+    .await;
+    let bob = bob.unwrap();
+    signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Ann's Soup", None, "")),
+    )
+    .await;
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/recipes",
+        Some(book_recipe("Bob's Pie", None, "")),
+    )
+    .await;
+
+    let ann_token = signed(
+        &t,
+        &ann,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "agent", "scope": "write"})),
+    )
+    .await;
+    let ann_token = ann_token["token"].as_str().unwrap().to_string();
+
+    // The token reads Ann's box only, and handlers that ask who it is know
+    let (status, found) = with_token(&t, &ann_token, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let text = found.to_string();
+    assert!(
+        text.contains("Ann's Soup") && !text.contains("Bob's Pie"),
+        "{text}"
+    );
+
+    // Bob sees none of Ann's tokens, and can't revoke them
+    assert_eq!(
+        signed(&t, &bob, "GET", "/api/tokens", None).await,
+        json!([])
+    );
+    let id = signed(&t, &ann, "GET", "/api/tokens", None).await[0]["id"]
+        .as_i64()
+        .unwrap();
+    let (status, _) = call(&t, "DELETE", &format!("/api/tokens/{id}"), None, Some(&bob)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A token can't make tokens; only a sign-in can
+    let (status, _) = with_token(
+        &t,
+        &ann_token,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "more", "scope": "write"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Bob joins Ann's kitchen, makes a token there, and loses it when Ann removes him
+    let (invite_token, _) = invite(&t, &ann).await;
+    signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/auth/invite/accept",
+        Some(json!({"token": invite_token})),
+    )
+    .await;
+    let bobs = signed(
+        &t,
+        &bob,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "bob", "scope": "read"})),
+    )
+    .await;
+    let bobs = bobs["token"].as_str().unwrap();
+    let (status, found) = with_token(&t, bobs, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(found.to_string().contains("Ann's Soup"));
+    let h = signed(&t, &ann, "GET", "/api/auth/household", None).await;
+    let bob_id = h["members"][1]["userId"].as_i64().unwrap();
+    signed(
+        &t,
+        &ann,
+        "DELETE",
+        &format!("/api/auth/members/{bob_id}"),
+        None,
+    )
+    .await;
+    let (status, _) = with_token(&t, bobs, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_tokens_need_a_password_and_leave_no_orphans_behind() {
+    // Nothing to sign in to: nothing to make a token for
+    let open = TestApp::new(None);
+    let (status, _) = call(
+        &open,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "x", "scope": "read"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A token a person made under accounts, left behind when going back to one password,
+    // doesn't open the home box
+    let t = TestApp::new(Some("pw"));
+    let cookie = sign_in(&t, "pw").await;
+    let made = signed(
+        &t,
+        &cookie,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "a", "scope": "read"})),
+    )
+    .await;
+    let token = made["token"].as_str().unwrap();
+    let (status, _) = with_token(&t, token, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    t.state
+        .households
+        .home()
+        .db
+        .lock()
+        .execute("UPDATE api_tokens SET user_id = 7, household_id = 7", [])
+        .unwrap();
+    let (status, _) = with_token(&t, token, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
