@@ -71,6 +71,11 @@
     }
   }
 
+  /** Only links to this Crumb: the server builds them, but a frame shouldn't trust that blindly. */
+  function open(link: string | undefined) {
+    if (link && origin && link.startsWith(`${origin}/`)) openLink(link)
+  }
+
   function back() {
     if (shelf) current = { view: "shelf", books: shelf }
   }
@@ -124,7 +129,7 @@
         <p class="hint">{current.book.recipeCount} recipes</p>
       </div>
       {#if current.book.link}
-        <button type="button" class="btn btn-sm btn-tile" onclick={() => openLink(current.book.link!)}>
+        <button type="button" class="btn btn-sm btn-tile" onclick={() => open(current.book.link)}>
           <ExternalLink /> Crumb
         </button>
       {/if}
@@ -138,7 +143,7 @@
           <button
             type="button"
             class="flex w-full items-center gap-3 rounded-ui border border-line bg-paper p-2 text-left"
-            onclick={() => openLink(r.link)}
+            onclick={() => open(r.link)}
           >
             {@render picture(r, "size-14 flex-none")}
             <span class="min-w-0 flex-1">
@@ -170,13 +175,13 @@
           <p class="hint">{r.ingredients ?? 0} ingredients · {r.steps ?? 0} steps</p>
         {/if}
         <div class="mt-1 flex flex-wrap gap-2">
-          <button type="button" class="btn btn-sm btn-primary" onclick={() => openLink(r.link)}>
+          <button type="button" class="btn btn-sm btn-primary" onclick={() => open(r.link)}>
             <ExternalLink /> Open in Crumb
           </button>
           <button
             type="button"
             class="btn btn-sm btn-soft"
-            onclick={() => say(`Tell me about ${r.title}`)}
+            onclick={() => say(`Tell me about recipe ${r.id} in my Crumb`)}
           >
             Talk about it
           </button>

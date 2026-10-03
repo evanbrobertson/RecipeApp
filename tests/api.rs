@@ -45,6 +45,8 @@ impl TestApp {
             "<!doctype html><title>shelf</title><link href=\"__CRUMB_ORIGIN__/fonts/a.woff2\">",
         )
         .unwrap();
+        std::fs::create_dir_all(dist.path().join("fonts")).unwrap();
+        std::fs::write(dist.path().join("fonts/a.woff2"), "font").unwrap();
         // The share page's shell, with its markers and one inline script to hash
         std::fs::create_dir_all(dist.path().join("shell/share")).unwrap();
         std::fs::write(
@@ -1152,6 +1154,10 @@ async fn chatgpt_gets_the_shelf_widget_and_claude_does_not() {
     assert_eq!(send_raw(&t, get(&later)).await.0, StatusCode::NOT_FOUND);
     let past = regex_exp(&path, |_| 1);
     assert_eq!(send_raw(&t, get(&past)).await.0, StatusCode::NOT_FOUND);
+
+    // Fonts may be loaded by the widget's frame on another origin
+    let (_, headers, _) = send_raw(&t, get("/fonts/a.woff2")).await;
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
 
     // Claude's connector is unchanged: text only
     let (_, claude) = connect_app(
