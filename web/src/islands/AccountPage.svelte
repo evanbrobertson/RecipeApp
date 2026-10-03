@@ -334,7 +334,7 @@
             <span class="min-w-0 flex-1">
               <span class="block font-bold">No apps connected</span>
               <span class="text-ink-muted block text-sm">
-                <a class="text-primary font-bold hover:underline" href="/connect">Connect Claude</a>
+                <a class="text-primary font-bold hover:underline" href="/connect">Connect Claude or ChatGPT</a>
                 to save and find recipes from a chat.
               </span>
             </span>

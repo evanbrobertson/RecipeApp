@@ -109,6 +109,8 @@ export interface CookbookDetail extends Omit<Cookbook, "recipeCount"> {
 
 export interface ConnectorInfo {
   mcpUrl: string
+  /** The same box for ChatGPT's plugin. */
+  chatgptUrl: string
   authEnabled: boolean
   /** Wee Chef (the AI helper) is on: an AI key is configured. */
   weeChef: boolean

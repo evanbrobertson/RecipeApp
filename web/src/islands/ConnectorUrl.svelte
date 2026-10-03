@@ -7,18 +7,19 @@
   import type { ConnectorInfo } from "../lib/recipe"
 
   /** `part` picks which piece of the connect page this island renders. */
-  let { part = "url" }: { part?: "url" | "code" } = $props()
+  let { part = "url" }: { part?: "url" | "code" | "chatgpt" } = $props()
 
   const page = pageState<{ connector: ConnectorInfo }>(async () => ({
     connector: await api<ConnectorInfo>("/api/connector"),
   }))
   const info = $derived(page.data?.connector)
+  const url = $derived(part === "chatgpt" ? info?.chatgptUrl : info?.mcpUrl)
   let copied = $state(false)
 
   async function copy() {
-    if (!info) return
+    if (!url) return
     try {
-      await navigator.clipboard.writeText(info.mcpUrl)
+      await navigator.clipboard.writeText(url)
       copied = true
       setTimeout(() => (copied = false), 2000)
     } catch {
@@ -27,13 +28,13 @@
   }
 </script>
 
-{#if part === "url"}
+{#if part === "url" || part === "chatgpt"}
   <div class="card p-4">
-    <label class="label mb-2" for="mcp-url">Connector URL</label>
+    <label class="label mb-2" for={`mcp-url-${part}`}>Connector URL</label>
     <div class="flex gap-2">
       <input
-        id="mcp-url"
-        value={info?.mcpUrl ?? ""}
+        id={`mcp-url-${part}`}
+        value={url ?? ""}
         readonly
         class="input min-w-0 flex-1 font-mono text-sm"
         onfocus={(e) => e.currentTarget.select()}

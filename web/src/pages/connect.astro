@@ -9,6 +9,13 @@ const steps = [
   "In a chat, switch the connector on in the tools menu.",
 ]
 
+const chatgptSteps = [
+  "In ChatGPT, open <strong>Settings → Security and login</strong> and turn on <strong>Developer mode</strong>.",
+  "Go to <strong>chatgpt.com/plugins</strong>, choose the plus button and paste the URL below.",
+  "Approve it with your app password. Crumb then shows up in the sidebar as your shelf.",
+  "In a chat, paste a recipe link and ask ChatGPT to save it to Crumb.",
+]
+
 const examples = [
   "Save this recipe to my recipe box: …",
   "What can I make with chicken thighs and lemons?",
@@ -16,11 +23,13 @@ const examples = [
 ]
 ---
 
-<Layout title="Connect Claude" section="more" data>
+<Layout title="Connect Claude or ChatGPT" section="more" data>
   <div class="mx-auto flex max-w-[600px] flex-col gap-8">
     <div>
-      <h1 class="page-title">Connect to Claude</h1>
-      <p class="text-ink-muted mt-2">Save, search and tweak your recipes from any Claude chat.</p>
+      <h1 class="page-title">Connect to Claude or ChatGPT</h1>
+      <p class="text-ink-muted mt-2">
+        Save, search and tweak your recipes from any Claude or ChatGPT chat.
+      </p>
     </div>
 
     <ConnectorUrl client:only="svelte" part="url">
@@ -50,6 +59,27 @@ const examples = [
         <div slot="fallback" class="skeleton rounded-ui h-14"></div>
       </ConnectorUrl>
       <p class="hint mt-2 px-4">Then run <code class="text-ink font-bold">/mcp</code> to sign in.</p>
+    </section>
+
+    <section id="chatgpt" class="flex scroll-mt-6 flex-col gap-4">
+      <h2 class="settings-heading">ChatGPT</h2>
+      <ol class="list-card">
+        {
+          chatgptSteps.map((s, i) => (
+            <li class="list-row settings-row">
+              <span class="text-ink-muted w-5 flex-none text-center font-bold">{i + 1}</span>
+              <span class="flex-1" set:html={s} />
+            </li>
+          ))
+        }
+      </ol>
+      <ConnectorUrl client:only="svelte" part="chatgpt">
+        <div slot="fallback" class="skeleton rounded-ui h-28"></div>
+      </ConnectorUrl>
+      <p class="hint px-4">
+        ChatGPT reads the page itself and hands Crumb the recipe, so a site that blocks ChatGPT
+        needs the browser extension or the Add box instead.
+      </p>
     </section>
 
     <section>

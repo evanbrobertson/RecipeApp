@@ -253,7 +253,7 @@
       <Plug class="settings-icon" />
       <span class="min-w-0 flex-1">
         <span class="block font-bold">Connections</span>
-        <span class="text-ink-muted block text-sm">Claude</span>
+        <span class="text-ink-muted block text-sm">Claude, ChatGPT</span>
       </span>
       <ChevronRight class="text-ink-muted size-5 flex-none" />
     </a>

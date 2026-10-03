@@ -85,7 +85,7 @@ export type SocialIntent =
   | { intent: "link" }
   | { intent: "invite"; invite: string }
 
-/** An app connected to Crumb (Claude, mostly): one per app and household. */
+/** An app connected to Crumb (Claude or ChatGPT): one per app and household. */
 export type ConnectedApp = {
   id: string
   name: string

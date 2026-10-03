@@ -1,0 +1,98 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "crumb",
+  "version": "0.1.0",
+  "description": "Your private recipe box: save recipes ChatGPT reads, find them again, and keep your cookbooks in order.",
+  "author": {
+    "name": "{{DEVELOPER}}",
+    "url": "{{ORIGIN}}"
+  },
+  "homepage": "{{ORIGIN}}",
+  "keywords": ["recipes", "cooking", "cookbook", "meal planning"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Crumb",
+        "shortDescription": "Your private recipe box",
+        "longDescription": "Crumb is a private recipe box. Paste a recipe link into ChatGPT and it reads the page, tidies the recipe and saves it to your Crumb, keeping every ingredient and step as written. Then search your recipes by name or ingredient, ask what to cook tonight, scale or tweak a saved recipe, and keep your cookbooks in order: Crumb shows them as a shelf of books inside ChatGPT, with each book's recipes and a card for every recipe you save. Crumb only ever works on your own box. It cannot fetch websites for you: if ChatGPT can't read a page, add the recipe from Crumb's Add box or its browser extension. Deleted recipes go to the trash for 30 days.",
+        "developerName": "{{DEVELOPER}}",
+        "category": "Lifestyle",
+        "capabilities": [
+          "Save recipes",
+          "Search recipes",
+          "Organise cookbooks",
+          "Suggest what to cook"
+        ],
+        "websiteURL": "{{ORIGIN}}",
+        "supportURL": "{{ORIGIN}}/support",
+        "privacyPolicyURL": "{{ORIGIN}}/privacy",
+        "termsOfServiceURL": "{{ORIGIN}}/terms",
+        "defaultPrompt": [
+          "Save this recipe to Crumb: <paste a link>",
+          "What can I cook tonight from my Crumb?",
+          "Show my Crumb shelf."
+        ],
+        "brandColor": "#2F6B4F",
+        "brandColorDark": "#6FB48F",
+        "composerIcon": "./assets/icon.svg",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Save a recipe ChatGPT read from a link",
+              "prompt": "Save this recipe to Crumb: https://www.bbcgoodfood.com/recipes/easy-pancakes",
+              "tools_triggered": "save_recipe",
+              "expected_behavior": "ChatGPT reads the page itself, calls save_recipe with the ingredients, steps and the page address, and replies with a link to the saved recipe plus a Saved to Crumb card."
+            },
+            {
+              "description": "Find a saved recipe by ingredient",
+              "prompt": "Which of my Crumb recipes use lemons?",
+              "tools_triggered": "search_recipes",
+              "expected_behavior": "Lists matching recipes from the test box, each with a link to open it in Crumb."
+            },
+            {
+              "description": "Open the cookbook shelf",
+              "prompt": "Show my Crumb shelf.",
+              "tools_triggered": "list_cookbooks",
+              "expected_behavior": "Shows the cookbooks as books on a shelf; choosing a book lists its recipes."
+            },
+            {
+              "description": "Organise recipes into a cookbook",
+              "prompt": "Put my pancake recipes in a cookbook called Breakfast.",
+              "tools_triggered": "search_recipes, add_to_cookbook",
+              "expected_behavior": "Finds the pancake recipes, adds them to a cookbook named Breakfast (creating it if needed) and says what it did."
+            },
+            {
+              "description": "Suggest what to cook",
+              "prompt": "What should I cook tonight from my Crumb? I have 30 minutes.",
+              "tools_triggered": "suggest_recipes",
+              "expected_behavior": "Suggests recipes from the test box that take 30 minutes or less, each with a short reason and a link."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Not a recipe request",
+              "prompt": "Book me a table at an Italian restaurant tonight."
+            },
+            {
+              "description": "Deleting without asking",
+              "prompt": "Delete all my recipes in Crumb."
+            },
+            {
+              "description": "Another person's recipes",
+              "prompt": "Show me the recipes in someone else's Crumb."
+            }
+          ]
+        },
+        "demo_recording_url": "{{DEMO_URL}}",
+        "commerce": false,
+        "commerce_description": "Crumb does not sell anything or process payments."
+      },
+      "publication": {
+        "release_notes": "First release: save recipes ChatGPT reads, search, organise cookbooks, and a shelf widget."
+      }
+    }
+  }
+}
