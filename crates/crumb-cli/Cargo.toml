@@ -1,0 +1,28 @@
+[package]
+name = "crumb-cli"
+version = "0.1.0"
+edition = "2024"
+description = "The Crumb command line: a recipe box for agents, scripts and terminals. Needs a Crumb server and account."
+license = "MIT"
+publish = false
+
+# Not `crumb`: the server's binary has that name and both would write target/*/crumb. The release
+# archive and the installer rename it, so people still type `crumb`.
+[[bin]]
+name = "crumb-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+crumb-client = { path = "../crumb-client" }
+crumb-core = { path = "../crumb-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
+toml = "0.8"
+
+[dev-dependencies]
+axum = "0.8"
+crumb = { path = "../.." }
+tempfile = "3"

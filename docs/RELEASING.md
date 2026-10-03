@@ -29,6 +29,7 @@ Promote ──► retag sha-abc1234 as :stable and :3.1.0, tag v3.1.0 + GitHub R
 | `.github/workflows/pr.yml` | pull request to `master` | The checks, plus a Docker build (no push) only when `Dockerfile`, `.dockerignore`, `Cargo.toml`/`Cargo.lock`, `web/package.json`/`web/bun.lock` or `web/astro.config.mjs` change. A release build of the server (fat LTO, one codegen unit) takes several minutes, and code-only changes are already covered by the checks and by the master build, so most PRs skip it |
 | `.github/workflows/main.yml` | push to `master` (not docs-only) | Checks and image build in parallel; after both pass, `:main` moves to the new image, Sentry gets the release and a `dev` deploy, and Railway dev redeploys. Separately, a release build of the desktop executable is uploaded as a `crumb-desktop-linux-<version>` workflow artifact (30 days); it does not block the deploy |
 | `.github/workflows/extension.yml` | push to `master` changing `extension/` | Releases the browser extension: see [Browser extension](#browser-extension) |
+| `.github/workflows/cli.yml` | push to `master` changing `crates/crumb-cli/`, `crates/crumb-client/`, `scripts/cli/` or the workflow; a `cli-v*` tag; manual | Releases the `crumb` command line: see [CLI](#cli) |
 | `.github/workflows/relay.yml` | push to `master` changing `crates/crumb-relay/`, `crates/crumb-fetch/` or the workflow; a `relay-v*` tag; manual | Releases the relay: see [Relay](#relay) |
 | `.github/workflows/promote.yml` | manual (Actions → Promote → Run workflow) | Input `channel` (`stable` or `beta`) and optional `sha` (default: latest `master`). A commit without an image (a docs-only push) falls back to its newest ancestor with one, and the commit's checks must have passed. Retags, tags, releases, deploys; then attaches the desktop tarball, its `.sha256` and an AUR `PKGBUILD` to the release |
 
@@ -220,3 +221,22 @@ A push to `master` that changes `crates/crumb-relay/`, `crates/crumb-fetch/`, `s
 4. Pushes the multi-arch image `ghcr.io/evanbrobertson/recipeapp-relay` as `:X.Y.Z` and `:latest`. As with `recipeapp`, check that the package is public.
 
 Pushing a `relay-vX.Y.Z` tag by hand releases exactly that version instead, and **Actions -> Relay -> Run workflow** only builds and keeps the binaries as a workflow artifact. An existing GitHub Release is left as it is. Main ignores pushes that change only `crates/crumb-relay/` (nothing in the server image changed); `crates/crumb-fetch/` still builds the server, which depends on it.
+
+## CLI
+
+The `crumb` command line (`crates/crumb-cli/`, see [CLI.md](CLI.md)) is released like the relay, with its own versions: tags `cli-vX.Y.Z`, worked out by `scripts/release/version.sh` with `VERSION_TAG_PREFIX=cli-v VERSION_PATHS="crates/crumb-cli crates/crumb-client"`, so only commits that touch those two crates count (`feat:` a minor, and so on). The first release is the version in `crates/crumb-cli/Cargo.toml` (0.1.0); CI never commits a bump, each build sets the version in `Cargo.toml` and the crate's `Cargo.lock` entry before compiling, so `crumb --version` reports it. The app's `v*` tags and the CLI's never see each other, and CLI releases are never marked "latest".
+
+Every pull request runs fmt, clippy and the tests for it in the shared checks (one of which fails if the bundled skill names a command the binary doesn't have), shellcheck on the installer, and, when CLI inputs change, a static musl build in `pr.yml`. A push to `master` that changes the CLI runs `cli.yml`:
+
+1. Works out the version; a push that changes nothing in the two crates since the last tag releases nothing.
+2. Runs the checks again for that commit.
+3. Builds static (musl) binaries for x86-64 and ARM64 (the latter on GitHub's ARM runner) and smoke-tests each: statically linked, `--version` is the release version, `skill print` and `skill install` work, and an unconfigured run fails cleanly.
+4. Tags `cli-vX.Y.Z` on that commit and makes a GitHub Release with `crumb-cli-X.Y.Z-<target>.tar.gz` (the binary, `LICENSE`, `SKILL.md`) and its `.sha256` for each target, the standalone `SKILL.md`, `install.sh` and an AUR `PKGBUILD` (`crumb-cli-bin`), with notes from the commits.
+
+The Cargo binary is `crumb-cli`, because the server's own binary is `crumb` and two packages in one workspace can't both write `target/*/crumb`; the archive holds it as `crumb`.
+
+**Installing** is `scripts/cli/install.sh` (piped from raw.githubusercontent.com on `master`): it takes the newest `cli-v*` release, checks the `.sha256`, installs `crumb` to `/usr/local/bin` or `~/.local/bin`, and runs `crumb skill install`. Run it again to update. Nothing else is needed: the workflow uses only `GITHUB_TOKEN`.
+
+**The agent skill** lives at `crates/crumb-cli/skill/SKILL.md` and is compiled into the binary (`include_str!`), so it always matches the CLI that installs it. `crumb skill install` writes `~/.agents/skills/crumb/SKILL.md` and links it into `~/.claude/skills/` when Claude Code is there; `crumb skill print` writes it to stdout. Change a command or flag, change the skill in the same PR.
+
+A `cli-vX.Y.Z` tag pushed by hand releases exactly that version instead, and **Actions -> CLI -> Run workflow** only builds and keeps the binaries as a workflow artifact. An existing GitHub Release is left as it is. Main ignores pushes that change only `crates/crumb-cli/`.

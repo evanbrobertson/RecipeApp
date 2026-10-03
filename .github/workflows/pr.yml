@@ -104,6 +104,51 @@ jobs:
           docker logs auth
           exit 1
 
+  # crumb-cli is a workspace member, so fmt, clippy and its tests (including the skill's check
+  # that it only names real commands) already run in the shared checks. What only shows up in
+  # the release build: the static musl link, and the installer against the binary.
+  cli-musl:
+    name: CLI static build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files=$(git diff --name-only "$BASE...$HEAD")
+          if grep -qE '^crates/crumb-(cli|client|core)/|^Cargo\.(toml|lock)$|^scripts/cli/|^\.github/workflows/(pr|cli)\.yml$' <<<"$files"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "CLI inputs unchanged; skipping the static build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.build == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - if: steps.changed.outputs.build == 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - if: steps.changed.outputs.build == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: cli-check-x86_64-unknown-linux-musl
+      - if: steps.changed.outputs.build == 'true'
+        env:
+          CC: musl-gcc
+        run: cargo build --locked -p crumb-cli --target x86_64-unknown-linux-musl
+      - if: steps.changed.outputs.build == 'true'
+        run: |
+          bin=target/x86_64-unknown-linux-musl/debug/crumb-cli
+          "$bin" --version
+          "$bin" skill print | head -n2 | grep -q '^name: crumb$'
+
   # crumb-relay and crumb-fetch are workspace members, so fmt, clippy and the tests already run
   # for them in the shared checks above. What only shows up elsewhere: the cross build for a
   # Raspberry Pi (BoringSSL is compiled by the ARM cross toolchain) and the relay's own image.

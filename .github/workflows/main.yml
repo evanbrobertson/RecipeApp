@@ -19,6 +19,11 @@ on:
       - ".github/workflows/relay.yml"
       - "scripts/relay/**"
       - "docs/RELAY.md"
+      # The CLI ships from cli.yml, not in the image (nothing in the server depends on it)
+      - "crates/crumb-cli/**"
+      - ".github/workflows/cli.yml"
+      - "scripts/cli/**"
+      - "docs/CLI.md"
       - "LICENSE"
   workflow_dispatch:
 
