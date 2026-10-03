@@ -292,6 +292,10 @@ pub async fn require_login(
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
+    // An API token (`Authorization: Bearer crumb_pat_…`) stands in for the cookie
+    if let Some(token) = crate::tokens::bearer(req.headers()) {
+        return crate::tokens::serve(&state, &token, req, next).await;
+    }
     let path = req.uri().path();
     if let Some(accounts) = &state.accounts {
         // Hosted: public pages and Better Auth's routes never look the session up, since

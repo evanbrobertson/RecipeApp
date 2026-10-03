@@ -200,6 +200,7 @@ async fn set_up(
         .await?;
     // The connector's existing tokens were the box's: they're the owner's now
     crate::oauth::adopt_tokens(&state, user)?;
+    crate::tokens::adopt(&state, user)?;
     signed_in_response(accounts, user, crate::households::HOME, &headers)
 }
 
@@ -624,13 +625,16 @@ async fn delete_account(
         }
     };
     crate::oauth::forget_user(&state, signed.user_id)?;
+    crate::tokens::forget_user(&state, signed.user_id)?;
     for &id in &deleted.households {
         crate::oauth::forget_household(&state, id)?;
+        crate::tokens::forget_household(&state, id)?;
         state.households.remove(id)?;
         state.images.forget_household(id);
     }
     if deleted.home {
         crate::oauth::forget_household(&state, crate::households::HOME)?;
+        crate::tokens::forget_household(&state, crate::households::HOME)?;
         crate::db::wipe_box(&mut state.households.home().db.lock())?;
         state.images.forget_household(crate::households::HOME);
     }

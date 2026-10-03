@@ -115,6 +115,18 @@ fn bootstrap_sql() -> String {
   );
   CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON oauth_tokens (expires_at);
 
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    hash text NOT NULL UNIQUE,
+    name text NOT NULL,
+    scope text NOT NULL,
+    user_id integer,
+    household_id integer,
+    created_at integer NOT NULL,
+    last_used_at integer,
+    expires_at integer
+  );
+
   CREATE TABLE IF NOT EXISTS recipe_events (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     recipe_id integer NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
