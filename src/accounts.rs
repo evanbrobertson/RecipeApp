@@ -437,33 +437,6 @@ impl Accounts {
             .is_some())
     }
 
-    /// Who `user` is in `household`, as a [`Session`] without a login behind it (an API token's
-    /// owner); None when they aren't a member.
-    pub fn member_session(&self, user: i64, household: HouseholdId) -> AppResult<Option<Session>> {
-        Ok(self
-            .lock()
-            .query_row(
-                "SELECT u.email, u.name, h.name, m.role
-                 FROM household_members m
-                 JOIN users u ON u.id = m.user_id
-                 JOIN households h ON h.id = m.household_id
-                 WHERE m.user_id = ?1 AND m.household_id = ?2",
-                params![user, household],
-                |r| {
-                    Ok(Session {
-                        id: 0,
-                        user_id: user,
-                        email: r.get(0)?,
-                        name: r.get(1)?,
-                        household_id: household,
-                        household_name: r.get(2)?,
-                        role: r.get(3)?,
-                    })
-                },
-            )
-            .optional()?)
-    }
-
     /// Starts a session for `user` in `household`; returns the cookie's token.
     pub fn start_session(
         &self,

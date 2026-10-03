@@ -133,33 +133,45 @@ pub async fn serve(state: &AppState, token: &str, mut req: Request<Body>, next: 
     if found.scope == Scope::Read && !reads {
         return deny(403, "This token can only read. Make one that can write");
     }
-    if let Some(accounts) = &state.accounts {
-        let (Some(user), Some(household)) = (found.user, found.household) else {
-            return deny(
-                401,
-                "That token isn't valid, or it has expired or been revoked",
-            );
-        };
-        let member = match &state.hosted {
-            Some(hosted) => hosted.is_member(accounts, user, household).await,
-            None => accounts.is_member(user, household),
-        };
-        let session = match (member, accounts.member_session(user, household)) {
-            (Ok(true), Ok(Some(session))) => session,
-            (Ok(_), Ok(_)) => {
+    match &state.accounts {
+        Some(accounts) => {
+            let (Some(user), Some(household)) = (found.user, found.household) else {
                 return deny(
                     401,
                     "That token isn't valid, or it has expired or been revoked",
                 );
+            };
+            let member = match &state.hosted {
+                Some(hosted) => hosted.is_member(accounts, user, household).await,
+                None => accounts.is_member(user, household),
+            };
+            match member {
+                Ok(true) => {}
+                Ok(false) => {
+                    return deny(
+                        401,
+                        "That token isn't valid, or it has expired or been revoked",
+                    );
+                }
+                Err(err) => return err.into_response(),
             }
-            (Err(err), _) | (_, Err(err)) => return err.into_response(),
-        };
-        let scoped = match state.for_household(household) {
-            Ok(scoped) => scoped,
-            Err(err) => return err.into_response(),
-        };
-        req.extensions_mut().insert(crate::Scoped(scoped));
-        req.extensions_mut().insert(SignedIn(session));
+            let scoped = match state.for_household(household) {
+                Ok(scoped) => scoped,
+                Err(err) => return err.into_response(),
+            };
+            // Only the household: nothing a token may reach asks who is signed in, so a token
+            // never passes for a person (even if `refused` ever let a path through)
+            req.extensions_mut().insert(crate::Scoped(scoped));
+        }
+        // One password: only the box's own tokens. One made by a person while accounts were on
+        // (and left behind by going back) must not open the home box to them
+        None if found.user.is_some() => {
+            return deny(
+                401,
+                "That token isn't valid, or it has expired or been revoked",
+            );
+        }
+        None => {}
     }
     let now = now_secs();
     if found.last_used.is_none_or(|t| now - t >= TOUCH_EVERY) {
@@ -251,6 +263,11 @@ async fn create(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let (user, household) = owner(&state, signed.as_ref())?;
+    if !state.config.auth_enabled() {
+        return Err(AppError::bad_request(
+            "Set APP_PASSWORD (or use accounts) before making tokens: without it nothing needs one",
+        ));
+    }
     let name = body
         .get("name")
         .and_then(Value::as_str)
@@ -282,8 +299,9 @@ async fn create(
     let token = format!("{PREFIX}{}", random_token(32));
     let conn = state.households.home().db.lock();
     let count: i64 = conn.query_row(
-        "SELECT count(*) FROM api_tokens WHERE user_id IS ?1",
-        [user],
+        "SELECT count(*) FROM api_tokens
+         WHERE user_id IS ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+        params![user, now],
         |r| r.get(0),
     )?;
     if count >= MAX_TOKENS {

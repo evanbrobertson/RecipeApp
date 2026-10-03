@@ -126,6 +126,7 @@ fn bootstrap_sql() -> String {
     last_used_at integer,
     expires_at integer
   );
+  CREATE INDEX IF NOT EXISTS api_tokens_user_idx ON api_tokens (user_id);
 
   CREATE TABLE IF NOT EXISTS recipe_events (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,

@@ -6794,6 +6794,22 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     let (status, text) = mcp_search(&t, &token).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert!(text.contains("Old Faithful"), "{text}");
+    // An API token works there too (the household is checked with Better Auth, and the
+    // token never stands in for a signed-in person)
+    let made = signed(
+        &t,
+        bob,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "script", "scope": "write"})),
+    )
+    .await;
+    let pat = made["token"].as_str().unwrap().to_string();
+    let (status, list) = with_token(&t, &pat, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list[0]["title"], "Old Faithful");
+    let (status, _) = with_token(&t, &pat, "GET", "/api/tokens", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _, _) = t
         .send(
             Request::builder()
@@ -6807,6 +6823,12 @@ async fn hosted_asks_better_auth_who_is_signed_in() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = mcp_search(&t, &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = with_token(&t, &pat, "GET", "/api/recipes", None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "his API token went with his membership"
+    );
     let list = signed(&t, bob, "GET", "/api/recipes", None).await;
     assert_eq!(list[0]["title"], "Bob's Pie", "back in his own box");
     let s = signed(&t, bob, "GET", "/api/auth/status", None).await;
@@ -8873,6 +8895,10 @@ async fn api_tokens_work_with_one_password_and_stay_in_their_lane() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
+    // A token on /mcp isn't the connector's: its own 401, nothing from the token layer
+    let (status, _) = with_token(&t, write, "POST", "/mcp", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
     // An expired one stops working too
     let short = signed(
         &t,
@@ -9008,5 +9034,45 @@ async fn api_tokens_follow_their_person_and_household_with_accounts() {
     )
     .await;
     let (status, _) = with_token(&t, bobs, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_tokens_need_a_password_and_leave_no_orphans_behind() {
+    // Nothing to sign in to: nothing to make a token for
+    let open = TestApp::new(None);
+    let (status, _) = call(
+        &open,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "x", "scope": "read"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A token a person made under accounts, left behind when going back to one password,
+    // doesn't open the home box
+    let t = TestApp::new(Some("pw"));
+    let cookie = sign_in(&t, "pw").await;
+    let made = signed(
+        &t,
+        &cookie,
+        "POST",
+        "/api/tokens",
+        Some(json!({"name": "a", "scope": "read"})),
+    )
+    .await;
+    let token = made["token"].as_str().unwrap();
+    let (status, _) = with_token(&t, token, "GET", "/api/recipes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    t.state
+        .households
+        .home()
+        .db
+        .lock()
+        .execute("UPDATE api_tokens SET user_id = 7, household_id = 7", [])
+        .unwrap();
+    let (status, _) = with_token(&t, token, "GET", "/api/recipes", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

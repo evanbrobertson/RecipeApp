@@ -45,7 +45,7 @@
   let apps = $state<ConnectedApp[] | null>(null)
   let tokens = $state<ApiToken[] | null>(null)
   let tokenName = $state("")
-  let tokenScope = $state<"read" | "write">("write")
+  let tokenScope = $state<"read" | "write">("read")
   let tokenDays = $state("")
   let tokenError = $state("")
   /** A token just made: shown once, here, and nowhere after. */
@@ -546,8 +546,8 @@
           <div>
             <label class="label" for="token-scope">Can</label>
             <select id="token-scope" class="input" bind:value={tokenScope}>
-              <option value="write">Read and change</option>
               <option value="read">Only read</option>
+              <option value="write">Read and change</option>
             </select>
           </div>
           <div>
