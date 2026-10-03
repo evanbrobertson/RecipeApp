@@ -62,6 +62,14 @@ pub fn routes() -> Router<AppState> {
             routing::get(protected_resource_metadata),
         )
         .route(
+            "/.well-known/oauth-protected-resource/mcp/chatgpt",
+            routing::get(protected_resource_metadata_chatgpt),
+        )
+        .route(
+            "/.well-known/openai-apps-challenge",
+            routing::get(apps_challenge),
+        )
+        .route(
             "/oauth/authorize",
             routing::get(authorize_get).post(authorize_post),
         )
@@ -109,6 +117,7 @@ pub fn auth_server_metadata_json(origin: &str) -> Value {
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["recipes"],
+        "authorization_response_iss_parameter_supported": true,
     })
 }
 
@@ -125,10 +134,33 @@ async fn protected_resource_metadata(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
-    let origin = state.config.public_origin(&headers);
+    resource_metadata(&state, &headers, "/mcp")
+}
+
+async fn protected_resource_metadata_chatgpt(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    resource_metadata(&state, &headers, "/mcp/chatgpt")
+}
+
+/// What OpenAI asks for to verify the domain before a plugin can be submitted.
+async fn apps_challenge(State(state): State<AppState>) -> Response {
+    match state.config.openai_apps_challenge.as_deref() {
+        Some(token) => (
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            token.to_string(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn resource_metadata(state: &AppState, headers: &HeaderMap, path: &str) -> Response {
+    let origin = state.config.public_origin(headers);
     cors(
         Json(json!({
-            "resource": format!("{origin}/mcp"),
+            "resource": format!("{origin}{path}"),
             "authorization_servers": [origin],
             "scopes_supported": ["recipes"],
             "bearer_methods_supported": ["header"],
@@ -188,7 +220,7 @@ const REGISTRATIONS_TOTAL: u32 = 120;
 /// Registered clients kept. Registration is open by design (Claude registers itself), so
 /// clients nobody has connected are dropped after a week, and sooner when the table is full.
 const MAX_CLIENTS: i64 = 1000;
-const UNUSED_CLIENT_TTL: i64 = 7 * DAY;
+const UNUSED_CLIENT_TTL: i64 = 90 * DAY;
 
 /// Drops clients that never got a token. Returns how many clients are left.
 fn prune_clients(conn: &rusqlite::Connection, older_than: i64) -> rusqlite::Result<i64> {
@@ -341,6 +373,14 @@ pub struct Owner {
     pub household_id: crate::households::HouseholdId,
 }
 
+/// What a token is for: who approved it, when, and which endpoint it opens.
+#[derive(Clone, Copy)]
+struct Grant<'a> {
+    owner: Option<Owner>,
+    granted: i64,
+    resource: Option<&'a str>,
+}
+
 /// Issues a token. `granted` is when the person approved the connection (now, for a code),
 /// carried from token to token so the connected apps list can say since when.
 fn issue(
@@ -349,15 +389,14 @@ fn issue(
     client_id: &str,
     challenge: Option<&str>,
     redirect: Option<&str>,
-    owner: Option<Owner>,
-    granted: i64,
+    grant: Grant,
 ) -> Result<String, AppError> {
     let token = random_token(32);
     let now = now_secs();
     state.db.lock().execute(
         "INSERT INTO oauth_tokens (hash, kind, client_id, code_challenge, redirect_uri, expires_at,
-           created_at, user_id, household_id, granted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+           created_at, user_id, household_id, granted_at, resource)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             sha256_hex(&token),
             kind.as_str(),
@@ -366,9 +405,10 @@ fn issue(
             redirect,
             now + kind.lifetime(),
             now,
-            owner.map(|o| o.user_id),
-            owner.map(|o| o.household_id),
-            granted
+            grant.owner.map(|o| o.user_id),
+            grant.owner.map(|o| o.household_id),
+            grant.granted,
+            grant.resource
         ],
     )?;
     Ok(token)
@@ -398,6 +438,7 @@ struct TokenRow {
     redirect_uri: Option<String>,
     owner: Option<Owner>,
     granted: i64,
+    resource: Option<String>,
 }
 
 /// Looks up an unexpired token of the given kind and deletes it (single use).
@@ -406,7 +447,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
     let row = conn
         .query_row(
             "SELECT hash, client_id, code_challenge, redirect_uri, user_id, household_id,
-                    coalesce(granted_at, created_at)
+                    coalesce(granted_at, created_at), resource
              FROM oauth_tokens WHERE hash = ?1 AND kind = ?2 AND expires_at > ?3",
             params![sha256_hex(token), kind.as_str(), now_secs()],
             |r| {
@@ -417,6 +458,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
                     redirect_uri: r.get(3)?,
                     owner: owner_of(r.get(4)?, r.get(5)?),
                     granted: r.get(6)?,
+                    resource: r.get(7)?,
                 })
             },
         )
@@ -433,6 +475,7 @@ fn consume(state: &AppState, kind: Kind, token: &str) -> Option<TokenRow> {
 pub async fn access_household(
     state: &AppState,
     headers: &HeaderMap,
+    endpoint: &str,
 ) -> Option<crate::households::HouseholdId> {
     if !state.config.auth_enabled() {
         return Some(crate::households::HOME);
@@ -446,21 +489,26 @@ pub async fn access_household(
     if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() {
         return None;
     }
-    let found: Option<(Option<i64>, Option<i64>)> = state
+    let found: Option<(Option<i64>, Option<i64>, Option<String>)> = state
         .households
         .home()
         .db
         .lock()
         .query_row(
-            "SELECT user_id, household_id FROM oauth_tokens
+            "SELECT user_id, household_id, resource FROM oauth_tokens
              WHERE hash = ?1 AND kind = 'access' AND expires_at > ?2",
             params![sha256_hex(token), now_secs()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .ok()
         .flatten();
-    let (user, household) = found?;
+    let (user, household, resource) = found?;
+    // A token works on the endpoint it was issued for; those from before tokens were bound
+    // (no resource) are Claude's, on /mcp
+    if resource.as_deref().unwrap_or("/mcp") != endpoint {
+        return None;
+    }
     let Some(accounts) = &state.accounts else {
         return Some(crate::households::HOME);
     };
@@ -484,22 +532,17 @@ fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
         .into_response()
 }
 
-fn token_response(
-    state: &AppState,
-    client_id: &str,
-    owner: Option<Owner>,
-    granted: i64,
-) -> Result<Value, AppError> {
+fn token_response(state: &AppState, client_id: &str, grant: Grant) -> Result<Value, AppError> {
     // Opportunistically purge expired rows
     state.db.lock().execute(
         "DELETE FROM oauth_tokens WHERE expires_at < ?1",
         [now_secs()],
     )?;
     Ok(json!({
-        "access_token": issue(state, Kind::Access, client_id, None, None, owner, granted)?,
+        "access_token": issue(state, Kind::Access, client_id, None, None, grant)?,
         "token_type": "Bearer",
         "expires_in": Kind::Access.lifetime(),
-        "refresh_token": issue(state, Kind::Refresh, client_id, None, None, owner, granted)?,
+        "refresh_token": issue(state, Kind::Refresh, client_id, None, None, grant)?,
         "scope": "recipes",
     }))
 }
@@ -548,7 +591,15 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "PKCE verification failed",
                 )));
             }
-            token_response(&state, &row.client_id, row.owner, row.granted)
+            token_response(
+                &state,
+                &row.client_id,
+                Grant {
+                    owner: row.owner,
+                    granted: row.granted,
+                    resource: row.resource.as_deref(),
+                },
+            )
         }
         Some("refresh_token") => {
             let Some(refresh) = get_str(&m, "refresh_token") else {
@@ -565,7 +616,15 @@ async fn token(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -
                     "Refresh token is invalid or expired",
                 )));
             };
-            token_response(&state, &row.client_id, row.owner, row.granted)
+            token_response(
+                &state,
+                &row.client_id,
+                Grant {
+                    owner: row.owner,
+                    granted: row.granted,
+                    resource: row.resource.as_deref(),
+                },
+            )
         }
         _ => {
             return no_store(cors(
@@ -760,6 +819,7 @@ struct AuthorizeParams {
     code_challenge: String,
     code_challenge_method: String,
     response_type: String,
+    resource: String,
 }
 
 impl AuthorizeParams {
@@ -777,10 +837,11 @@ impl AuthorizeParams {
             code_challenge: v("code_challenge"),
             code_challenge_method: or("code_challenge_method", "S256"),
             response_type: or("response_type", "code"),
+            resource: v("resource"),
         }
     }
 
-    fn pairs(&self) -> [(&'static str, &str); 6] {
+    fn pairs(&self) -> [(&'static str, &str); 7] {
         [
             ("client_id", &self.client_id),
             ("redirect_uri", &self.redirect_uri),
@@ -788,6 +849,7 @@ impl AuthorizeParams {
             ("code_challenge", &self.code_challenge),
             ("code_challenge_method", &self.code_challenge_method),
             ("response_type", &self.response_type),
+            ("resource", &self.resource),
         ]
     }
 }
@@ -871,7 +933,7 @@ async fn authorize(
         get_client(state, &params.client_id)
     };
     let Some(client) = client else {
-        return fail("Unknown client. Remove the connector in Claude and add it again.");
+        return fail("Unknown client. Remove the connector in the app and add it again.");
     };
     if !client.redirect_uris.contains(&params.redirect_uri) {
         return fail("The redirect URI doesn't match this client's registration.");
@@ -896,6 +958,28 @@ async fn authorize(
         );
     }
 
+    // The endpoint this approval is for (RFC 8707); none means Claude's, as before
+    let origin = state.config.public_origin(headers);
+    let resource = if params.resource.is_empty() {
+        None
+    } else {
+        let path = params.resource.strip_prefix(origin.as_str());
+        match path.filter(|p| matches!(*p, "/mcp" | "/mcp/chatgpt")) {
+            Some(p) => Some(p.to_string()),
+            None => {
+                return redirect_back(
+                    &params.redirect_uri,
+                    &[
+                        ("error", "invalid_target"),
+                        ("error_description", "Unknown resource"),
+                        ("state", &params.state),
+                        ("iss", &origin),
+                    ],
+                );
+            }
+        }
+    };
+
     // With accounts, the connector is approved by a signed-in person, for their household
     let session = crate::auth::session(state, headers).await;
     let accounts = state.accounts.is_some();
@@ -913,7 +997,11 @@ async fn authorize(
         if form.get("action").map(String::as_str) == Some("deny") {
             return redirect_back(
                 &params.redirect_uri,
-                &[("error", "access_denied"), ("state", &params.state)],
+                &[
+                    ("error", "access_denied"),
+                    ("state", &params.state),
+                    ("iss", &origin),
+                ],
             );
         }
         let password = form.get("password").map(String::as_str).unwrap_or("");
@@ -936,15 +1024,18 @@ async fn authorize(
                 &client.id,
                 Some(&params.code_challenge),
                 Some(&params.redirect_uri),
-                owner,
-                now_secs(),
+                Grant {
+                    owner,
+                    granted: now_secs(),
+                    resource: resource.as_deref(),
+                },
             ) {
                 Ok(code) => code,
                 Err(err) => return err.into_response(),
             };
             let mut res = redirect_back(
                 &params.redirect_uri,
-                &[("code", &code), ("state", &params.state)],
+                &[("code", &code), ("state", &params.state), ("iss", &origin)],
             );
             if !logged_in
                 && !accounts
@@ -1029,9 +1120,9 @@ async fn authorize(
     res
 }
 
-/// Hosts whose apps may be called by the name they registered with: Claude's own.
+/// Hosts whose apps may be called by the name they registered with: Claude's and ChatGPT's own.
 fn is_known_host(host: &str) -> bool {
-    ["claude.ai", "claude.com"]
+    ["claude.ai", "claude.com", "chatgpt.com", "openai.com"]
         .iter()
         .any(|k| host == *k || host.ends_with(&format!(".{k}")))
 }

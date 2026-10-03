@@ -78,6 +78,7 @@ pub fn source_label(source: &str) -> Option<&'static str> {
         "url" => "from a link",
         "text" => "from pasted text",
         "claude" => "via Claude",
+        "chatgpt" => "via ChatGPT",
         "manual" => "written by you",
         "import" => "imported",
         "video" => "from a video",

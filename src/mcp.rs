@@ -28,13 +28,82 @@ const INSTRUCTIONS: &str = "This connector is the user's personal recipe box (\"
 - When the user asks what to cook, call suggest_recipes (or random_recipe for a surprise). When they say they cooked something, call mark_recipe_cooked.
 - Always share the recipe link returned by the tools.";
 
+const CHATGPT_INSTRUCTIONS: &str = "This app is the user's personal recipe box (\"Crumb\").
+- When the user shares a recipe link, open the page yourself, find the recipe, keep every ingredient and step exactly as written, fill in category, times and servings, then call save_recipe with the page's address as url. If you can't read the page, tell the user to add it from Crumb's Add box or with the Crumb browser extension.
+- To save a recipe the user pasted or described, structure it yourself and call save_recipe.
+- Use search_recipes to find recipes by name or ingredient, then get_recipe for the full text.
+- When the user asks to tweak a saved recipe (scale it, substitute, fix steps), call update_recipe with only the changed fields.
+- To tidy the box, search_recipes with `missing` finds recipes without an image, times, a category, a cookbook and so on. Offer to fill the gaps, suggest cookbooks, and move recipes between them with add_to_cookbook and remove_from_cookbook.
+- Cookbooks are the shelf: get_cookbook, update_cookbook (name, description, colour) organise it.
+- delete_recipe and delete_cookbook first return a preview. Show it to the user and call again with confirm: true only after they agree. Deleted recipes go to the trash for 30 days: list_trash and restore_recipe put one back.
+- When the user asks what to cook, call suggest_recipes (or random_recipe for a surprise). When they say they cooked something, call mark_recipe_cooked.
+- Always share the recipe link returned by the tools.";
+
+/// Tools where Crumb itself fetches pages; ChatGPT reads pages on its own and hands Crumb the recipe.
+const FETCHING_TOOLS: [&str; 3] = [
+    "import_recipe_from_url",
+    "import_recipe_from_text",
+    "refresh_recipe_from_source",
+];
+
+/// Which app is on the other end of the endpoint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Flavor {
+    Claude,
+    ChatGpt,
+}
+
+impl Flavor {
+    fn source(self) -> &'static str {
+        match self {
+            Flavor::Claude => "claude",
+            Flavor::ChatGpt => "chatgpt",
+        }
+    }
+
+    fn instructions(self) -> &'static str {
+        match self {
+            Flavor::Claude => INSTRUCTIONS,
+            Flavor::ChatGpt => CHATGPT_INSTRUCTIONS,
+        }
+    }
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Flavor::Claude => "/mcp",
+            Flavor::ChatGpt => "/mcp/chatgpt",
+        }
+    }
+}
+
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/mcp", routing::any(handle))
+    Router::new()
+        .route("/mcp", routing::any(handle_claude))
+        .route("/mcp/chatgpt", routing::any(handle_chatgpt))
+}
+
+async fn handle_claude(
+    scoped: crate::Scoped,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    handle(Flavor::Claude, scoped, method, headers, body).await
+}
+
+async fn handle_chatgpt(
+    scoped: crate::Scoped,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    handle(Flavor::ChatGpt, scoped, method, headers, body).await
 }
 
 async fn handle(
+    flavor: Flavor,
     crate::Scoped(state): crate::Scoped,
     method: axum::http::Method,
     headers: HeaderMap,
@@ -42,15 +111,16 @@ async fn handle(
 ) -> Response {
     let origin = state.config.public_origin(&headers);
 
-    let household = crate::oauth::access_household(&state, &headers).await;
+    let household = crate::oauth::access_household(&state, &headers, flavor.path()).await;
     let Some(household) = household else {
         let mut res = (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized", "error_description": "Connect this app to Claude to get a token"})),
+            Json(json!({"error": "unauthorized", "error_description": "Connect this app to Crumb to get a token"})),
         )
             .into_response();
         if let Ok(v) = HeaderValue::from_str(&format!(
-            "Bearer resource_metadata=\"{origin}/.well-known/oauth-protected-resource/mcp\""
+            "Bearer resource_metadata=\"{origin}/.well-known/oauth-protected-resource{}\"",
+            flavor.path()
         )) {
             res.headers_mut().insert(header::WWW_AUTHENTICATE, v);
         }
@@ -84,6 +154,7 @@ async fn handle(
     let ctx = Ctx {
         state: &state,
         origin: &origin,
+        flavor,
     };
     let responses: Vec<Value> = match &message {
         Value::Array(batch) => {
@@ -108,6 +179,7 @@ async fn handle(
 struct Ctx<'a> {
     state: &'a AppState,
     origin: &'a str,
+    flavor: Flavor,
 }
 
 fn text(value: impl Into<String>) -> Value {
@@ -245,11 +317,11 @@ impl Ctx<'_> {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "crumb", "title": "Crumb", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": INSTRUCTIONS,
+                    "instructions": self.flavor.instructions(),
                 })
             }
             "ping" => json!({}),
-            "tools/list" => json!({"tools": tool_definitions()}),
+            "tools/list" => json!({"tools": tool_definitions_for(self.flavor)}),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -269,6 +341,10 @@ impl Ctx<'_> {
         let int = |k: &str| a.get(k).and_then(Value::as_i64);
         let invalid = |m: &str| tool_error(format!("Input validation error: {m}"));
         let db = &self.state.db;
+
+        if self.flavor == Flavor::ChatGpt && FETCHING_TOOLS.contains(&name) {
+            return None;
+        }
 
         Some(match name {
             "search_recipes" => {
@@ -351,7 +427,7 @@ impl Ctx<'_> {
                     Ok(f) => f.file_category(),
                     Err(err) => return Some(invalid(&err.0)),
                 };
-                match recipes::create_recipe(&db.lock(), fields, "claude") {
+                match recipes::create_recipe(&db.lock(), fields, self.flavor.source()) {
                     Ok((r, is_new)) => self.saved(&r, is_new),
                     Err(err) => tool_error(err.message),
                 }
@@ -912,6 +988,34 @@ fn cookbook_ref() -> Value {
 
 fn props(v: Value) -> Map<String, Value> {
     v.as_object().unwrap().clone()
+}
+
+/// The tools a given app sees. Every tool states `readOnlyHint`, `destructiveHint` and
+/// `openWorldHint` (ChatGPT's review rejects a tool that leaves one out); ChatGPT also gets
+/// `securitySchemes` and none of the tools where Crumb fetches pages itself.
+pub fn tool_definitions_for(flavor: Flavor) -> Vec<Value> {
+    let mut tools = tool_definitions();
+    if flavor == Flavor::ChatGpt {
+        tools.retain(|t| {
+            !t["name"]
+                .as_str()
+                .is_some_and(|n| FETCHING_TOOLS.contains(&n))
+        });
+    }
+    for tool in &mut tools {
+        let annotations = tool["annotations"].as_object().cloned().unwrap_or_default();
+        let read_only = annotations.get("readOnlyHint") == Some(&json!(true));
+        let mut full = annotations;
+        full.entry("readOnlyHint").or_insert(json!(false));
+        full.entry("destructiveHint").or_insert(json!(false));
+        full.entry("openWorldHint").or_insert(json!(false));
+        full.entry("idempotentHint").or_insert(json!(read_only));
+        tool["annotations"] = Value::Object(full);
+        if flavor == Flavor::ChatGpt {
+            tool["securitySchemes"] = json!([{"type": "oauth2", "scopes": ["recipes"]}]);
+        }
+    }
+    tools
 }
 
 pub fn tool_definitions() -> Vec<Value> {

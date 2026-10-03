@@ -726,6 +726,233 @@ async fn oauth_flow_then_mcp_tools() {
     assert!(text.contains("-32601"));
 }
 
+/// Signs a connector in through the real OAuth flow; returns the redirect's query and, when
+/// approved, the access token.
+async fn connect_app(
+    t: &TestApp,
+    name: &str,
+    redirect: &str,
+    resource: Option<&str>,
+) -> (Vec<(String, String)>, Option<String>) {
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": name, "redirect_uris": [redirect]})),
+        )
+        .await;
+    let client_id = client["client_id"].as_str().unwrap().to_string();
+    let verifier = "a-very-long-code-verifier-string-with-enough-entropy-1234567890";
+    use base64::Engine;
+    use sha2::Digest;
+    let challenge =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier));
+    let mut pairs = vec![
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+        ("state", "xyz"),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ];
+    if let Some(r) = resource {
+        pairs.push(("resource", r));
+    }
+    let form = format!(
+        "{}&action=allow&password=secret",
+        serde_urlencoded::to_string(&pairs).unwrap()
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/oauth/authorize")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form))
+        .unwrap();
+    let (_, headers, _) = t.send(req).await;
+    let location = url::Url::parse(headers[header::LOCATION].to_str().unwrap()).unwrap();
+    let query: Vec<(String, String)> = location.query_pairs().into_owned().collect();
+    let Some((_, code)) = query.iter().find(|(k, _)| k == "code") else {
+        return (query, None);
+    };
+    let token_form = serde_urlencoded::to_string([
+        ("grant_type", "authorization_code"),
+        ("code", code.as_str()),
+        ("code_verifier", verifier),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect),
+    ])
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/oauth/token")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(token_form))
+        .unwrap();
+    let (_, _, text) = t.send(req).await;
+    let tokens: Value = serde_json::from_str(&text).unwrap();
+    let access = tokens["access_token"].as_str().map(String::from);
+    (query, access)
+}
+
+async fn mcp_rpc(t: &TestApp, path: &str, token: &str, body: Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, _, text) = t.send(req).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn chatgpt_connects_to_its_own_endpoint() {
+    let t = TestApp::new(Some("secret"));
+    let (_, meta) = t
+        .json("GET", "/.well-known/oauth-authorization-server", None)
+        .await;
+    assert_eq!(meta["authorization_response_iss_parameter_supported"], true);
+    let origin = meta["issuer"].as_str().unwrap().to_string();
+    let (_, resource) = t
+        .json(
+            "GET",
+            "/.well-known/oauth-protected-resource/mcp/chatgpt",
+            None,
+        )
+        .await;
+    assert_eq!(resource["resource"], format!("{origin}/mcp/chatgpt"));
+
+    // The consent screen names ChatGPT for its own hosts
+    let (_, client) = t
+        .json(
+            "POST",
+            "/oauth/register",
+            Some(json!({"client_name": "ChatGPT", "redirect_uris": ["https://chatgpt.com/connector/oauth/abc"]})),
+        )
+        .await;
+    let q = serde_urlencoded::to_string([
+        ("client_id", client["client_id"].as_str().unwrap()),
+        ("redirect_uri", "https://chatgpt.com/connector/oauth/abc"),
+        ("code_challenge", "x"),
+        ("code_challenge_method", "S256"),
+        ("response_type", "code"),
+    ])
+    .unwrap();
+    let (_, _, html) = t.send(get(&format!("/oauth/authorize?{q}"))).await;
+    assert!(html.contains("Connect ChatGPT?"), "{html}");
+
+    let redirect = "https://chatgpt.com/connector/oauth/abc";
+    let (query, token) = connect_app(
+        &t,
+        "ChatGPT",
+        redirect,
+        Some(&format!("{origin}/mcp/chatgpt")),
+    )
+    .await;
+    assert!(
+        query.contains(&("iss".to_string(), origin.clone())),
+        "{query:?}"
+    );
+    let token = token.expect("a token");
+
+    // Its tools: no fetching, every hint stated, a security scheme on each
+    let (status, list) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let tools = list["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 16);
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap();
+        assert!(!name.starts_with("import_") && name != "refresh_recipe_from_source");
+        for hint in ["readOnlyHint", "destructiveHint", "openWorldHint"] {
+            assert!(
+                tool["annotations"][hint].is_boolean(),
+                "{name} lacks {hint}"
+            );
+        }
+        assert_eq!(tool["securitySchemes"][0]["type"], "oauth2", "{name}");
+    }
+
+    let (_, called) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "import_recipe_from_url", "arguments": {"url": "https://example.com/r"}}}),
+    )
+    .await;
+    assert_eq!(called["error"]["code"], -32602);
+
+    // A recipe it saves is marked as from ChatGPT
+    let (_, saved) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save_recipe",
+            "arguments": {"title": "Salad", "ingredients": [{"name": null, "items": ["lettuce"]}],
+                          "instructions": [{"name": null, "items": ["Toss."]}]}}}),
+    )
+    .await;
+    assert!(
+        saved["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Saved")
+    );
+    let source: String = t
+        .state
+        .db
+        .lock()
+        .query_row("SELECT source FROM recipes WHERE id = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(source, "chatgpt");
+
+    // A token is for one endpoint: this one doesn't open Claude's, and the reverse
+    let ping = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+    let (status, _) = mcp_rpc(&t, "/mcp", &token, ping.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, claude) = connect_app(
+        &t,
+        "Claude",
+        "https://claude.ai/api/mcp/auth_callback",
+        None,
+    )
+    .await;
+    let claude = claude.expect("a token");
+    let (status, _) = mcp_rpc(&t, "/mcp", &claude, ping.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = mcp_rpc(&t, "/mcp/chatgpt", &claude, ping).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A resource that isn't ours is refused
+    let (query, token) = connect_app(
+        &t,
+        "ChatGPT",
+        redirect,
+        Some("https://elsewhere.example/mcp"),
+    )
+    .await;
+    assert!(token.is_none());
+    assert!(query.contains(&("error".to_string(), "invalid_target".to_string())));
+}
+
+#[tokio::test]
+async fn the_apps_challenge_is_served_only_when_set() {
+    let t = TestApp::new(None);
+    let (status, _, _) = t.send(get("/.well-known/openai-apps-challenge")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let t = TestApp::with_config(|c| c.openai_apps_challenge = Some("abc123".into()));
+    let (status, _, body) = t.send(get("/.well-known/openai-apps-challenge")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "abc123");
+}
+
 #[tokio::test]
 async fn mcp_organising_tools() {
     let t = TestApp::new(None);
@@ -8118,7 +8345,7 @@ async fn oauth_registration_is_limited_and_pruned() {
     {
         let conn = t.state.db.lock();
         let now = crumb::model::now_secs();
-        for (id, age) in [("stale", 30 * 86400), ("fresh", 60), ("used", 30 * 86400)] {
+        for (id, age) in [("stale", 100 * 86400), ("fresh", 60), ("used", 100 * 86400)] {
             conn.execute(
                 "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?1, 'x', '[]', ?2)",
                 rusqlite::params![id, now - age],

@@ -51,7 +51,7 @@ pub fn book_color(name: &str) -> Option<&'static str> {
         })
 }
 
-pub const SOURCES: [&str; 5] = ["url", "text", "claude", "manual", "import"];
+pub const SOURCES: [&str; 6] = ["url", "text", "claude", "chatgpt", "manual", "import"];
 
 /// Normalizes raw JSON from the database (a legacy flat string[] or a Section[])
 /// into sections, dropping blank items and empty sections.

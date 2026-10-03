@@ -41,7 +41,7 @@ in a clean UI. Also a remote MCP connector for Claude.
   429 past that; the web gets a job id and polls `/api/import/jobs/{id}`, MCP awaits the job. YouTube turns servers away, so
   the extension (`extension/src/youtube.ts`) reads a video's description and captions in the browser and the Add page
   posts them with the link as `video` (`video::FromBrowser`); never ask for or store anyone's YouTube cookies
-- **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude is only named for the MCP connector). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
+- **AI ("Wee Chef"):** on whenever an Anthropic, OpenAI or DeepSeek key is set (`src/llm.rs`, structured JSON output); parses pasted text, writes "Try next" blurbs and, about one day in three, one recipe idea not in the box. User-facing text always says "Wee Chef", never the provider (Claude and ChatGPT are only named for their MCP connectors). `SUGGESTIONS_AI=off` is the only opt-out (Try next only). Without a key, the heuristic parser and the plain algorithm are used
 - **Deploy:** Railway, `Dockerfile` (Astro build → Rust build → debian-slim runtime with Chromium). GitHub
   Actions build one GHCR image per master commit and deploy it to Railway `dev`; the Promote workflow retags it
   for `stable` (Railway `production`). The Linux desktop app (`desktop/linux`, Qt6/QML via cxx-qt, built in an
@@ -175,6 +175,14 @@ web/src/
   `photo_is_dead` / `fetch_to_embed` skip them (`site_terms::photo_is_listed`). Wee Chef
   suggests more in the background (`site_terms::Flagger`, `tos-suggestion` GitHub issues, `data/site-terms-ignore.toml`
   for hosts a person cleared); a person edits the list, Wee Chef never does. Robots.txt is ignored on purpose.
+- **ChatGPT plugin** (`/mcp/chatgpt`, `mcp::Flavor::ChatGpt`): the same tools as the Claude connector minus the three where
+  the server fetches or parses for itself (`import_recipe_from_url`, `import_recipe_from_text`, `refresh_recipe_from_source`);
+  ChatGPT reads the page and calls `save_recipe` (source `chatgpt`, "via ChatGPT"), and a page it can't read goes to the
+  Add box or the extension, never a hidden server import. Every tool states `readOnlyHint`, `destructiveHint`, `openWorldHint`
+  (`tool_definitions_for`). OAuth tokens are bound to the `resource` they were approved for (`oauth_tokens.resource`; none
+  means Claude's `/mcp`), so one app's token never opens the other's endpoint; authorization responses carry `iss` (RFC 9207).
+  `OPENAI_APPS_CHALLENGE` is served at `/.well-known/openai-apps-challenge`. The MCP origin can't change once a plugin is
+  published, so the dev URL never goes in anything submitted.
 - **Deduplication:** saving a URL that already exists returns the existing recipe (`isNew: false`).
 - **Trash:** `recipes::delete_recipes` moves recipes to `recipe_trash` (`src/trash.rs`): the whole row as JSON, its cookbooks
   and cooks; restored under its own id within 30 days, then purged. Nothing else needs to skip deleted recipes. The

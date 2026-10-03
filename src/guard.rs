@@ -81,7 +81,7 @@ pub async fn same_origin_only(State(state): State<AppState>, req: Request, next:
     next.run(req).await
 }
 
-/// Origins that may call `/mcp` from a browser besides this app's own: Claude's, and local
+/// Origins that may call `/mcp` from a browser besides this app's own: Claude's and ChatGPT's, and local
 /// tools during development.
 fn is_mcp_client_origin(origin: &str) -> bool {
     let Some(host) = url::Url::parse(origin)
@@ -90,7 +90,7 @@ fn is_mcp_client_origin(origin: &str) -> bool {
     else {
         return false;
     };
-    ["claude.ai", "claude.com"]
+    ["claude.ai", "claude.com", "chatgpt.com", "openai.com"]
         .iter()
         .any(|k| host == *k || host.ends_with(&format!(".{k}")))
         || matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
