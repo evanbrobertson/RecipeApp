@@ -479,6 +479,13 @@ pub async fn static_files(crate::Scoped(state): crate::Scoped, req: Request) -> 
             HeaderValue::from_static(cache_control(&path)),
         );
     }
+    // The ChatGPT widget loads these fonts from a frame on another origin
+    if path.starts_with("/fonts/") {
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+    }
     if path == "/speculation-rules.json" {
         h.insert(
             header::CONTENT_TYPE,

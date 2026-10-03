@@ -19,6 +19,7 @@ pub mod images;
 pub mod importers;
 pub mod llm;
 pub mod mcp;
+pub mod mcp_ui;
 pub mod oauth;
 pub mod photos;
 pub mod popular;

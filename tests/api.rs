@@ -38,6 +38,15 @@ impl TestApp {
             )
             .unwrap();
         }
+        // The ChatGPT widget, with the mark the server fills with its own address
+        std::fs::create_dir_all(dist.path().join("shell/chatgpt")).unwrap();
+        std::fs::write(
+            dist.path().join("shell/chatgpt/shelf.html"),
+            "<!doctype html><title>shelf</title><link href=\"__CRUMB_ORIGIN__/fonts/a.woff2\">",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dist.path().join("fonts")).unwrap();
+        std::fs::write(dist.path().join("fonts/a.woff2"), "font").unwrap();
         // The share page's shell, with its markers and one inline script to hash
         std::fs::create_dir_all(dist.path().join("shell/share")).unwrap();
         std::fs::write(
@@ -968,6 +977,219 @@ async fn chatgpt_connects_to_its_own_endpoint() {
     .await;
     assert!(token.is_none());
     assert!(query.contains(&("error".to_string(), "invalid_target".to_string())));
+}
+
+async fn chatgpt_token(t: &TestApp) -> String {
+    let (_, meta) = t
+        .json("GET", "/.well-known/oauth-authorization-server", None)
+        .await;
+    let origin = meta["issuer"].as_str().unwrap().to_string();
+    let (_, token) = connect_app(
+        t,
+        "ChatGPT",
+        "https://chatgpt.com/connector/oauth/abc",
+        Some(&format!("{origin}/mcp/chatgpt")),
+    )
+    .await;
+    token.expect("a token")
+}
+
+async fn chatgpt_call(t: &TestApp, token: &str, name: &str, arguments: Value) -> Value {
+    let (_, v) = mcp_rpc(
+        t,
+        "/mcp/chatgpt",
+        token,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}}),
+    )
+    .await;
+    v["result"].clone()
+}
+
+#[tokio::test]
+async fn chatgpt_gets_the_shelf_widget_and_claude_does_not() {
+    let t = TestApp::new(Some("secret"));
+    let token = chatgpt_token(&t).await;
+
+    // The widget is a resource, with the server's address filled in
+    let (_, list) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "resources/list"}),
+    )
+    .await;
+    assert_eq!(
+        list["result"]["resources"][0]["uri"],
+        "ui://crumb/shelf-v1.html"
+    );
+    let (_, read) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 2, "method": "resources/read",
+            "params": {"uri": "ui://crumb/shelf-v1.html"}}),
+    )
+    .await;
+    let page = &read["result"]["contents"][0];
+    assert_eq!(page["mimeType"], "text/html;profile=mcp-app");
+    let html = page["text"].as_str().unwrap();
+    assert!(
+        html.contains("/fonts/a.woff2") && !html.contains("__CRUMB_ORIGIN__"),
+        "{html}"
+    );
+    let origin = page["_meta"]["ui"]["csp"]["resourceDomains"][0]
+        .as_str()
+        .unwrap();
+    assert!(html.contains(origin));
+    let (_, missing) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": "ui://nope"}}),
+    )
+    .await;
+    assert_eq!(missing["error"]["code"], -32002);
+
+    // The shelf, book, recipe and save tools point at it; the shelf also has a sidebar entry
+    let (_, tools) = mcp_rpc(
+        &t,
+        "/mcp/chatgpt",
+        &token,
+        json!({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}),
+    )
+    .await;
+    let tools = tools["result"]["tools"].as_array().unwrap();
+    let find = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap();
+    for name in [
+        "list_cookbooks",
+        "get_cookbook",
+        "get_recipe",
+        "save_recipe",
+    ] {
+        assert_eq!(
+            find(name)["_meta"]["ui"]["resourceUri"],
+            "ui://crumb/shelf-v1.html",
+            "{name}"
+        );
+        assert!(
+            find(name)["_meta"]["openai/toolInvocation/invoking"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= 64
+        );
+    }
+    assert_eq!(
+        find("list_cookbooks")["_meta"]["openai/ui"]["entrypoints"][0]["type"],
+        "global"
+    );
+    assert!(find("search_recipes").get("_meta").is_none());
+
+    // Results carry what the widget draws, and the photo links only in the hidden _meta
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes(800, 400));
+    let image = format!("data:image/png;base64,{b64}");
+    let saved = chatgpt_call(
+        &t,
+        &token,
+        "save_recipe",
+        json!({"title": "Salad",
+            "ingredients": [{"name": null, "items": ["lettuce"]}],
+            "instructions": [{"name": null, "items": ["Toss."]}]}),
+    )
+    .await;
+    assert_eq!(saved["structuredContent"]["view"], "saved", "{saved}");
+    assert_eq!(saved["structuredContent"]["recipe"]["title"], "Salad");
+    assert!(!saved["structuredContent"].to_string().contains("/img/"));
+    set_image(&t, 1, &image);
+    let one = chatgpt_call(&t, &token, "get_recipe", json!({"id": 1})).await;
+    let photo = one["_meta"]["photos"]["1"].as_str().unwrap().to_string();
+    assert!(photo.contains("/img/s/"), "{photo}");
+
+    chatgpt_call(
+        &t,
+        &token,
+        "add_to_cookbook",
+        json!({"cookbook": "Greens", "recipeIds": [1]}),
+    )
+    .await;
+    let shelf = chatgpt_call(&t, &token, "list_cookbooks", json!({})).await;
+    assert_eq!(shelf["structuredContent"]["view"], "shelf");
+    assert_eq!(shelf["structuredContent"]["books"][0]["name"], "Greens");
+    assert_eq!(shelf["structuredContent"]["books"][0]["recipeCount"], 1);
+    let book = chatgpt_call(&t, &token, "get_cookbook", json!({"cookbook": "Greens"})).await;
+    assert_eq!(book["structuredContent"]["view"], "book");
+    assert_eq!(book["structuredContent"]["recipes"][0]["title"], "Salad");
+    assert!(book["_meta"]["photos"]["1"].as_str().is_some());
+    assert_eq!(one["structuredContent"]["view"], "recipe");
+
+    // The signed link shows the photo with no sign-in; the plain one needs it
+    let path = photo
+        .split_once("/img/")
+        .map(|(_, p)| format!("/img/{p}"))
+        .unwrap();
+    let (status, headers, _) = send_raw(&t, get(&path)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/webp");
+    let key = crumb::images::image_key(&image);
+    let (status, _, _) = send_raw(&t, get(&format!("/img/1/400?v={key}"))).await;
+    assert_ne!(status, StatusCode::OK);
+
+    // A link for one photo and size can't be bent into another, or kept past its time
+    let other = path.replacen("/s/1/1/", "/s/1/2/", 1);
+    assert_eq!(send_raw(&t, get(&other)).await.0, StatusCode::NOT_FOUND);
+    let width = path
+        .split('/')
+        .nth(5)
+        .and_then(|w| w.split('?').next())
+        .unwrap();
+    let wider = path.replacen(&format!("/{width}?"), "/1200?", 1);
+    assert_ne!(wider, path);
+    assert_eq!(send_raw(&t, get(&wider)).await.0, StatusCode::NOT_FOUND);
+    let forged = path.split("sig=").next().unwrap().to_string() + "sig=AAAA";
+    assert_eq!(send_raw(&t, get(&forged)).await.0, StatusCode::NOT_FOUND);
+    let later = regex_exp(&path, |exp| exp + 10_000);
+    assert_eq!(send_raw(&t, get(&later)).await.0, StatusCode::NOT_FOUND);
+    let past = regex_exp(&path, |_| 1);
+    assert_eq!(send_raw(&t, get(&past)).await.0, StatusCode::NOT_FOUND);
+
+    // Fonts may be loaded by the widget's frame on another origin
+    let (_, headers, _) = send_raw(&t, get("/fonts/a.woff2")).await;
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+
+    // Claude's connector is unchanged: text only
+    let (_, claude) = connect_app(
+        &t,
+        "Claude",
+        "https://claude.ai/api/mcp/auth_callback",
+        None,
+    )
+    .await;
+    let (_, shelf) = mcp_rpc(
+        &t,
+        "/mcp",
+        &claude.unwrap(),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "list_cookbooks", "arguments": {}}}),
+    )
+    .await;
+    assert!(shelf["result"].get("structuredContent").is_none());
+    assert!(shelf["result"].get("_meta").is_none());
+}
+
+/// `path` with its `exp` query value changed.
+fn regex_exp(path: &str, change: impl Fn(i64) -> i64) -> String {
+    let (head, query) = path.split_once('?').unwrap();
+    let rewritten: Vec<String> = query
+        .split('&')
+        .map(|kv| match kv.split_once('=') {
+            Some(("exp", v)) => format!("exp={}", change(v.parse().unwrap())),
+            _ => kv.to_string(),
+        })
+        .collect();
+    format!("{head}?{}", rewritten.join("&"))
 }
 
 #[tokio::test]
