@@ -45,6 +45,8 @@ impl TestApp {
             "<!doctype html><title>shelf</title><link href=\"__CRUMB_ORIGIN__/fonts/a.woff2\">",
         )
         .unwrap();
+        std::fs::create_dir_all(dist.path().join("fonts")).unwrap();
+        std::fs::write(dist.path().join("fonts/a.woff2"), "font").unwrap();
         // The share page's shell, with its markers and one inline script to hash
         std::fs::create_dir_all(dist.path().join("shell/share")).unwrap();
         std::fs::write(
@@ -937,12 +939,40 @@ async fn chatgpt_connects_to_its_own_endpoint() {
     let (status, _) = mcp_rpc(&t, "/mcp/chatgpt", &claude, ping).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // The address a client was given can differ from the public origin (proxy, trailing slash)
+    let (_, token) = connect_app(
+        &t,
+        "ChatGPT",
+        redirect,
+        Some("https://other.example/mcp/chatgpt/"),
+    )
+    .await;
+    assert!(token.is_some());
+    // Claude's tool list keeps its own hints: nothing is filled in
+    let (_, claude_tools) = mcp_rpc(
+        &t,
+        "/mcp",
+        &claude,
+        json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}),
+    )
+    .await;
+    let update = claude_tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "update_recipe")
+        .unwrap();
+    assert!(update["annotations"].get("destructiveHint").is_none());
+    assert!(update.get("securitySchemes").is_none());
+    let chatgpt_update = tools.iter().find(|t| t["name"] == "update_recipe").unwrap();
+    assert_eq!(chatgpt_update["annotations"]["destructiveHint"], true);
+
     // A resource that isn't ours is refused
     let (query, token) = connect_app(
         &t,
         "ChatGPT",
         redirect,
-        Some("https://elsewhere.example/mcp"),
+        Some("https://elsewhere.example/admin"),
     )
     .await;
     assert!(token.is_none());
@@ -1124,6 +1154,10 @@ async fn chatgpt_gets_the_shelf_widget_and_claude_does_not() {
     assert_eq!(send_raw(&t, get(&later)).await.0, StatusCode::NOT_FOUND);
     let past = regex_exp(&path, |_| 1);
     assert_eq!(send_raw(&t, get(&past)).await.0, StatusCode::NOT_FOUND);
+
+    // Fonts may be loaded by the widget's frame on another origin
+    let (_, headers, _) = send_raw(&t, get("/fonts/a.woff2")).await;
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
 
     // Claude's connector is unchanged: text only
     let (_, claude) = connect_app(

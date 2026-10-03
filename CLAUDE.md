@@ -92,6 +92,7 @@ src/
   auth.rs         # Password login, signed session cookie, auth middleware
   oauth.rs        # OAuth 2.1 (DCR, PKCE) for the Claude connector, /.well-known/*
   mcp.rs          # MCP Streamable HTTP (stateless JSON-RPC) at /mcp
+  mcp_ui.rs       # ChatGPT's shelf widget: the MCP Apps resource, tool metadata, signed photo links
   preview.rs      # /preview?url=: a page read and shown in the share layout, not saved until "Add to my Crumb"
   suggestions.rs  # Their service: DB inputs, time zone cookies, cached background AI re-rank
   checks.rs       # Import clean-up (tidy) + Wee Chef's background Jev check: fixes, flags, Undo
