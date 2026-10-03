@@ -90,7 +90,7 @@ fn is_mcp_client_origin(origin: &str) -> bool {
     else {
         return false;
     };
-    ["claude.ai", "claude.com", "chatgpt.com", "openai.com"]
+    ["claude.ai", "claude.com", "chatgpt.com"]
         .iter()
         .any(|k| host == *k || host.ends_with(&format!(".{k}")))
         || matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
