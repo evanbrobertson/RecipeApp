@@ -6,8 +6,10 @@ description = "The Crumb command line: a recipe box for agents, scripts and term
 license = "MIT"
 publish = false
 
+# Not `crumb`: the server's binary has that name and both would write target/*/crumb. The release
+# archive and the installer rename it, so people still type `crumb`.
 [[bin]]
-name = "crumb"
+name = "crumb-cli"
 path = "src/main.rs"
 
 [dependencies]

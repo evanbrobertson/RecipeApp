@@ -6,6 +6,7 @@
 mod config;
 mod error;
 mod organise;
+pub mod skill;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -151,8 +152,21 @@ enum Command {
     },
     /// Check the server and the token
     Doctor,
+    /// Install this CLI's agent skill (for Claude Code and other agents), or print it
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
     /// Print a shell completion script
     Completions { shell: clap_complete::Shell },
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Write ~/.agents/skills/crumb/SKILL.md and link it into ~/.claude/skills
+    Install,
+    /// Print the skill to stdout
+    Print,
 }
 
 #[derive(Subcommand)]
@@ -337,6 +351,21 @@ impl Run<'_> {
             Command::Share { id, book, stop } => self.share(*id, *book, *stop).await,
             Command::Api { method, path, data } => self.api(method, path, data.as_deref()).await,
             Command::Doctor => self.doctor().await,
+            Command::Skill { action } => match action {
+                SkillAction::Print => {
+                    self.out.push_str(skill::SKILL);
+                    Ok(())
+                }
+                SkillAction::Install => {
+                    let home = std::env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .ok_or_else(|| Failure::usage("No home directory to install into"))?;
+                    for line in skill::install(&home).map_err(Failure::usage)? {
+                        self.line(line);
+                    }
+                    Ok(())
+                }
+            },
             Command::Completions { shell } => {
                 let mut bytes = Vec::new();
                 clap_complete::generate(*shell, &mut Cli::command(), "crumb", &mut bytes);

@@ -229,5 +229,7 @@ from the sketch:
   `books rm` needs `-y` too.
 - **`trash`** lists and restores only. `purge` can't work with a token, by design, so it's the browser's.
 - **`api`** is limited to `/api/…` and gets the same 403s as everything else a token can't do.
+- **Skill and release:** `crumb skill install|print` ships an agent skill inside the binary; releases, install script and
+  checks are in docs/RELEASING.md ("CLI").
 - **Not built yet:** `refresh` (no REST route; the connector has it, so it wants a server change first), `checks`, `open`,
-  photo and file import, `popular`, `prep`, `shop`, the release workflow (musl binary, AUR `crumb-cli`).
+  photo and file import, `popular`, `prep`, `shop`.

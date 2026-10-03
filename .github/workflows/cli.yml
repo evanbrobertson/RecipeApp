@@ -1,0 +1,224 @@
+# crumb-cli (crates/crumb-cli): the `crumb` command line for agents and scripts. Its own release
+# stream, like the relay's and the extension's: a push to master that changes crates/crumb-cli/ or
+# crates/crumb-client/ works out the next version from the conventional commits touching them (tags
+# `cli-vX.Y.Z`), builds static (musl) Linux binaries for x86-64 and ARM64, smoke-tests them, tags and
+# attaches them (with .sha256 files, the agent skill, the installer and an AUR PKGBUILD) to a GitHub
+# Release. A tag pushed by hand releases that version instead. Run by hand (Actions -> CLI -> Run
+# workflow), it only builds and keeps the binaries as a workflow artifact. fmt, clippy and the tests
+# run in checks.yml, for every PR and every master push; this workflow runs them again before it
+# releases anything. See docs/RELEASING.md and docs/CLI.md.
+name: CLI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/crumb-cli/**"
+      - "crates/crumb-client/**"
+      - "scripts/cli/**"
+      - ".github/workflows/cli.yml"
+    tags: ["cli-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      last: ${{ steps.version.outputs.last }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: version
+        env:
+          # Commits touching either crate count (the CLI is built from the client)
+          VERSION_TAG_PREFIX: cli-v
+          VERSION_PATHS: crates/crumb-cli crates/crumb-client
+        run: |
+          export VERSION_INITIAL
+          VERSION_INITIAL=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/crumb-cli/Cargo.toml | head -n1)
+          if [[ $GITHUB_REF == refs/tags/cli-v* ]]; then
+            # A tag pushed by hand names its own version
+            version=${GITHUB_REF#refs/tags/cli-v}
+            last=""
+          elif [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            # By hand: build only, keep the binaries as a workflow artifact
+            {
+              echo "release=false"
+              echo "version=$VERSION_INITIAL"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            last=$(scripts/release/version.sh last "$GITHUB_SHA")
+            if [[ -n $last ]] && [[ -z $(git log --format=%H "$last..$GITHUB_SHA" -- $VERSION_PATHS) ]]; then
+              echo "Nothing in crumb-cli or crumb-client changed since $last; no release." >> "$GITHUB_STEP_SUMMARY"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION_INITIAL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version=$(scripts/release/version.sh next "$GITHUB_SHA")
+          fi
+          {
+            echo "release=true"
+            echo "version=$version"
+            echo "tag=cli-v$version"
+            echo "last=$last"
+          } >> "$GITHUB_OUTPUT"
+          echo "crumb CLI $version" >> "$GITHUB_STEP_SUMMARY"
+
+  # The same gate as a pull request, for the commit that is about to be released
+  checks:
+    name: Checks
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    uses: ./.github/workflows/checks.yml
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [version, checks]
+    if: needs.version.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # ring (under rustls) compiles C and assembly; musl-gcc makes that static
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: cli-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') }}
+      # The version comes from the tags, not from the manifest: it is set here for this build only
+      # (Cargo.toml and the crate's entry in Cargo.lock, so --locked still holds) and `crumb
+      # --version` reports it. Nothing is committed.
+      - name: Set version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" crates/crumb-cli/Cargo.toml
+          sed -i "/^name = \"crumb-cli\"\$/{n;s/^version = \".*\"/version = \"$VERSION\"/}" Cargo.lock
+          git diff --stat
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+          CC: musl-gcc
+        run: cargo build --release --locked -p crumb-cli --target "$TARGET"
+      - name: Smoke test
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          bin=target/$TARGET/release/crumb-cli
+          # Static: nothing to be missing on the machine that runs it
+          if ldd "$bin" 2>&1 | grep -qv 'not a dynamic executable\|statically linked'; then
+            ldd "$bin"; echo "::error::$bin is dynamically linked"; exit 1
+          fi
+          [[ $("$bin" --version) == "crumb $VERSION" ]]
+          "$bin" skill print | head -n2 | grep -q '^name: crumb$'
+          "$bin" completions bash | grep -q crumb
+          home=$(mktemp -d)
+          HOME=$home "$bin" skill install
+          test -f "$home/.agents/skills/crumb/SKILL.md"
+          # Not signed in: a clear message and exit 2 or 3, never a panic
+          set +e
+          CRUMB_CONFIG_DIR=$home/cfg "$bin" ls; code=$?
+          set -e
+          [[ $code == 2 || $code == 3 ]]
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          name=crumb-cli-$VERSION-$TARGET
+          mkdir "$name"
+          cp "target/$TARGET/release/crumb-cli" "$name/crumb"
+          cp LICENSE crates/crumb-cli/skill/SKILL.md "$name/"
+          tar -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+      LAST: ${{ needs.version.outputs.last }}
+      VERSION_PATHS: crates/crumb-cli crates/crumb-client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cli-*-linux-musl
+          path: dist
+          merge-multiple: true
+      - name: Release
+        run: |
+          ls -l dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; not replacing it"
+            exit 0
+          fi
+          sha=$(cut -d' ' -f1 "dist/crumb-cli-$VERSION-x86_64-unknown-linux-musl.tar.gz.sha256")
+          crates/crumb-cli/packaging/render-pkgbuild.sh "$VERSION" "$sha" dist/PKGBUILD
+          cp crates/crumb-cli/skill/SKILL.md dist/SKILL.md
+          cp scripts/cli/install.sh dist/install.sh
+          {
+            echo "The \`crumb\` command line for agents and scripts: static Linux binaries for x86-64 and ARM64, and the agent skill."
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/master/scripts/cli/install.sh | bash"
+            echo '```'
+            echo
+            echo "Verify a download with the .sha256 file next to it. Setup: docs/CLI.md."
+            echo
+            scripts/release/version.sh notes "$LAST" "$GITHUB_SHA"
+          } > "$RUNNER_TEMP/notes.md"
+          # --target: for a master push this creates the tag on that commit. Prefixed `cli-v`, so
+          # the app's `vX.Y.Z` releases (and "latest") are untouched
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "crumb CLI $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest=false dist/*

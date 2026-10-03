@@ -27,6 +27,7 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY crates/crumb-core/Cargo.toml crates/crumb-core/Cargo.toml
 COPY crates/crumb-client/Cargo.toml crates/crumb-client/Cargo.toml
+COPY crates/crumb-cli/Cargo.toml crates/crumb-cli/Cargo.toml
 COPY crates/crumb-ffi/Cargo.toml crates/crumb-ffi/Cargo.toml
 COPY crates/crumb-fetch/Cargo.toml crates/crumb-fetch/Cargo.toml
 COPY crates/crumb-relay/Cargo.toml crates/crumb-relay/Cargo.toml
@@ -34,9 +35,9 @@ COPY crates/crumb-work/Cargo.toml crates/crumb-work/Cargo.toml
 COPY desktop/linux/Cargo.toml desktop/linux/Cargo.toml
 # Only the server is built here; the other members get stubs so Cargo can load the workspace
 # (the desktop stubs stay: nothing below copies desktop/)
-RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-ffi/src/bin crates/crumb-fetch/src crates/crumb-relay/src crates/crumb-work/src desktop/linux/src \
-    && echo 'fn main() {}' | tee src/main.rs crates/crumb-relay/src/main.rs desktop/linux/src/main.rs >/dev/null \
-    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs crates/crumb-ffi/src/lib.rs crates/crumb-fetch/src/lib.rs crates/crumb-relay/src/lib.rs crates/crumb-work/src/lib.rs desktop/linux/src/lib.rs \
+RUN mkdir -p src crates/crumb-core/src crates/crumb-client/src crates/crumb-cli/src crates/crumb-ffi/src/bin crates/crumb-fetch/src crates/crumb-relay/src crates/crumb-work/src desktop/linux/src \
+    && echo 'fn main() {}' | tee src/main.rs crates/crumb-cli/src/main.rs crates/crumb-relay/src/main.rs desktop/linux/src/main.rs >/dev/null \
+    && touch src/lib.rs crates/crumb-core/src/lib.rs crates/crumb-client/src/lib.rs crates/crumb-cli/src/lib.rs crates/crumb-ffi/src/lib.rs crates/crumb-fetch/src/lib.rs crates/crumb-relay/src/lib.rs crates/crumb-work/src/lib.rs desktop/linux/src/lib.rs \
     && echo 'fn main() {}' > crates/crumb-ffi/src/bin/uniffi-bindgen.rs \
     && cargo build --release --locked && rm -rf src crates
 COPY src ./src
