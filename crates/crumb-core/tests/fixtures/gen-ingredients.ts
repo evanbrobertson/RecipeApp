@@ -14,7 +14,6 @@
 import {
   findTimers,
   formatQuantity,
-  ingredientsForStep,
   miseEnPlace,
   nudgeTimer,
   parseIngredient,
@@ -40,7 +39,6 @@ const out = {
   nudgeTimer: [] as Entry[],
   timerFromMinutes: [] as Entry[],
   timerWords: [] as Entry[],
-  ingredientsForStep: [] as Entry[],
 }
 
 function add(key: keyof typeof out, input: unknown, output: unknown) {
@@ -373,91 +371,6 @@ for (const seconds of [0, 10, 45, 60, 90, 1200, 3600, 5400, 6030, 86400]) {
   add("timerWords", seconds, timerWords(seconds))
 }
 
-// ── ingredientsForStep ─────────────────────────────────────────────────────
-type Ing = { raw: string; section: string | null }
-const STEP_CASES: { step: { text: string; section: string | null }; ingredients: Ing[] }[] = [
-  {
-    step: { text: "Add the eggs and sugar", section: null },
-    ingredients: [
-      { raw: "3 eggs", section: null },
-      { raw: "1 cup sugar", section: null },
-      { raw: "2 cups flour", section: null },
-    ],
-  },
-  {
-    step: { text: "Fold in the sugar", section: "Make the Filling" },
-    ingredients: [
-      { raw: "1/2 cup sugar", section: "Make the Filling" },
-      { raw: "1 cup sugar", section: "Make the Crust" },
-      { raw: "2 cups flour", section: "Make the Crust" },
-    ],
-  },
-  {
-    step: { text: "Beat the eggs", section: null },
-    ingredients: [
-      { raw: "2 eggs", section: null },
-      { raw: "1 egg white", section: null },
-      { raw: "1 cup milk", section: null },
-    ],
-  },
-  {
-    step: { text: "Drizzle the olive oil", section: null },
-    ingredients: [
-      { raw: "2 tbsp olive oil", section: null },
-      { raw: "1 tbsp oil", section: null },
-      { raw: "1 tbsp vinegar", section: null },
-    ],
-  },
-  {
-    step: { text: "Add the pumpkin", section: null },
-    ingredients: [
-      { raw: "1 cup pumpkin puree", section: null },
-      { raw: "1 tsp pumpkin pie spice", section: null },
-    ],
-  },
-  {
-    step: { text: "Add the garlic", section: null },
-    ingredients: [
-      { raw: "3 cloves garlic, minced", section: null },
-      { raw: "1 tsp garlic powder", section: null },
-    ],
-  },
-  {
-    step: { text: "Preheat the oven to 180C", section: null },
-    ingredients: [
-      { raw: "2 cups flour", section: null },
-      { raw: "1 cup sugar", section: null },
-    ],
-  },
-  {
-    step: { text: "Mix the flour", section: "For the Dough" },
-    ingredients: [
-      { raw: "2 cups flour", section: "Dough" },
-      { raw: "1 cup flour", section: "Topping" },
-      { raw: "1/2 cup sugar", section: "Topping" },
-    ],
-  },
-  {
-    step: { text: "Add tomatoes", section: null },
-    ingredients: [
-      { raw: "2 tomatoes", section: null },
-      { raw: "1 tsp tomato paste", section: null },
-      { raw: "1 tbsp olive oil", section: null },
-    ],
-  },
-  {
-    step: { text: "Stir in the tomatoes and basil", section: null },
-    ingredients: [
-      { raw: "2 tomatoes, chopped", section: null },
-      { raw: "1/4 cup fresh basil", section: null },
-      { raw: "1 tsp tomato paste", section: null },
-      { raw: "2 cups rice", section: null },
-    ],
-  },
-]
-for (const c of STEP_CASES) {
-  add("ingredientsForStep", c, ingredientsForStep(c.step, c.ingredients))
-}
 
 const path = new URL("./ingredients.json", import.meta.url)
 await Bun.write(path, `${JSON.stringify(out, null, 2)}\n`)

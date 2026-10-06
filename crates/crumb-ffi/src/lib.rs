@@ -157,12 +157,6 @@ pub struct StepTimer {
     pub seconds: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct IngredientLine {
-    pub raw: String,
-    pub section: Option<String>,
-}
-
 #[uniffi::export]
 pub fn parse_ingredient(raw: String) -> ParsedIngredient {
     ingredients::parse_ingredient(&raw).into()
@@ -254,27 +248,6 @@ pub fn timer_max() -> u32 {
 #[uniffi::export]
 pub fn timer_default() -> u32 {
     ingredients::TIMER_DEFAULT
-}
-
-/// Indices into `ingredients` of the ones a step uses, preferring the step's own section.
-#[uniffi::export]
-pub fn ingredients_for_step(
-    step: String,
-    step_section: Option<String>,
-    ingredients: Vec<IngredientLine>,
-) -> Vec<u32> {
-    let lines: Vec<ingredients::IngredientLine> = ingredients
-        .into_iter()
-        .map(|l| ingredients::IngredientLine {
-            raw: l.raw,
-            section: l.section,
-        })
-        .collect();
-    ingredients::ingredients_for_step_in(&step, step_section.as_deref(), &lines)
-        .into_iter()
-        .filter_map(|hit| lines.iter().position(|l| std::ptr::eq(l, hit)))
-        .map(|i| i as u32)
-        .collect()
 }
 
 #[uniffi::export]
@@ -1475,30 +1448,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn step_ingredients_come_back_as_indices() {
-        let lines = vec![
-            IngredientLine {
-                raw: "100g plain flour".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "2 large eggs".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "300ml milk".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "caster sugar to serve".into(),
-                section: None,
-            },
-        ];
-        let hit = ingredients_for_step("Whisk the flour, eggs and milk".into(), None, lines);
-        assert_eq!(hit, vec![0, 1, 2]);
-    }
 
     #[test]
     fn scales_and_finds_timers() {

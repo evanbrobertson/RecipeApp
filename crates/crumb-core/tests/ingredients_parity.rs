@@ -3,9 +3,8 @@
 //! produce the same output from the Rust port, numbers compared with 1e-9.
 
 use crumb_core::ingredients::{
-    IngredientLine, find_timers, format_quantity, ingredients_for_step_in, mise_en_place,
-    nudge_timer, parse_ingredient, parse_number, plural_unit, scale_ingredient, suggest_timers,
-    timer_from_minutes, timer_words,
+    find_timers, format_quantity, mise_en_place, nudge_timer, parse_ingredient, parse_number,
+    plural_unit, scale_ingredient, suggest_timers, timer_from_minutes, timer_words,
 };
 use serde_json::Value;
 
@@ -179,32 +178,5 @@ fn timer_words_matches_typescript() {
         let seconds = number(&entry["input"]) as u32;
         let actual = serde_json::to_value(timer_words(seconds)).unwrap();
         check("timerWords", &entry["input"], &entry["output"], &actual);
-    }
-}
-
-#[test]
-fn ingredients_for_step_matches_typescript() {
-    let root = fixture();
-    for entry in entries(&root, "ingredientsForStep") {
-        let step = &entry["input"]["step"];
-        let text = step["text"].as_str().unwrap();
-        let section = step["section"].as_str();
-        let ingredients: Vec<IngredientLine> = entry["input"]["ingredients"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| IngredientLine {
-                raw: v["raw"].as_str().unwrap().to_string(),
-                section: v["section"].as_str().map(str::to_string),
-            })
-            .collect();
-        let actual =
-            serde_json::to_value(ingredients_for_step_in(text, section, &ingredients)).unwrap();
-        check(
-            "ingredientsForStep",
-            &entry["input"],
-            &entry["output"],
-            &actual,
-        );
     }
 }
