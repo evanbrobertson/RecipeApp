@@ -4050,12 +4050,8 @@
       "input": "Roast for 1 hour 15 minutes",
       "output": [
         {
-          "label": "1 hour",
-          "seconds": 3600
-        },
-        {
-          "label": "15 minutes",
-          "seconds": 900
+          "label": "1 hour 15 minutes",
+          "seconds": 4500
         }
       ]
     },
@@ -4087,7 +4083,642 @@
     },
     {
       "input": "Cook for an hour",
+      "output": [
+        {
+          "label": "an hour",
+          "seconds": 3600
+        }
+      ]
+    },
+    {
+      "input": "Expect about 1 hour 40 minutes in total",
+      "output": [
+        {
+          "label": "1 hour 40 minutes",
+          "seconds": 6000
+        }
+      ]
+    },
+    {
+      "input": "Roast 2 hours, 30 minutes",
+      "output": [
+        {
+          "label": "2 hours, 30 minutes",
+          "seconds": 9000
+        }
+      ]
+    },
+    {
+      "input": "Bake 1 hour and 15 minutes, then rest",
+      "output": [
+        {
+          "label": "1 hour and 15 minutes",
+          "seconds": 4500
+        }
+      ]
+    },
+    {
+      "input": "Microwave 2 minutes 30 seconds",
+      "output": [
+        {
+          "label": "2 minutes 30 seconds",
+          "seconds": 150
+        }
+      ]
+    },
+    {
+      "input": "Cook 1 hr 5 min",
+      "output": [
+        {
+          "label": "1 hr 5 min",
+          "seconds": 3900
+        }
+      ]
+    },
+    {
+      "input": "Wait 2 hours 90 seconds",
+      "output": [
+        {
+          "label": "2 hours 90 seconds",
+          "seconds": 7290
+        }
+      ]
+    },
+    {
+      "input": "After 30 seconds, take the pan off; repeat for 3 minutes",
+      "output": [
+        {
+          "label": "30 seconds",
+          "seconds": 30
+        },
+        {
+          "label": "3 minutes",
+          "seconds": 180
+        }
+      ]
+    },
+    {
+      "input": "Bake 20 minutes, 2 minutes per side",
+      "output": [
+        {
+          "label": "20 minutes",
+          "seconds": 1200
+        },
+        {
+          "label": "2 minutes",
+          "seconds": 120
+        }
+      ]
+    },
+    {
+      "input": "Cook for one minute longer",
+      "output": [
+        {
+          "label": "one minute",
+          "seconds": 60
+        }
+      ]
+    },
+    {
+      "input": "until the shrimp turn pink, three to four minutes",
+      "output": [
+        {
+          "label": "three to four minutes",
+          "seconds": 240
+        }
+      ]
+    },
+    {
+      "input": "Let it bubble for about a minute",
+      "output": [
+        {
+          "label": "a minute",
+          "seconds": 60
+        }
+      ]
+    },
+    {
+      "input": "Rest for a couple of minutes",
+      "output": [
+        {
+          "label": "a couple of minutes",
+          "seconds": 120
+        }
+      ]
+    },
+    {
+      "input": "Simmer twenty-five minutes",
+      "output": [
+        {
+          "label": "twenty-five minutes",
+          "seconds": 1500
+        }
+      ]
+    },
+    {
+      "input": "Bake forty five minutes",
+      "output": [
+        {
+          "label": "forty five minutes",
+          "seconds": 2700
+        }
+      ]
+    },
+    {
+      "input": "Chill for half an hour",
+      "output": [
+        {
+          "label": "half an hour",
+          "seconds": 1800
+        }
+      ]
+    },
+    {
+      "input": "Roast an hour and a half",
+      "output": [
+        {
+          "label": "an hour and a half",
+          "seconds": 5400
+        }
+      ]
+    },
+    {
+      "input": "Simmer one and a half hours",
+      "output": [
+        {
+          "label": "one and a half hours",
+          "seconds": 5400
+        }
+      ]
+    },
+    {
+      "input": "Bake for an additional 15 more minutes",
+      "output": [
+        {
+          "label": "15 more minutes",
+          "seconds": 900
+        }
+      ]
+    },
+    {
+      "input": "Cook an additional minute",
+      "output": [
+        {
+          "label": "an additional minute",
+          "seconds": 60
+        }
+      ]
+    },
+    {
+      "input": "Bake 10 extra minutes",
+      "output": [
+        {
+          "label": "10 extra minutes",
+          "seconds": 600
+        }
+      ]
+    },
+    {
+      "input": "Rest a few minutes, then slice",
       "output": []
+    },
+    {
+      "input": "In the last minute, season the eggs",
+      "output": []
+    },
+    {
+      "input": "Toss for 1 1/2 - 2 minutes",
+      "output": [
+        {
+          "label": "1 1/2 - 2 minutes",
+          "seconds": 120
+        }
+      ]
+    },
+    {
+      "input": "Simmer 1½ hours",
+      "output": [
+        {
+          "label": "1½ hours",
+          "seconds": 5400
+        }
+      ]
+    },
+    {
+      "input": "Cook 2 ½ minutes",
+      "output": [
+        {
+          "label": "2 ½ minutes",
+          "seconds": 150
+        }
+      ]
+    },
+    {
+      "input": "simmer on very low for 2 - 2.5 hours",
+      "output": [
+        {
+          "label": "2 - 2.5 hours",
+          "seconds": 9000
+        }
+      ]
+    },
+    {
+      "input": "roast for approximately 45to 55 minutes",
+      "output": [
+        {
+          "label": "45to 55 minutes",
+          "seconds": 3300
+        }
+      ]
+    },
+    {
+      "input": "Bake 5 or 6 minutes",
+      "output": [
+        {
+          "label": "5 or 6 minutes",
+          "seconds": 360
+        }
+      ]
+    },
+    {
+      "input": "Sear 2-3 minutes per side",
+      "output": [
+        {
+          "label": "2-3 minutes",
+          "seconds": 180
+        }
+      ]
+    },
+    {
+      "input": "Bake 25—30 minutes",
+      "output": [
+        {
+          "label": "25—30 minutes",
+          "seconds": 1800
+        }
+      ]
+    },
+    {
+      "input": "Add 2 minced cloves of garlic",
+      "output": []
+    },
+    {
+      "input": "Top each with a M&M",
+      "output": []
+    },
+    {
+      "input": "Use the 10-Minute Meal pot",
+      "output": []
+    },
+    {
+      "input": "Store for up to 5 days",
+      "output": []
+    },
+    {
+      "input": "Cook 5 s",
+      "output": []
+    }
+  ],
+  "suggestTimers": [
+    {
+      "input": "Roast 15 minutes, then 1 hour, about 1 hour",
+      "output": [
+        {
+          "label": "15 minutes",
+          "seconds": 900
+        },
+        {
+          "label": "1 hour",
+          "seconds": 3600
+        }
+      ]
+    },
+    {
+      "input": "Bake 9 to 12 minutes, or 15 to 20 minutes for thick spears",
+      "output": [
+        {
+          "label": "9 to 12 minutes",
+          "seconds": 720
+        },
+        {
+          "label": "15 to 20 minutes",
+          "seconds": 1200
+        }
+      ]
+    },
+    {
+      "input": "Stir well",
+      "output": []
+    }
+  ],
+  "nudgeTimer": [
+    {
+      "input": {
+        "seconds": 10,
+        "longer": true
+      },
+      "output": 15
+    },
+    {
+      "input": {
+        "seconds": 10,
+        "longer": false
+      },
+      "output": 10
+    },
+    {
+      "input": {
+        "seconds": 15,
+        "longer": true
+      },
+      "output": 30
+    },
+    {
+      "input": {
+        "seconds": 15,
+        "longer": false
+      },
+      "output": 10
+    },
+    {
+      "input": {
+        "seconds": 30,
+        "longer": true
+      },
+      "output": 45
+    },
+    {
+      "input": {
+        "seconds": 30,
+        "longer": false
+      },
+      "output": 15
+    },
+    {
+      "input": {
+        "seconds": 45,
+        "longer": true
+      },
+      "output": 60
+    },
+    {
+      "input": {
+        "seconds": 45,
+        "longer": false
+      },
+      "output": 30
+    },
+    {
+      "input": {
+        "seconds": 59,
+        "longer": true
+      },
+      "output": 60
+    },
+    {
+      "input": {
+        "seconds": 59,
+        "longer": false
+      },
+      "output": 45
+    },
+    {
+      "input": {
+        "seconds": 60,
+        "longer": true
+      },
+      "output": 120
+    },
+    {
+      "input": {
+        "seconds": 60,
+        "longer": false
+      },
+      "output": 45
+    },
+    {
+      "input": {
+        "seconds": 61,
+        "longer": true
+      },
+      "output": 120
+    },
+    {
+      "input": {
+        "seconds": 61,
+        "longer": false
+      },
+      "output": 60
+    },
+    {
+      "input": {
+        "seconds": 90,
+        "longer": true
+      },
+      "output": 120
+    },
+    {
+      "input": {
+        "seconds": 90,
+        "longer": false
+      },
+      "output": 60
+    },
+    {
+      "input": {
+        "seconds": 270,
+        "longer": true
+      },
+      "output": 300
+    },
+    {
+      "input": {
+        "seconds": 270,
+        "longer": false
+      },
+      "output": 240
+    },
+    {
+      "input": {
+        "seconds": 1740,
+        "longer": true
+      },
+      "output": 1800
+    },
+    {
+      "input": {
+        "seconds": 1740,
+        "longer": false
+      },
+      "output": 1680
+    },
+    {
+      "input": {
+        "seconds": 1800,
+        "longer": true
+      },
+      "output": 2100
+    },
+    {
+      "input": {
+        "seconds": 1800,
+        "longer": false
+      },
+      "output": 1740
+    },
+    {
+      "input": {
+        "seconds": 1801,
+        "longer": true
+      },
+      "output": 2100
+    },
+    {
+      "input": {
+        "seconds": 1801,
+        "longer": false
+      },
+      "output": 1800
+    },
+    {
+      "input": {
+        "seconds": 2100,
+        "longer": true
+      },
+      "output": 2400
+    },
+    {
+      "input": {
+        "seconds": 2100,
+        "longer": false
+      },
+      "output": 1800
+    },
+    {
+      "input": {
+        "seconds": 7200,
+        "longer": true
+      },
+      "output": 8100
+    },
+    {
+      "input": {
+        "seconds": 7200,
+        "longer": false
+      },
+      "output": 6900
+    },
+    {
+      "input": {
+        "seconds": 7500,
+        "longer": true
+      },
+      "output": 8100
+    },
+    {
+      "input": {
+        "seconds": 7500,
+        "longer": false
+      },
+      "output": 7200
+    },
+    {
+      "input": {
+        "seconds": 86400,
+        "longer": true
+      },
+      "output": 86400
+    },
+    {
+      "input": {
+        "seconds": 86400,
+        "longer": false
+      },
+      "output": 85500
+    }
+  ],
+  "timerFromMinutes": [
+    {
+      "input": 1,
+      "output": 60
+    },
+    {
+      "input": 0.5,
+      "output": 30
+    },
+    {
+      "input": 0.1,
+      "output": 10
+    },
+    {
+      "input": 42,
+      "output": 2520
+    },
+    {
+      "input": 2.25,
+      "output": 135
+    },
+    {
+      "input": 1440,
+      "output": 86400
+    },
+    {
+      "input": 5000,
+      "output": 86400
+    },
+    {
+      "input": 0,
+      "output": null
+    },
+    {
+      "input": -3,
+      "output": null
+    },
+    {
+      "input": "NaN",
+      "output": null
+    }
+  ],
+  "timerWords": [
+    {
+      "input": 0,
+      "output": "0 sec"
+    },
+    {
+      "input": 10,
+      "output": "10 sec"
+    },
+    {
+      "input": 45,
+      "output": "45 sec"
+    },
+    {
+      "input": 60,
+      "output": "1 min"
+    },
+    {
+      "input": 90,
+      "output": "1 min 30 sec"
+    },
+    {
+      "input": 1200,
+      "output": "20 min"
+    },
+    {
+      "input": 3600,
+      "output": "1 hr"
+    },
+    {
+      "input": 5400,
+      "output": "1 hr 30 min"
+    },
+    {
+      "input": 6030,
+      "output": "1 hr 40 min 30 sec"
+    },
+    {
+      "input": 86400,
+      "output": "24 hr"
     }
   ],
   "ingredientsForStep": [

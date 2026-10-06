@@ -379,20 +379,148 @@ export function miseEnPlace(lines: string[]): MiseItem[] {
   })
 }
 
-/** Finds durations in a step ("bake 25–30 minutes") for one-tap timers. */
+// ─── Timers ────────────────────────────────────────────────────────────────
+
+const NUMBER_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  ninety: 90,
+}
+// A number in a step, as digits ("1 1/2", "2.5", "1½") or words ("three", "twenty-five",
+// "a couple of", "half an"), optionally "and a half". The Rust port in
+// crates/crumb-core/src/ingredients.rs builds the same pattern.
+const ONES = "one|two|three|four|five|six|seven|eight|nine"
+const TIME_WORD = String.raw`\b(?:(?:twenty|thirty|forty|fifty|sixty|ninety)(?:[\s-](?:${ONES}))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|${ONES}|a\s+couple(?:\s+of)?|half\s+an?|an?)`
+const TIME_NUMBER = String.raw`(?:(?:[0-9]+\s+[0-9]+/[0-9]+|[0-9]+/[0-9]+|[0-9]*\.[0-9]+|[0-9]+(?:\s*[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])?|[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞]|${TIME_WORD})(?:\s+and\s+a\s+half)?)`
+const TIME_UNIT = String.raw`(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?)\b`
+// "25–30 minutes", "15 more minutes", "an hour and a half"
+const TIME = new RegExp(
+  String.raw`(${TIME_NUMBER})(?:\s*(?:-|–|—|to|or)\s*(${TIME_NUMBER}))?(?:\s+(?:more|additional|extra|further))?\s*(${TIME_UNIT})(\s+and\s+a\s+half\b)?`,
+  "gi",
+)
+// The smaller part of "1 hour 40 minutes" or "2 minutes, 30 seconds", right after the first
+const TIME_REST = new RegExp(String.raw`^,?\s*(?:and\s+)?(${TIME_NUMBER})\s*(${TIME_UNIT})`, "i")
+
+const HAS_DIGIT = /[0-9¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞]/
+
+/** The shortest and longest timer: ten seconds to a day. */
+export const TIMER_MIN = 10
+export const TIMER_MAX = 24 * 3600
+/** What "Set a timer" starts from on a step that mentions no time. */
+export const TIMER_DEFAULT = 5 * 60
+
+function timeNumber(text: string): number | null {
+  let t = text.toLowerCase().replace(/\s+/g, " ").trim()
+  let half = 0
+  if (t.endsWith(" and a half")) {
+    half = 0.5
+    t = t.slice(0, -" and a half".length)
+  }
+  let n: number | null
+  if (t.startsWith("half ")) n = 0.5
+  else if (t.startsWith("a couple")) n = 2
+  else if (/^[a-z]/.test(t)) {
+    n = 0
+    for (const w of t.split(/[ -]/)) n += NUMBER_WORDS[w] ?? 0
+  } else n = parseNumber(t)
+  return n === null ? null : n + half
+}
+
+function unitSeconds(unit: string): number {
+  const u = unit.toLowerCase()
+  return u.startsWith("h") ? 3600 : u.startsWith("s") ? 1 : 60
+}
+
+/**
+ * Finds durations in a step ("bake 25–30 minutes", "1 hour 40 minutes", "three to four
+ * minutes", "an hour and a half"). A range counts as its longer end.
+ */
 export function findTimers(step: string): { label: string; seconds: number }[] {
   const out: { label: string; seconds: number }[] = []
-  const re =
-    /(\d+(?:\.\d+)?|[½¼¾])(?:\s*(?:-|–|to)\s*(\d+(?:\.\d+)?))?\s*(hours?|hrs?|h\b|minutes?|mins?|m\b|seconds?|secs?)/gi
-  for (const m of step.matchAll(re)) {
-    const value = parseNumber(m[2] ?? m[1]!)
+  TIME.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = TIME.exec(step))) {
+    const number = m[2] ?? m[1]!
+    const unit = m[3]!
+    // "h" and "m" only after digits: "a M&M" isn't a minute
+    if (unit.length === 1 && !HAS_DIGIT.test(number)) continue
+    const value = timeNumber(number)
     if (value === null) continue
-    const unit = m[3]!.toLowerCase()
-    const mult = unit.startsWith("h") ? 3600 : unit.startsWith("s") ? 1 : 60
-    const seconds = Math.round(value * mult)
-    if (seconds >= 10 && seconds <= 24 * 3600) out.push({ label: m[0], seconds })
+    const mult = unitSeconds(unit)
+    let seconds = (value + (m[4] ? 0.5 : 0)) * mult
+    let label = m[0]
+    const rest = step.slice(TIME.lastIndex).match(TIME_REST)
+    if (rest && !m[4] && unitSeconds(rest[2]!) < mult) {
+      const more = timeNumber(rest[1]!)
+      if (more !== null && (rest[2]!.length > 1 || HAS_DIGIT.test(rest[1]!))) {
+        seconds += more * unitSeconds(rest[2]!)
+        label += rest[0]
+        TIME.lastIndex += rest[0].length
+      }
+    }
+    seconds = Math.round(seconds)
+    if (seconds >= TIMER_MIN && seconds <= TIMER_MAX) out.push({ label: label.trim(), seconds })
   }
   return out
+}
+
+/** A step's timer choices, one per length: the first is the one cook mode suggests. */
+export function suggestTimers(step: string): { label: string; seconds: number }[] {
+  const found = findTimers(step)
+  return found.filter((t, i) => found.findIndex((u) => u.seconds === t.seconds) === i)
+}
+
+/**
+ * One tap longer or shorter: 15 seconds under a minute, a minute to half an hour, 5 minutes
+ * to two hours, then 15, landing on whole steps ("4 min 30 sec" goes to 5, then 6).
+ */
+export function nudgeTimer(seconds: number, longer: boolean): number {
+  const from = longer ? seconds : seconds - 1
+  const step = from < 60 ? 15 : from < 1800 ? 60 : from < 7200 ? 300 : 900
+  const next = longer
+    ? Math.floor(seconds / step) * step + step
+    : Math.ceil(seconds / step) * step - step
+  return Math.min(TIMER_MAX, Math.max(TIMER_MIN, next))
+}
+
+/** A length the cook typed in minutes, kept within a timer's range; null if it isn't one. */
+export function timerFromMinutes(minutes: number): number | null {
+  if (!Number.isFinite(minutes) || minutes <= 0) return null
+  return Math.min(TIMER_MAX, Math.max(TIMER_MIN, Math.round(minutes * 60)))
+}
+
+/** A timer's length in words: "1 hr 30 min", "45 sec". */
+export function timerWords(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  const parts = [h && `${h} hr`, m && `${m} min`, sec && `${sec} sec`].filter(Boolean)
+  return parts.length ? parts.join(" ") : "0 sec"
 }
 
 // ─── Ingredients used in a step (cooking mode) ────────────────────────────

@@ -770,38 +770,201 @@ pub fn mise_en_place(lines: &[&str]) -> Vec<MiseItem> {
 
 // ─── Timers ────────────────────────────────────────────────────────────────
 
-static TIMER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)([0-9]+(?:\.[0-9]+)?|[½¼¾])(?:\s*(?:-|–|to)\s*([0-9]+(?:\.[0-9]+)?))?\s*(hours?|hrs?|h(?-u:\b)|minutes?|mins?|m(?-u:\b)|seconds?|secs?)",
+/// The shortest timer: ten seconds.
+pub const TIMER_MIN: u32 = 10;
+/// The longest timer: a day.
+pub const TIMER_MAX: u32 = 24 * 3600;
+/// What "Set a timer" starts from on a step that mentions no time.
+pub const TIMER_DEFAULT: u32 = 5 * 60;
+
+fn number_word(word: &str) -> f64 {
+    match word {
+        "a" | "an" | "one" => 1.0,
+        "two" => 2.0,
+        "three" => 3.0,
+        "four" => 4.0,
+        "five" => 5.0,
+        "six" => 6.0,
+        "seven" => 7.0,
+        "eight" => 8.0,
+        "nine" => 9.0,
+        "ten" => 10.0,
+        "eleven" => 11.0,
+        "twelve" => 12.0,
+        "thirteen" => 13.0,
+        "fourteen" => 14.0,
+        "fifteen" => 15.0,
+        "sixteen" => 16.0,
+        "seventeen" => 17.0,
+        "eighteen" => 18.0,
+        "nineteen" => 19.0,
+        "twenty" => 20.0,
+        "thirty" => 30.0,
+        "forty" => 40.0,
+        "fifty" => 50.0,
+        "sixty" => 60.0,
+        "ninety" => 90.0,
+        _ => 0.0,
+    }
+}
+
+// A number in a step, as digits ("1 1/2", "2.5", "1½") or words ("three", "twenty-five",
+// "a couple of", "half an"), optionally "and a half". The same pattern as the TS
+// `findTimers` in web/src/lib/ingredients.ts.
+const ONES: &str = "one|two|three|four|five|six|seven|eight|nine";
+static TIME_NUMBER: LazyLock<String> = LazyLock::new(|| {
+    let word = format!(
+        r"(?-u:\b)(?:(?:twenty|thirty|forty|fifty|sixty|ninety)(?:[\s-](?:{ONES}))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|{ONES}|a\s+couple(?:\s+of)?|half\s+an?|an?)"
+    );
+    format!(
+        r"(?:(?:[0-9]+\s+[0-9]+/[0-9]+|[0-9]+/[0-9]+|[0-9]*\.[0-9]+|[0-9]+(?:\s*[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])?|[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞]|{word})(?:\s+and\s+a\s+half)?)"
     )
+});
+const TIME_UNIT: &str = r"(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?)(?-u:\b)";
+// "25–30 minutes", "15 more minutes", "an hour and a half"
+static TIME: LazyLock<Regex> = LazyLock::new(|| {
+    let n = TIME_NUMBER.as_str();
+    Regex::new(&format!(
+        r"(?i)({n})(?:\s*(?:-|–|—|to|or)\s*({n}))?(?:\s+(?:more|additional|extra|further))?\s*({TIME_UNIT})(\s+and\s+a\s+half(?-u:\b))?"
+    ))
     .unwrap()
 });
+// The smaller part of "1 hour 40 minutes" or "2 minutes, 30 seconds", right after the first
+static TIME_REST: LazyLock<Regex> = LazyLock::new(|| {
+    let n = TIME_NUMBER.as_str();
+    Regex::new(&format!(r"(?i)^,?\s*(?:and\s+)?({n})\s*({TIME_UNIT})")).unwrap()
+});
 
-/// Finds durations in a step ("bake 25–30 minutes") for one-tap timers.
+fn time_number(text: &str) -> Option<f64> {
+    let lower = text.to_lowercase();
+    let mut t = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut half = 0.0;
+    if let Some(rest) = t.strip_suffix(" and a half") {
+        half = 0.5;
+        t = rest.to_string();
+    }
+    let n = if t.starts_with("half ") {
+        Some(0.5)
+    } else if t.starts_with("a couple") {
+        Some(2.0)
+    } else if t.starts_with(|c: char| c.is_ascii_lowercase()) {
+        Some(t.split([' ', '-']).map(number_word).sum())
+    } else {
+        parse_number(&t)
+    };
+    n.map(|n| n + half)
+}
+
+fn unit_seconds(unit: &str) -> f64 {
+    match unit.to_lowercase().chars().next() {
+        Some('h') => 3600.0,
+        Some('s') => 1.0,
+        _ => 60.0,
+    }
+}
+
+fn has_digit(text: &str) -> bool {
+    text.chars()
+        .any(|c| c.is_ascii_digit() || unicode_fraction(c).is_some())
+}
+
+/// Finds durations in a step ("bake 25–30 minutes", "1 hour 40 minutes", "three to four
+/// minutes", "an hour and a half"). A range counts as its longer end.
 pub fn find_timers(step: &str) -> Vec<Timer> {
-    TIMER
-        .captures_iter(step)
-        .filter_map(|c| {
-            let value = parse_number(c.get(2).or_else(|| c.get(1)).unwrap().as_str())?;
-            let unit = c[3].to_lowercase();
-            let mult = if unit.starts_with('h') {
-                3600.0
-            } else if unit.starts_with('s') {
-                1.0
-            } else {
-                60.0
-            };
-            let seconds = (value * mult).round();
-            if (10.0..=24.0 * 3600.0).contains(&seconds) {
-                Some(Timer {
-                    label: c[0].to_string(),
-                    seconds: seconds as u32,
-                })
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(c) = TIME.captures_at(step, at) {
+        let whole = c.get(0).unwrap();
+        at = whole.end();
+        let number = c.get(2).or_else(|| c.get(1)).unwrap().as_str();
+        let unit = &c[3];
+        // "h" and "m" only after digits: "a M&M" isn't a minute
+        if unit.len() == 1 && !has_digit(number) {
+            continue;
+        }
+        let Some(value) = time_number(number) else {
+            continue;
+        };
+        let mult = unit_seconds(unit);
+        let half = c.get(4).is_some();
+        let mut seconds = (value + if half { 0.5 } else { 0.0 }) * mult;
+        let mut label = whole.as_str().to_string();
+        // "1 hour 40 minutes": a smaller unit right after joins this time
+        if !half
+            && let Some(rest) = TIME_REST.captures(&step[at..])
+            && unit_seconds(&rest[2]) < mult
+            && (rest[2].len() > 1 || has_digit(&rest[1]))
+            && let Some(more) = time_number(&rest[1])
+        {
+            seconds += more * unit_seconds(&rest[2]);
+            label.push_str(&rest[0]);
+            at += rest[0].len();
+        }
+        let seconds = seconds.round();
+        if (f64::from(TIMER_MIN)..=f64::from(TIMER_MAX)).contains(&seconds) {
+            out.push(Timer {
+                label: label.trim().to_string(),
+                seconds: seconds as u32,
+            });
+        }
+    }
+    out
+}
+
+/// A step's timer choices, one per length: the first is the one cook mode suggests.
+pub fn suggest_timers(step: &str) -> Vec<Timer> {
+    let mut out: Vec<Timer> = Vec::new();
+    for t in find_timers(step) {
+        if !out.iter().any(|u| u.seconds == t.seconds) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// One tap longer or shorter: 15 seconds under a minute, a minute to half an hour, 5 minutes
+/// to two hours, then 15, landing on whole steps ("4 min 30 sec" goes to 5, then 6).
+pub fn nudge_timer(seconds: u32, longer: bool) -> u32 {
+    let from = if longer {
+        seconds
+    } else {
+        seconds.saturating_sub(1)
+    };
+    let step = match from {
+        0..60 => 15,
+        60..1800 => 60,
+        1800..7200 => 300,
+        _ => 900,
+    };
+    let next = if longer {
+        seconds / step * step + step
+    } else {
+        seconds.div_ceil(step) * step - step
+    };
+    next.clamp(TIMER_MIN, TIMER_MAX)
+}
+
+/// A length the cook typed in minutes, kept within a timer's range; `None` if it isn't one.
+pub fn timer_from_minutes(minutes: f64) -> Option<u32> {
+    if !minutes.is_finite() || minutes <= 0.0 {
+        return None;
+    }
+    Some(((minutes * 60.0).round() as u32).clamp(TIMER_MIN, TIMER_MAX))
+}
+
+/// A timer's length in words: "1 hr 30 min", "45 sec".
+pub fn timer_words(seconds: u32) -> String {
+    let (h, m, s) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
+    let parts: Vec<String> = [(h, "hr"), (m, "min"), (s, "sec")]
+        .into_iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, unit)| format!("{n} {unit}"))
+        .collect();
+    if parts.is_empty() {
+        "0 sec".to_string()
+    } else {
+        parts.join(" ")
+    }
 }
 
 // ─── Ingredients used in a step (cooking mode) ────────────────────────────
