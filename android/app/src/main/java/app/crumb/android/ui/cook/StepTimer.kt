@@ -199,7 +199,7 @@ private fun MinutesField(length: Int, onDone: (Double?) -> Unit) {
     }
 
     LaunchedEffect(Unit) { focus.requestFocus() }
-    Row(Modifier.height(44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.height(44.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicTextField(
             value = value,
             onValueChange = { value = it },
@@ -215,7 +215,7 @@ private fun MinutesField(length: Int, onDone: (Double?) -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { finish() }),
             modifier = Modifier
-                .width(80.dp)
+                .width(56.dp)
                 .height(40.dp)
                 .clip(ControlShape)
                 .background(c.paper)
@@ -225,9 +225,9 @@ private fun MinutesField(length: Int, onDone: (Double?) -> Unit) {
                 }
                 .semantics { contentDescription = "Timer length in minutes" },
             decorationBox = { inner ->
-                Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) { inner() }
+                Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.Center) { inner() }
             },
         )
-        Text("min", style = CrumbText.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold), color = c.ink, modifier = Modifier.padding(start = 6.dp))
+        Text("min", style = CrumbText.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold), color = c.ink, modifier = Modifier.padding(start = 4.dp))
     }
 }
