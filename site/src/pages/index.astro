@@ -14,9 +14,11 @@ import {
   LibraryBig,
   Link,
   ListChecks,
+  MessagesSquare,
   Pencil,
   Search,
   Sparkles,
+  SquareTerminal,
 } from "lucide"
 import Icon from "../components/Icon.astro"
 import Kitchen from "../components/Kitchen.astro"
@@ -43,6 +45,9 @@ const sources = [
   "Mealie",
   "Claude, via the connector",
 ]
+
+const installCli =
+  "curl -fsSL https://raw.githubusercontent.com/evanbrobertson/RecipeApp/master/scripts/cli/install.sh | bash"
 
 const features = [
   {
@@ -80,6 +85,19 @@ const features = [
     icon: Sparkles,
     title: "What to cook next",
     text: "Four ideas drawn from what you cook, or one surprise pick.",
+  },
+  {
+    id: "cli",
+    icon: SquareTerminal,
+    title: "A command-line tool",
+    text: "Save, find, scale and organise recipes from a shell, in scripts or from an AI agent. Linux, signs in with an API token from your Crumb.",
+  },
+  {
+    id: "chatgpt",
+    icon: MessagesSquare,
+    title: "Crumb in ChatGPT",
+    text: "Browse your shelf and save recipes from a chat, with the same bookshelf drawn in the conversation.",
+    wip: true,
   },
   {
     id: "open",
@@ -231,6 +249,7 @@ const spines = [
                   <h3>
                     {f.title}
                     {f.soon && <span class="pill">Coming soon</span>}
+                    {f.wip && <span class="pill">Work in progress</span>}
                   </h3>
                   <p>{f.text}</p>
                   {f.id === "cookbook" && (
@@ -239,6 +258,9 @@ const spines = [
                         <span class={`spine ${s.c}`} style={`height:${s.h}px`} />
                       ))}
                     </div>
+                  )}
+                  {f.id === "cli" && (
+                    <pre class="install" tabindex="0" aria-label="Install command"><code>{installCli}</code></pre>
                   )}
                   {f.id === "sources" && (
                     <ul class="sources" aria-label="Supported sources">
@@ -419,6 +441,7 @@ const spines = [
   /* Features */
   .features {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     padding: 0;
     list-style: none;
@@ -438,6 +461,11 @@ const spines = [
     }
     .feature-cookbook {
       grid-column: auto;
+    }
+  }
+  @media (min-width: 1000px) {
+    .feature-cli {
+      grid-column: span 2;
     }
   }
   .card {
@@ -482,6 +510,18 @@ const spines = [
     margin-top: 8px;
     padding: 0;
     list-style: none;
+  }
+  .install {
+    margin-top: auto;
+    padding: 12px 14px;
+    overflow-x: auto;
+    border-radius: var(--r-ctl);
+    background: var(--tint);
+    color: var(--text);
+    font: 500 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .install code {
+    white-space: pre;
   }
   .mini-shelf {
     display: flex;
