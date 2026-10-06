@@ -22,7 +22,7 @@
   import StepTimer from "../components/StepTimer.svelte"
   import { api, pathId } from "../lib/api"
   import { markCooked } from "../lib/history"
-  import { findTimers, scaleIngredient } from "../lib/ingredients"
+  import { scaleIngredient, suggestTimers } from "../lib/ingredients"
   import { pageState } from "../lib/page.svelte"
   import type { Recipe } from "../lib/recipe"
   import { stepReader } from "../lib/speech.svelte"
@@ -119,7 +119,7 @@
   }
 
   // A step's timer is only a suggestion: the length the cook settles on is kept for the visit
-  const stepTimers = $derived(step ? findTimers(step.text) : [])
+  const stepTimers = $derived(step ? suggestTimers(step.text) : [])
   const TIMERS_KEY = `crumb:cook-timers:${id}`
   let timerLengths = $state(read<Record<number, number>>(TIMERS_KEY, {}, "session"))
   $effect(() => write(TIMERS_KEY, timerLengths, "session"))
@@ -299,7 +299,7 @@
 
               <div class="mt-7">
                 <StepTimer
-                  found={stepTimers}
+                  choices={stepTimers}
                   bind:seconds={
                     () => timerLengths[index] ?? null,
                     (s) => {

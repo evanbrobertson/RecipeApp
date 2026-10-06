@@ -8,40 +8,28 @@
   import Minus from "@lucide/svelte/icons/minus"
   import Plus from "@lucide/svelte/icons/plus"
   import { tick } from "svelte"
+  import {
+    TIMER_DEFAULT,
+    TIMER_MAX,
+    TIMER_MIN,
+    nudgeTimer,
+    timerFromMinutes,
+    timerWords,
+  } from "../lib/ingredients"
 
   interface Props {
-    /** Times the step mentions, from `findTimers`. */
-    found: { label: string; seconds: number }[]
+    /** The step's timer choices, from `suggestTimers`; the first is suggested. */
+    choices: { label: string; seconds: number }[]
     /** The length the cook chose for this step, if they changed it. */
     seconds: number | null
     onstart: (seconds: number) => void
   }
-  let { found, seconds = $bindable(), onstart }: Props = $props()
+  let { choices, seconds = $bindable(), onstart }: Props = $props()
 
-  const MIN = 15
-  const MAX = 24 * 3600
-
-  // One button per distinct length ("15 minutes, then 1 hour, then 1 hour" is two)
-  const choices = $derived(
-    found.filter((t, i) => found.findIndex((u) => u.seconds === t.seconds) === i),
-  )
   const length = $derived(seconds ?? choices[0]?.seconds ?? null)
 
-  function words(s: number) {
-    const h = Math.floor(s / 3600)
-    const m = Math.floor((s % 3600) / 60)
-    const sec = s % 60
-    return [h && `${h} hr`, m && `${m} min`, sec && `${sec} sec`].filter(Boolean).join(" ")
-  }
-
-  // Finer steps for short times: 15 s under a minute, a minute to half an hour, 5 to two hours
-  function nudge(dir: 1 | -1) {
-    if (length === null) return
-    const from = dir > 0 ? length : length - 1
-    const step = from < 60 ? 15 : from < 1800 ? 60 : from < 7200 ? 300 : 900
-    const next =
-      dir > 0 ? Math.floor(length / step) * step + step : Math.ceil(length / step) * step - step
-    seconds = Math.min(MAX, Math.max(MIN, next))
+  function nudge(longer: boolean) {
+    if (length !== null) seconds = nudgeTimer(length, longer)
   }
 
   // Tapping the length types it, in minutes
@@ -53,14 +41,13 @@
     input?.select()
   }
   function commit() {
-    const minutes = Number(input?.value)
-    if (minutes > 0) seconds = Math.min(MAX, Math.max(MIN, Math.round(minutes * 60)))
+    seconds = timerFromMinutes(Number(input?.value)) ?? seconds
     typing = false
   }
 </script>
 
 {#if length === null}
-  <button type="button" class="btn btn-soft btn-lg" onclick={() => (seconds = 300)}>
+  <button type="button" class="btn btn-soft btn-lg" onclick={() => (seconds = TIMER_DEFAULT)}>
     <AlarmClockPlus /> Set a timer
   </button>
 {:else}
@@ -74,8 +61,8 @@
         type="button"
         class="btn btn-ghost btn-icon"
         aria-label="Shorter"
-        disabled={length <= MIN}
-        onclick={() => nudge(-1)}
+        disabled={length <= TIMER_MIN}
+        onclick={() => nudge(false)}
       >
         <Minus />
       </button>
@@ -102,18 +89,18 @@
         <button
           type="button"
           class="rounded-ctl hover:bg-paper/70 h-11 min-w-20 px-2 text-lg font-bold tabular-nums transition-colors"
-          aria-label={`${words(length)}. Tap to type a length`}
+          aria-label={`${timerWords(length)}. Tap to type a length`}
           onclick={type}
         >
-          {words(length)}
+          {timerWords(length)}
         </button>
       {/if}
       <button
         type="button"
         class="btn btn-ghost btn-icon"
         aria-label="Longer"
-        disabled={length >= MAX}
-        onclick={() => nudge(1)}
+        disabled={length >= TIMER_MAX}
+        onclick={() => nudge(true)}
       >
         <Plus />
       </button>
