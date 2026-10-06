@@ -148,39 +148,10 @@ pub fn cook_steps(recipe_json: &str) -> String {
     out(client::cook_steps(&recipe)
         .into_iter()
         .map(|s| {
-            let timers = ingredients::find_timers(&s.text);
+            let timers = ingredients::suggest_timers(&s.text);
             json!({"section": s.section, "text": s.text, "timers": timers})
         })
         .collect::<Vec<_>>())
-}
-
-/// The ingredient lines a step uses, scaled: `[{raw, section, scaled}]`.
-pub fn step_ingredients(step: &str, section: &str, recipe_json: &str, scale: f64) -> String {
-    let Some(recipe) = parse::<Recipe>(recipe_json) else {
-        return "[]".into();
-    };
-    let all: Vec<ingredients::IngredientLine> = recipe
-        .ingredients
-        .iter()
-        .flat_map(|s| {
-            s.items.iter().map(|raw| ingredients::IngredientLine {
-                raw: raw.clone(),
-                section: s.name.clone(),
-            })
-        })
-        .collect();
-    out(
-        ingredients::ingredients_for_step_in(step, some(section), &all)
-            .into_iter()
-            .map(|l| {
-                json!({
-                    "raw": l.raw,
-                    "section": l.section,
-                    "scaled": ingredients::scale_ingredient(&l.raw, scale),
-                })
-            })
-            .collect::<Vec<_>>(),
-    )
 }
 
 pub fn checks_status_text(counts_json: &str, run: i32) -> String {
@@ -404,19 +375,33 @@ pub mod qobject {
         fn check_done_toast(self: &Core, status: QString, fixed: i32, review: i32) -> QString;
 
         // ─── Cook and prep ───
-        /// `[{section, text, timers: [{label, seconds}]}]`.
+        /// `[{section, text, timers: [{label, seconds}]}]`; `timers` are the step's choices, one per
+        /// length, the first suggested (possibly none).
         #[qinvokable]
         #[cxx_name = "cookSteps"]
         fn cook_steps(self: &Core, recipe: QString) -> QString;
+        /// One tap longer or shorter on a timer's length, in seconds.
         #[qinvokable]
-        #[cxx_name = "stepIngredients"]
-        fn step_ingredients(
-            self: &Core,
-            step: QString,
-            section: QString,
-            recipe: QString,
-            scale: f64,
-        ) -> QString;
+        #[cxx_name = "nudgeTimer"]
+        fn nudge_timer(self: &Core, seconds: i32, longer: bool) -> i32;
+        /// A length typed in minutes, in seconds: -1 when it isn't a length (keep the old one).
+        #[qinvokable]
+        #[cxx_name = "timerFromMinutes"]
+        fn timer_from_minutes(self: &Core, minutes: f64) -> i32;
+        /// "1 hr 30 min", "45 sec".
+        #[qinvokable]
+        #[cxx_name = "timerWords"]
+        fn timer_words(self: &Core, seconds: i32) -> QString;
+        /// The shortest, longest and default (a step that mentions no time) timer, in seconds.
+        #[qinvokable]
+        #[cxx_name = "timerMin"]
+        fn timer_min(self: &Core) -> i32;
+        #[qinvokable]
+        #[cxx_name = "timerMax"]
+        fn timer_max(self: &Core) -> i32;
+        #[qinvokable]
+        #[cxx_name = "timerDefault"]
+        fn timer_default(self: &Core) -> i32;
         #[qinvokable]
         #[cxx_name = "findTimers"]
         fn find_timers(self: &Core, step: QString) -> QString;
@@ -681,19 +666,23 @@ impl qobject::Core {
     pub fn cook_steps(&self, recipe: QString) -> QString {
         q(cook_steps(&recipe.to_string()))
     }
-    pub fn step_ingredients(
-        &self,
-        step: QString,
-        section: QString,
-        recipe: QString,
-        scale: f64,
-    ) -> QString {
-        q(step_ingredients(
-            &step.to_string(),
-            &section.to_string(),
-            &recipe.to_string(),
-            scale,
-        ))
+    pub fn nudge_timer(&self, seconds: i32, longer: bool) -> i32 {
+        ingredients::nudge_timer(seconds.max(0) as u32, longer) as i32
+    }
+    pub fn timer_from_minutes(&self, minutes: f64) -> i32 {
+        ingredients::timer_from_minutes(minutes).map_or(-1, |s| s as i32)
+    }
+    pub fn timer_words(&self, seconds: i32) -> QString {
+        q(ingredients::timer_words(seconds.max(0) as u32))
+    }
+    pub fn timer_min(&self) -> i32 {
+        ingredients::TIMER_MIN as i32
+    }
+    pub fn timer_max(&self) -> i32 {
+        ingredients::TIMER_MAX as i32
+    }
+    pub fn timer_default(&self) -> i32 {
+        ingredients::TIMER_DEFAULT as i32
     }
     pub fn find_timers(&self, step: QString) -> QString {
         q(out(ingredients::find_timers(&step.to_string())))
@@ -747,6 +736,24 @@ impl qobject::Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cook_steps_carry_the_suggested_timers() {
+        let recipe = json!({
+            "id": 1, "url": null, "source": "manual", "title": "Stew", "description": null,
+            "image": null, "author": null, "prepTime": null, "cookTime": null, "totalTime": null,
+            "freezeTime": null, "recipeYield": null, "recipeCategory": null, "recipeCuisine": null,
+            "ingredients": [], "nutrition": null, "notes": null, "originalUrl": null,
+            "instructions": [{"name": "", "items": ["Simmer 20 minutes, then 20 more minutes.", "Stir."]}],
+            "createdAt": "2025-01-01T00:00:00.000Z", "updatedAt": "2025-01-01T00:00:00.000Z",
+        })
+        .to_string();
+        let recipe = recipe.as_str();
+        let steps: Value = serde_json::from_str(&cook_steps(recipe)).unwrap();
+        assert_eq!(steps[0]["timers"].as_array().unwrap().len(), 1);
+        assert_eq!(steps[0]["timers"][0]["seconds"], 1200);
+        assert_eq!(steps[1]["timers"], json!([]));
+    }
 
     #[test]
     fn dates_cross_as_the_webs_en_us() {

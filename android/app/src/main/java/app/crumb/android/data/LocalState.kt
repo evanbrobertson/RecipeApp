@@ -18,17 +18,19 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
 // What the web keeps in browser storage (web/src/lib/storage.ts, random.ts), on the phone.
-// The web's sessionStorage (per tab) becomes per process here: scale, cook step, prep progress
-// and Surprise me's recent picks last until the app is closed. Its localStorage (recently
+// The web's sessionStorage (per tab) becomes per process here: scale, cook step, cook timers and
+// ticked ingredients, prep progress and Surprise me's recent picks last until the app is closed. Its localStorage (recently
 // viewed, Home's Try next toggle) is saved in DataStore and survives restarts.
 
 /**
  * Per-recipe state shared by the recipe, cook and prep screens: the scale (½×, 1×, 2×, 3×),
- * the cook-mode step, and which prep items are ready. Compose state, so screens recompose.
+ * the cook-mode step, its timer lengths and ticked ingredients, and which prep items are ready. Compose state, so screens recompose.
  */
 object RecipeSession {
     private val scales = mutableStateMapOf<Long, Double>()
     private val steps = mutableStateMapOf<Long, Int>()
+    private val timers = mutableStateMapOf<Long, Map<Int, Int>>()
+    private val checked = mutableStateMapOf<Long, Set<Int>>()
     private val prep = mutableStateMapOf<Long, Set<String>>()
 
     fun scale(id: Long): Double = scales[id] ?: 1.0
@@ -40,6 +42,18 @@ object RecipeSession {
     fun cookStep(id: Long): Int? = steps[id]
     fun setCookStep(id: Long, step: Int) {
         steps[id] = step
+    }
+
+    /** The timer lengths the cook changed in cook mode, in seconds by step (0-based). */
+    fun cookTimers(id: Long): Map<Int, Int> = timers[id].orEmpty()
+    fun setCookTimer(id: Long, step: Int, seconds: Int) {
+        timers[id] = cookTimers(id) + (step to seconds)
+    }
+
+    /** The ingredients ticked in cook mode, by index (0-based). */
+    fun cookChecked(id: Long): Set<Int> = checked[id].orEmpty()
+    fun setCookChecked(id: Long, ticked: Set<Int>) {
+        checked[id] = ticked
     }
 
     fun prepReady(id: Long): Set<String> = prep[id].orEmpty()
@@ -81,6 +95,10 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
     /** Home's "What should I cook next?" is expanded (crumb:home:next-open). */
     val tryNextOpen: StateFlow<Boolean> = nextOpen.asStateFlow()
 
+    private val pinned = MutableStateFlow(true)
+    /** Cook mode keeps the ingredients beside the steps on wide screens (crumb:cook-pinned). */
+    val cookPinned: StateFlow<Boolean> = pinned.asStateFlow()
+
     /** Surprise me's recent picks this session (crumb:random:seen), newest first, up to 40. */
     private val randomSeen = ArrayDeque<Long>()
 
@@ -101,6 +119,7 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
             runCatching { CrumbJson.decodeFromString(ListSerializer(Viewed.serializer()), it) }.getOrNull()
         }.orEmpty()
         nextOpen.value = prefs[NEXT_OPEN] ?: false
+        pinned.value = prefs[COOK_PINNED] ?: true
         for (tall in listOf(false, true)) {
             prefs[windowKey(tall)]?.let {
                 runCatching { CrumbJson.decodeFromString(VideoWin.serializer(), it) }.getOrNull()
@@ -126,6 +145,11 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
         scope.launch { context.localData.edit { it[NEXT_OPEN] = open } }
     }
 
+    fun setCookPinned(on: Boolean) {
+        pinned.value = on
+        scope.launch { context.localData.edit { it[COOK_PINNED] = on } }
+    }
+
     fun rememberRandom(id: Long) {
         randomSeen.remove(id)
         randomSeen.addFirst(id)
@@ -145,6 +169,7 @@ class LocalStore(private val context: Context, private val scope: CoroutineScope
     private companion object {
         val RECENT = stringPreferencesKey("recent")
         val NEXT_OPEN = booleanPreferencesKey("home_next_open")
+        val COOK_PINNED = booleanPreferencesKey("cook_pinned")
     }
 }
 

@@ -5,9 +5,10 @@ import QtQuick.Layouts
 import app.crumb.desktop 1.0
 
 // Cook mode (web islands/CookPage.svelte, pages/shell/cook): one big step at a time with
-// the section name, timers for any time a step mentions, the ingredients the step uses, and
-// thumb-sized controls. Left and Right, Space and PageUp/PageDown move; the current step is
-// remembered in the session. Read aloud and keeping the screen awake are browser APIs with
+// the section name, an adjustable timer (suggested from the times the step mentions), the
+// ingredients pinned beside the steps on wide windows, and thumb-sized controls. Left and
+// Right, Space and PageUp/PageDown move (not while the timer's minutes are being typed); the
+// current step, a step's timer length and the ticked ingredients are remembered in the session. Read aloud and keeping the screen awake are browser APIs with
 // no QML equivalent, so they are left out.
 Item {
     id: page
@@ -27,13 +28,30 @@ Item {
     property int direction: 1
     property bool logged: false
     property var checked: ({})
+    property var timerLengths: ({})
+    property bool pinned: parse(Store.read(pinnedKey, "true"), true) !== false
+    // Wide windows keep the ingredients beside the steps until unpinned; narrow ones open them over
+    readonly property bool wide: width >= 768
+    readonly property bool docked: pinned && wide
+    readonly property int panelWidth: width >= 1280 ? 384 : width >= 1024 ? 320 : 288
+    readonly property string pinnedKey: "crumb:cook-pinned"
+    readonly property string timersKey: "crumb:cook-timers:" + routeId
+    readonly property string checkedKey: "crumb:cook-checked:" + routeId
+    // The ingredient lines in one list: a tick is a line's index here
+    readonly property var ingredientRows: {
+        var rows = []
+        var sections = recipe ? recipe.ingredients : []
+        for (var s = 0; s < sections.length; s++) {
+            var name = sections[s].name || ""
+            for (var i = 0; i < sections[s].items.length; i++) {
+                var before = rows.length ? rows[rows.length - 1].section : ""
+                rows.push({ "section": name, "head": name !== "" && name !== before, "raw": sections[s].items[i] })
+            }
+        }
+        return rows
+    }
     readonly property var step: steps.length && index < steps.length ? steps[index] : null
     readonly property string stepKey: "crumb:cook:" + routeId
-    readonly property var stepIngredients: {
-        if (!step)
-            return []
-        return JSON.parse(Core.stepIngredients(step.text, step.section || "", recipeJson, scale))
-    }
     readonly property int textSize: {
         var len = step ? step.text.length : 0
         return len > 420 ? 24 : len > 240 ? 28 : 36
@@ -117,6 +135,18 @@ Item {
         })
     }
 
+    function setPinned(value) {
+        pinned = value
+        Store.write(pinnedKey, JSON.stringify(value))
+    }
+
+    function setTimerLength(seconds) {
+        var next = Object.assign({}, timerLengths)
+        next[index] = seconds
+        timerLengths = next
+        Store.writeSession(timersKey, JSON.stringify(next))
+    }
+
     function startTimer(label, seconds) {
         var list = parse(Store.read("crumb:timers", "[]"), [])
         var now = Date.now()
@@ -124,16 +154,19 @@ Item {
         Store.write("crumb:timers", JSON.stringify(list))
     }
 
-    function toggleChecked(key) {
+    function toggleChecked(line) {
         var next = Object.assign({}, checked)
-        if (next[key])
-            delete next[key]
+        if (next[line])
+            delete next[line]
         else
-            next[key] = true
+            next[line] = true
         checked = next
+        Store.writeSession(checkedKey, JSON.stringify(Object.keys(next).map(Number)))
     }
 
     Keys.onPressed: (event) => {
+        if (stepTimer.typing)
+            return
         if (event.key === Qt.Key_Right || event.key === Qt.Key_Space || event.key === Qt.Key_PageDown) {
             next()
             event.accepted = true
@@ -148,6 +181,10 @@ Item {
     Component.onCompleted: {
         scale = parse(Store.readSession("crumb:scale:" + routeId, "1"), 1)
         index = parse(Store.readSession(stepKey, "0"), 0)
+        timerLengths = parse(Store.readSession(timersKey, "{}"), {})
+        var ticked = {}
+        parse(Store.readSession(checkedKey, "[]"), []).forEach(function (line) { ticked[line] = true })
+        checked = ticked
         requests.call("recipe", { "id": routeId }, function (r) {
             recipe = r
             recipeJson = JSON.stringify(r)
@@ -226,8 +263,9 @@ Item {
 
                 CookTileButton {
                     iconName: "list"
-                    tip: "Ingredients"
-                    onClicked: ingredientsModal.open()
+                    tip: page.wide ? "Pin ingredients" : "Ingredients"
+                    active: page.wide && page.pinned
+                    onClicked: page.wide ? page.setPinned(!page.pinned) : ingredientsModal.open()
                 }
             }
 
@@ -276,7 +314,7 @@ Item {
         anchors.top: header.bottom
         anchors.bottom: footer.top
         anchors.left: parent.left
-        anchors.right: parent.right
+        anchors.right: panel.left
         clip: true
 
         DragHandler {
@@ -386,100 +424,15 @@ Item {
                         }
                     }
 
-                    Flow {
-                        visible: !!page.step && page.step.timers.length > 0
+                    StepTimer {
+                        id: stepTimer
                         Layout.fillWidth: true
                         Layout.topMargin: 28
-                        spacing: 10
-
-                        Repeater {
-                            model: page.step ? page.step.timers : []
-
-                            delegate: CrumbButton {
-                                id: timerButton
-                                required property var modelData
-                                text: "Start " + modelData.label + " timer"
-                                iconName: "alarm-clock"
-                                implicitHeight: 52
-                                onClicked: page.startTimer("Step " + (page.index + 1) + ": " + modelData.label, modelData.seconds)
-
-                                background: Rectangle {
-                                    radius: 12
-                                    color: Palette.tile
-                                    opacity: timerButton.down ? 0.85 : 1
-                                }
-                                contentItem: RowLayout {
-                                    spacing: 8
-
-                                    Icon {
-                                        name: "alarm-clock"
-                                        size: 20
-                                        color: Palette.onTile
-                                    }
-
-                                    Text {
-                                        text: timerButton.text
-                                        color: Palette.onTile
-                                        font.family: Palette.fontSans
-                                        font.pixelSize: 16
-                                        font.weight: Font.Bold
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Card {
-                        visible: page.stepIngredients.length > 0
-                        Layout.fillWidth: true
-                        Layout.topMargin: 28
-                        implicitHeight: needCol.implicitHeight + 32
-
-                        ColumnLayout {
-                            id: needCol
-                            anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 12
-
-                            Text {
-                                text: "You'll need"
-                                color: Palette.textMuted
-                                font.family: Palette.fontSans
-                                font.pixelSize: 13
-                                font.weight: Font.DemiBold
-                                font.capitalization: Font.AllUppercase
-                                font.letterSpacing: 1
-                            }
-
-                            Flow {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Repeater {
-                                    model: page.stepIngredients
-
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        width: Math.min(needText.implicitWidth + 32, needCol.width)
-                                        height: needText.implicitHeight + 16
-                                        radius: 12
-                                        color: Palette.tint
-
-                                        Text {
-                                            id: needText
-                                            anchors.centerIn: parent
-                                            width: parent.width - 32
-                                            text: parent.modelData.scaled
-                                            color: Palette.text
-                                            font.family: Palette.fontSans
-                                            font.pixelSize: 17
-                                            font.weight: Font.DemiBold
-                                            wrapMode: Text.WordWrap
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        choices: page.step ? page.step.timers : []
+                        seconds: page.timerLengths[page.index] !== undefined ? page.timerLengths[page.index] : -1
+                        onAdjusted: (chosen) => page.setTimerLength(chosen)
+                        onStarted: (chosen) => page.startTimer("Step " + (page.index + 1), chosen)
+                        onTypingChanged: if (!typing) page.forceActiveFocus()
                     }
                 }
             }
@@ -552,7 +505,7 @@ Item {
         id: footer
         anchors.bottom: parent.bottom
         anchors.left: parent.left
-        anchors.right: parent.right
+        anchors.right: panel.left
         height: 92
         color: Palette.paper
 
@@ -629,7 +582,76 @@ Item {
         }
     }
 
-    // ─── Ingredients ───
+    // ─── Ingredients: pinned beside the steps on wide windows, a modal on narrow ones ───
+    Rectangle {
+        id: panel
+        anchors.top: header.bottom
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: page.docked ? page.panelWidth : 0
+        color: Palette.paper
+        clip: true
+
+        Behavior on width {
+            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        }
+
+        Rectangle {
+            width: 1
+            height: parent.height
+            color: Palette.line
+        }
+
+        // One width as the panel slides, so the list doesn't reflow
+        ColumnLayout {
+            x: 1
+            width: page.panelWidth - 1
+            height: parent.height
+            spacing: 0
+
+            Heading {
+                level: 2
+                text: "Ingredients"
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                Layout.topMargin: 20
+            }
+
+            ScaleControl {
+                value: page.scale
+                Layout.leftMargin: 20
+                Layout.topMargin: 12
+                Layout.bottomMargin: 8
+                onEdited: (v) => page.setScale(v)
+            }
+
+            CookIngredients {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 8
+                Layout.bottomMargin: 20
+                rows: page.ingredientRows
+                checked: page.checked
+                scale: page.scale
+                onToggled: (line) => page.toggleChecked(line)
+            }
+        }
+    }
+
+    // Running timers centre under the steps, not behind the panel
+    Binding {
+        target: ApplicationWindow.window
+        property: "timerInset"
+        value: panel.width
+        restoreMode: Binding.RestoreValue
+    }
+
+    onWideChanged: {
+        if (wide)
+            ingredientsModal.close()
+    }
+
     Modal {
         id: ingredientsModal
         title: "Ingredients"
@@ -647,103 +669,13 @@ Item {
             }
         }
 
-        Flickable {
+        CookIngredients {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(ingredientColumn.implicitHeight, 420)
-            contentHeight: ingredientColumn.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar {}
-
-            ColumnLayout {
-                id: ingredientColumn
-                width: parent.width - 12
-                spacing: 0
-
-                Repeater {
-                    model: page.recipe ? page.recipe.ingredients : []
-
-                    delegate: ColumnLayout {
-                        id: section
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        spacing: 0
-
-                        Text {
-                            visible: !!section.modelData.name
-                            text: section.modelData.name || ""
-                            color: Palette.primary
-                            font.family: Palette.fontSans
-                            font.pixelSize: 13
-                            font.weight: Font.Bold
-                            font.capitalization: Font.AllUppercase
-                            font.letterSpacing: 0.5
-                            Layout.topMargin: 16
-                            Layout.bottomMargin: 4
-                        }
-
-                        Repeater {
-                            model: section.modelData.items
-
-                            delegate: MouseArea {
-                                id: row
-                                required property string modelData
-                                required property int index
-                                readonly property string rowKey: section.index + ":" + index
-                                readonly property bool on: !!page.checked[rowKey]
-
-                                Layout.fillWidth: true
-                                implicitHeight: Math.max(48, label.implicitHeight + 20)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: page.toggleChecked(rowKey)
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 12
-                                    color: Palette.tint
-                                    opacity: row.pressed ? 1 : 0
-                                }
-
-                                Rectangle {
-                                    id: box
-                                    x: 4
-                                    y: 12
-                                    width: 24
-                                    height: 24
-                                    radius: 12
-                                    color: row.on ? Palette.tile : "transparent"
-                                    border.width: 2
-                                    border.color: row.on ? Palette.tile : Palette.line
-
-                                    Icon {
-                                        visible: row.on
-                                        anchors.centerIn: parent
-                                        name: "check"
-                                        size: 16
-                                        color: Palette.onTile
-                                    }
-                                }
-
-                                Text {
-                                    id: label
-                                    anchors.left: box.right
-                                    anchors.leftMargin: 12
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 4
-                                    y: 10
-                                    text: Core.scaleIngredient(row.modelData, page.scale)
-                                    color: row.on ? Palette.textMuted : Palette.text
-                                    font.family: Palette.fontSans
-                                    font.pixelSize: 18
-                                    font.strikeout: row.on
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Layout.preferredHeight: Math.min(contentHeight, 420)
+            rows: page.ingredientRows
+            checked: page.checked
+            scale: page.scale
+            onToggled: (line) => page.toggleChecked(line)
         }
     }
 }

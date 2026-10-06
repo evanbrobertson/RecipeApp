@@ -14,12 +14,15 @@
 import {
   findTimers,
   formatQuantity,
-  ingredientsForStep,
   miseEnPlace,
+  nudgeTimer,
   parseIngredient,
   parseNumber,
   pluralUnit,
   scaleIngredient,
+  suggestTimers,
+  timerFromMinutes,
+  timerWords,
 } from "../../../../web/src/lib/ingredients.ts"
 
 type Entry = { input: unknown; output: unknown }
@@ -32,7 +35,10 @@ const out = {
   pluralUnit: [] as Entry[],
   miseEnPlace: [] as Entry[],
   findTimers: [] as Entry[],
-  ingredientsForStep: [] as Entry[],
+  suggestTimers: [] as Entry[],
+  nudgeTimer: [] as Entry[],
+  timerFromMinutes: [] as Entry[],
+  timerWords: [] as Entry[],
 }
 
 function add(key: keyof typeof out, input: unknown, output: unknown) {
@@ -300,95 +306,71 @@ for (const input of [
   "Stir well",
   "Bake 45 min at 180C",
   "Cook for an hour",
+  // Several parts make one time
+  "Expect about 1 hour 40 minutes in total",
+  "Roast 2 hours, 30 minutes",
+  "Bake 1 hour and 15 minutes, then rest",
+  "Microwave 2 minutes 30 seconds",
+  "Cook 1 hr 5 min",
+  "Wait 2 hours 90 seconds",
+  "After 30 seconds, take the pan off; repeat for 3 minutes",
+  "Bake 20 minutes, 2 minutes per side",
+  // Words
+  "Cook for one minute longer",
+  "until the shrimp turn pink, three to four minutes",
+  "Let it bubble for about a minute",
+  "Rest for a couple of minutes",
+  "Simmer twenty-five minutes",
+  "Bake forty five minutes",
+  "Chill for half an hour",
+  "Roast an hour and a half",
+  "Simmer one and a half hours",
+  "Bake for an additional 15 more minutes",
+  "Cook an additional minute",
+  "Bake 10 extra minutes",
+  "Rest a few minutes, then slice",
+  "In the last minute, season the eggs",
+  // Fractions and ranges
+  "Toss for 1 1/2 - 2 minutes",
+  "Simmer 1½ hours",
+  "Cook 2 ½ minutes",
+  "simmer on very low for 2 - 2.5 hours",
+  "roast for approximately 45to 55 minutes",
+  "Bake 5 or 6 minutes",
+  "Sear 2-3 minutes per side",
+  "Bake 25—30 minutes",
+  // Not times
+  "Add 2 minced cloves of garlic",
+  "Top each with a M&M",
+  "Use the 10-Minute Meal pot",
+  "Store for up to 5 days",
+  "Cook 5 s",
 ]) {
   add("findTimers", input, findTimers(input))
 }
 
-// ── ingredientsForStep ─────────────────────────────────────────────────────
-type Ing = { raw: string; section: string | null }
-const STEP_CASES: { step: { text: string; section: string | null }; ingredients: Ing[] }[] = [
-  {
-    step: { text: "Add the eggs and sugar", section: null },
-    ingredients: [
-      { raw: "3 eggs", section: null },
-      { raw: "1 cup sugar", section: null },
-      { raw: "2 cups flour", section: null },
-    ],
-  },
-  {
-    step: { text: "Fold in the sugar", section: "Make the Filling" },
-    ingredients: [
-      { raw: "1/2 cup sugar", section: "Make the Filling" },
-      { raw: "1 cup sugar", section: "Make the Crust" },
-      { raw: "2 cups flour", section: "Make the Crust" },
-    ],
-  },
-  {
-    step: { text: "Beat the eggs", section: null },
-    ingredients: [
-      { raw: "2 eggs", section: null },
-      { raw: "1 egg white", section: null },
-      { raw: "1 cup milk", section: null },
-    ],
-  },
-  {
-    step: { text: "Drizzle the olive oil", section: null },
-    ingredients: [
-      { raw: "2 tbsp olive oil", section: null },
-      { raw: "1 tbsp oil", section: null },
-      { raw: "1 tbsp vinegar", section: null },
-    ],
-  },
-  {
-    step: { text: "Add the pumpkin", section: null },
-    ingredients: [
-      { raw: "1 cup pumpkin puree", section: null },
-      { raw: "1 tsp pumpkin pie spice", section: null },
-    ],
-  },
-  {
-    step: { text: "Add the garlic", section: null },
-    ingredients: [
-      { raw: "3 cloves garlic, minced", section: null },
-      { raw: "1 tsp garlic powder", section: null },
-    ],
-  },
-  {
-    step: { text: "Preheat the oven to 180C", section: null },
-    ingredients: [
-      { raw: "2 cups flour", section: null },
-      { raw: "1 cup sugar", section: null },
-    ],
-  },
-  {
-    step: { text: "Mix the flour", section: "For the Dough" },
-    ingredients: [
-      { raw: "2 cups flour", section: "Dough" },
-      { raw: "1 cup flour", section: "Topping" },
-      { raw: "1/2 cup sugar", section: "Topping" },
-    ],
-  },
-  {
-    step: { text: "Add tomatoes", section: null },
-    ingredients: [
-      { raw: "2 tomatoes", section: null },
-      { raw: "1 tsp tomato paste", section: null },
-      { raw: "1 tbsp olive oil", section: null },
-    ],
-  },
-  {
-    step: { text: "Stir in the tomatoes and basil", section: null },
-    ingredients: [
-      { raw: "2 tomatoes, chopped", section: null },
-      { raw: "1/4 cup fresh basil", section: null },
-      { raw: "1 tsp tomato paste", section: null },
-      { raw: "2 cups rice", section: null },
-    ],
-  },
-]
-for (const c of STEP_CASES) {
-  add("ingredientsForStep", c, ingredientsForStep(c.step, c.ingredients))
+// ── Timer suggestions ──────────────────────────────────────────────────────
+for (const input of [
+  "Roast 15 minutes, then 1 hour, about 1 hour",
+  "Bake 9 to 12 minutes, or 15 to 20 minutes for thick spears",
+  "Stir well",
+]) {
+  add("suggestTimers", input, suggestTimers(input))
 }
+for (const seconds of [
+  10, 15, 30, 45, 59, 60, 61, 90, 270, 1740, 1800, 1801, 2100, 7200, 7500, 86400,
+]) {
+  for (const longer of [true, false]) {
+    add("nudgeTimer", { seconds, longer }, nudgeTimer(seconds, longer))
+  }
+}
+for (const minutes of [1, 0.5, 0.1, 42, 2.25, 1440, 5000, 0, -3, Number.NaN]) {
+  add("timerFromMinutes", Number.isNaN(minutes) ? "NaN" : minutes, timerFromMinutes(minutes))
+}
+for (const seconds of [0, 10, 45, 60, 90, 1200, 3600, 5400, 6030, 86400]) {
+  add("timerWords", seconds, timerWords(seconds))
+}
+
 
 const path = new URL("./ingredients.json", import.meta.url)
 await Bun.write(path, `${JSON.stringify(out, null, 2)}\n`)

@@ -39,7 +39,7 @@ leaves the recipe. Pages it tries to open go to the browser.
 
 ### crumb-core
 
-Scaling, mise en place, step timers, step ingredients, durations and text export are the
+Scaling, mise en place, step timer suggestions and arithmetic, durations and text export are the
 same Rust code the server and desktop app use (`crates/crumb-core`), exposed to Kotlin by
 `crates/crumb-ffi` with [UniFFI](https://mozilla.github.io/uniffi-rs/). Gradle runs it all
 before `preBuild`:
@@ -110,8 +110,8 @@ app/src/main/java/app/crumb/android/
     SessionStore.kt     Server address + session cookie, encrypted with an Android Keystore key
     RecipeCache.kt      Last copy of lists, recipes and cookbooks as JSON, one folder per server
     RecipeRepository.kt Server first, cache when offline
-    LocalState.kt       What the web keeps in browser storage: scale, cook step, prep progress,
-                        recently viewed, Surprise me's recent picks
+    LocalState.kt       What the web keeps in browser storage: scale, cook step, timers and
+                        ticked ingredients, prep progress, the pin, recently viewed, Surprise me's recent picks
     Importer.kt         Links, text, photos and files in; Incoming.kt reads Share intents
     PhotoImport.kt      Photos → JPEG ≤1568px → Wee Chef, or ML Kit on the phone when the
                         server can't read photos (the web's tesseract.js path)
@@ -134,8 +134,16 @@ app/src/main/java/app/crumb/android/
   sunset" (the default) runs the web's suncalc port on the phone's time zone or saved location.
 - **Photos:** Coil, through the server's resizer with the session cookie; falls back to the
   original image URL, then the web's striped placeholder.
-- **Timers:** "Start 10 minutes timer" in cook mode sets an alarm-clock alarm, so it rings on
-  time in Doze and with the app closed, with a live countdown notification. Android 13+ asks to
+- **Cook mode:** every step has one timer, suggested from the times the step mentions
+  (`suggestTimers`) and never trusted: − / + nudge it, tapping the length types minutes, and
+  "The step mentions" chips pick between several times. A step with no time offers "Set a
+  timer" (5 minutes). The changed lengths and the ticked ingredients last until the app is
+  closed, like the step. From 600dp wide (tablets, unfolded foldables) the ingredient list, with
+  its scale control, docks as a right-hand pane beside the step and the header's list button
+  pins or unpins it (kept across restarts, pinned by default); on phones the same button opens
+  the list as a sheet. There is no per-step ingredient guessing.
+- **Timers:** "Start timer" in cook mode (labelled "Step 3", with the length the cook set) sets
+  an alarm-clock alarm, so it rings on time in Doze and with the app closed, with a live countdown notification. Android 13+ asks to
   post notifications the first time; if exact alarms aren't allowed, the app offers the
   setting (they still ring, a little late). Timers come back after a reboot.
 - **Shared logic:** anything the web and desktop apps also compute comes from `crumb-core`

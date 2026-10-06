@@ -2,7 +2,6 @@ package app.crumb.android.core
 
 import app.crumb.core.CookProgress
 import app.crumb.core.FieldCount
-import app.crumb.core.IngredientLine
 import app.crumb.core.PrepGroupKind
 import app.crumb.core.ShelfBook
 import app.crumb.core.Vessel
@@ -14,7 +13,6 @@ import app.crumb.core.findTimers
 import app.crumb.core.fixWeight
 import app.crumb.core.greeting
 import app.crumb.core.ingredientColor
-import app.crumb.core.ingredientsForStep
 import app.crumb.core.isVideoUrl
 import app.crumb.core.isoDurationMinutes
 import app.crumb.core.jobProgress
@@ -22,6 +20,7 @@ import app.crumb.core.kicker
 import app.crumb.core.linksInText
 import app.crumb.core.lookTitle
 import app.crumb.core.miseEnPlace
+import app.crumb.core.nudgeTimer
 import app.crumb.core.nutritionLabel
 import app.crumb.core.plural
 import app.crumb.core.prepGroupTitle
@@ -29,7 +28,13 @@ import app.crumb.core.prepGroups
 import app.crumb.core.reviewSummary
 import app.crumb.core.scaleIngredient
 import app.crumb.core.stackBooks
+import app.crumb.core.suggestTimers
 import app.crumb.core.tidiedTitle
+import app.crumb.core.timerDefault
+import app.crumb.core.timerFromMinutes
+import app.crumb.core.timerMax
+import app.crumb.core.timerMin
+import app.crumb.core.timerWords
 import app.crumb.core.vesselCountLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -47,10 +52,26 @@ class CoreBindingsTest {
         assertEquals(listOf(1800u, 300u), timers.map { it.seconds })
     }
 
-    @Test fun matches_step_ingredients_by_index() {
-        val lines = listOf("100g plain flour", "2 large eggs", "300ml milk", "caster sugar to serve")
-            .map { IngredientLine(it, null) }
-        assertEquals(listOf(0u, 1u, 2u), ingredientsForStep("Whisk the flour, eggs and milk", null, lines))
+    @Test fun suggests_one_timer_per_length() {
+        val choices = suggestTimers("Simmer 15 minutes, then 1 hour. Cover and keep it going for 1 hour")
+        assertEquals(listOf(900u, 3600u), choices.map { it.seconds })
+        assertEquals(emptyList<UInt>(), suggestTimers("Stir in the butter").map { it.seconds })
+    }
+
+    @Test fun nudges_timers_within_the_limits() {
+        assertEquals(360u, nudgeTimer(300u, true))
+        assertEquals(240u, nudgeTimer(300u, false))
+        assertEquals(timerMin(), nudgeTimer(timerMin(), false))
+        assertEquals(timerMax(), nudgeTimer(timerMax(), true))
+    }
+
+    @Test fun reads_typed_minutes_and_says_lengths() {
+        assertEquals(5400u, timerFromMinutes(90.0))
+        assertEquals(null, timerFromMinutes(0.0))
+        assertEquals(null, timerFromMinutes(Double.NaN))
+        assertEquals(timerMax(), timerFromMinutes(99_999.0))
+        assertEquals("1 hr 30 min", timerWords(5400u))
+        assertEquals(300u, timerDefault())
     }
 
     @Test fun plans_mise_en_place() {

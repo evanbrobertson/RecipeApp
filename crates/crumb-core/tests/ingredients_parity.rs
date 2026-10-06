@@ -3,8 +3,8 @@
 //! produce the same output from the Rust port, numbers compared with 1e-9.
 
 use crumb_core::ingredients::{
-    IngredientLine, find_timers, format_quantity, ingredients_for_step_in, mise_en_place,
-    parse_ingredient, parse_number, plural_unit, scale_ingredient,
+    find_timers, format_quantity, mise_en_place, nudge_timer, parse_ingredient, parse_number,
+    plural_unit, scale_ingredient, suggest_timers, timer_from_minutes, timer_words,
 };
 use serde_json::Value;
 
@@ -135,28 +135,48 @@ fn find_timers_matches_typescript() {
 }
 
 #[test]
-fn ingredients_for_step_matches_typescript() {
+fn suggest_timers_matches_typescript() {
     let root = fixture();
-    for entry in entries(&root, "ingredientsForStep") {
-        let step = &entry["input"]["step"];
-        let text = step["text"].as_str().unwrap();
-        let section = step["section"].as_str();
-        let ingredients: Vec<IngredientLine> = entry["input"]["ingredients"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| IngredientLine {
-                raw: v["raw"].as_str().unwrap().to_string(),
-                section: v["section"].as_str().map(str::to_string),
-            })
-            .collect();
-        let actual =
-            serde_json::to_value(ingredients_for_step_in(text, section, &ingredients)).unwrap();
+    for entry in entries(&root, "suggestTimers") {
+        let input = entry["input"].as_str().unwrap();
+        let actual = serde_json::to_value(suggest_timers(input)).unwrap();
+        check("suggestTimers", &entry["input"], &entry["output"], &actual);
+    }
+}
+
+#[test]
+fn nudge_timer_matches_typescript() {
+    let root = fixture();
+    for entry in entries(&root, "nudgeTimer") {
+        let seconds = number(&entry["input"]["seconds"]) as u32;
+        let longer = entry["input"]["longer"].as_bool().unwrap();
+        let actual = serde_json::to_value(nudge_timer(seconds, longer)).unwrap();
+        check("nudgeTimer", &entry["input"], &entry["output"], &actual);
+    }
+}
+
+#[test]
+fn timer_from_minutes_matches_typescript() {
+    let root = fixture();
+    for entry in entries(&root, "timerFromMinutes") {
+        // NaN isn't JSON, so the fixture spells it
+        let minutes = entry["input"].as_f64().unwrap_or(f64::NAN);
+        let actual = serde_json::to_value(timer_from_minutes(minutes)).unwrap();
         check(
-            "ingredientsForStep",
+            "timerFromMinutes",
             &entry["input"],
             &entry["output"],
             &actual,
         );
+    }
+}
+
+#[test]
+fn timer_words_matches_typescript() {
+    let root = fixture();
+    for entry in entries(&root, "timerWords") {
+        let seconds = number(&entry["input"]) as u32;
+        let actual = serde_json::to_value(timer_words(seconds)).unwrap();
+        check("timerWords", &entry["input"], &entry["output"], &actual);
     }
 }

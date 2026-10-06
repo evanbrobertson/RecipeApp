@@ -379,129 +379,146 @@ export function miseEnPlace(lines: string[]): MiseItem[] {
   })
 }
 
-/** Finds durations in a step ("bake 25–30 minutes") for one-tap timers. */
+// ─── Timers ────────────────────────────────────────────────────────────────
+
+const NUMBER_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  ninety: 90,
+}
+// A number in a step, as digits ("1 1/2", "2.5", "1½") or words ("three", "twenty-five",
+// "a couple of", "half an"), optionally "and a half". The Rust port in
+// crates/crumb-core/src/ingredients.rs builds the same pattern.
+const ONES = "one|two|three|four|five|six|seven|eight|nine"
+const TIME_WORD = String.raw`\b(?:(?:twenty|thirty|forty|fifty|sixty|ninety)(?:[\s-](?:${ONES}))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|${ONES}|a\s+couple(?:\s+of)?|half\s+an?|an?)`
+const TIME_NUMBER = String.raw`(?:(?:[0-9]+\s+[0-9]+/[0-9]+|[0-9]+/[0-9]+|[0-9]*\.[0-9]+|[0-9]+(?:\s*[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞])?|[¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞]|${TIME_WORD})(?:\s+and\s+a\s+half)?)`
+const TIME_UNIT = String.raw`(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?)\b`
+// "25–30 minutes", "15 more minutes", "an hour and a half"
+const TIME = new RegExp(
+  String.raw`(${TIME_NUMBER})(?:\s*(?:-|–|—|to|or)\s*(${TIME_NUMBER}))?(?:\s+(?:more|additional|extra|further))?\s*(${TIME_UNIT})(\s+and\s+a\s+half\b)?`,
+  "gi",
+)
+// The smaller part of "1 hour 40 minutes" or "2 minutes, 30 seconds", right after the first
+const TIME_REST = new RegExp(String.raw`^,?\s*(?:and\s+)?(${TIME_NUMBER})\s*(${TIME_UNIT})`, "i")
+
+const HAS_DIGIT = /[0-9¼½¾⅓⅔⅕⅙⅚⅛⅜⅝⅞]/
+
+/** The shortest and longest timer: ten seconds to a day. */
+export const TIMER_MIN = 10
+export const TIMER_MAX = 24 * 3600
+/** What "Set a timer" starts from on a step that mentions no time. */
+export const TIMER_DEFAULT = 5 * 60
+
+function timeNumber(text: string): number | null {
+  let t = text.toLowerCase().replace(/\s+/g, " ").trim()
+  let half = 0
+  if (t.endsWith(" and a half")) {
+    half = 0.5
+    t = t.slice(0, -" and a half".length)
+  }
+  let n: number | null
+  if (t.startsWith("half ")) n = 0.5
+  else if (t.startsWith("a couple")) n = 2
+  else if (/^[a-z]/.test(t)) {
+    n = 0
+    for (const w of t.split(/[ -]/)) n += NUMBER_WORDS[w] ?? 0
+  } else n = parseNumber(t)
+  return n === null ? null : n + half
+}
+
+function unitSeconds(unit: string): number {
+  const u = unit.toLowerCase()
+  return u.startsWith("h") ? 3600 : u.startsWith("s") ? 1 : 60
+}
+
+/**
+ * Finds durations in a step ("bake 25–30 minutes", "1 hour 40 minutes", "three to four
+ * minutes", "an hour and a half"). A range counts as its longer end.
+ */
 export function findTimers(step: string): { label: string; seconds: number }[] {
   const out: { label: string; seconds: number }[] = []
-  const re =
-    /(\d+(?:\.\d+)?|[½¼¾])(?:\s*(?:-|–|to)\s*(\d+(?:\.\d+)?))?\s*(hours?|hrs?|h\b|minutes?|mins?|m\b|seconds?|secs?)/gi
-  for (const m of step.matchAll(re)) {
-    const value = parseNumber(m[2] ?? m[1]!)
+  TIME.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = TIME.exec(step))) {
+    const number = m[2] ?? m[1]!
+    const unit = m[3]!
+    // "h" and "m" only after digits: "a M&M" isn't a minute
+    if (unit.length === 1 && !HAS_DIGIT.test(number)) continue
+    const value = timeNumber(number)
     if (value === null) continue
-    const unit = m[3]!.toLowerCase()
-    const mult = unit.startsWith("h") ? 3600 : unit.startsWith("s") ? 1 : 60
-    const seconds = Math.round(value * mult)
-    if (seconds >= 10 && seconds <= 24 * 3600) out.push({ label: m[0], seconds })
+    const mult = unitSeconds(unit)
+    let seconds = (value + (m[4] ? 0.5 : 0)) * mult
+    let label = m[0]
+    const rest = step.slice(TIME.lastIndex).match(TIME_REST)
+    if (rest && !m[4] && unitSeconds(rest[2]!) < mult) {
+      const more = timeNumber(rest[1]!)
+      if (more !== null && (rest[2]!.length > 1 || HAS_DIGIT.test(rest[1]!))) {
+        seconds += more * unitSeconds(rest[2]!)
+        label += rest[0]
+        TIME.lastIndex += rest[0].length
+      }
+    }
+    seconds = Math.round(seconds)
+    if (seconds >= TIMER_MIN && seconds <= TIMER_MAX) out.push({ label: label.trim(), seconds })
   }
   return out
 }
 
-// ─── Ingredients used in a step (cooking mode) ────────────────────────────
-
-/** Words that describe an ingredient rather than name it ("2 large eggs, chilled"). */
-const DESCRIPTORS = new Set(
-  (
-    "large small medium big fresh freshly ground chopped minced diced sliced grated shredded " +
-    "chilled cold warm hot softened melted room temperature unsalted salted extra virgin full " +
-    "fat low reduced light dark packed finely roughly coarsely thinly organic whole raw dried " +
-    "frozen ripe boneless skinless plain pure stick sticks piece pieces optional divided heaping " +
-    "level good quality homemade store bought prepared canned jarred fine coarse about more " +
-    "plus taste needed serving garnish baking and or of the a an for to with into in on at"
-  ).split(" "),
-)
-/**
- * Words for a form or cut of something ("pumpkin puree", "garlic cloves", "pork belly"): a step
- * that names only the first part ("the pumpkin") still means this ingredient. Not "paste",
- * "sugar" or "vinegar": "the tomatoes" isn't tomato paste and "golden brown" isn't brown sugar.
- */
-const FORMS = new Set(
-  (
-    "puree clove leave leaf fillet breast thigh leg drumstick wing chop loin tenderloin belly " +
-    "shoulder steak rib mince noodle floret stalk sprig head bulb wedge juice zest"
-  ).split(" "),
-)
-/** Words in a section heading that don't name what the section makes ("Make the filling"). */
-const SECTION_FILLER = new Set(
-  "make making prepare prep for the a an and of to your step start finish assemble assembly".split(
-    " ",
-  ),
-)
-
-/** "Tomatoes" and "tomato", "cherries" and "cherry", "eggs" and "egg" compare equal. */
-function stem(word: string): string {
-  if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`
-  if (word.length > 4 && /(?:ches|shes|xes|oes|sses)$/.test(word)) return word.slice(0, -2)
-  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1)
-  return word
-}
-
-function words(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z\s-]/g, " ")
-    .split(/[\s-]+/)
-    .filter((w) => w.length >= 3)
-    .map(stem)
-}
-
-/** The words that name an ingredient: "¾ cup light brown sugar" → brown, sugar. */
-function nameWords(raw: string): string[] {
-  // Stray brackets and alternatives the parser leaves behind: "oil (canola", "/ 1/2 cup butter )"
-  const name = parseIngredient(raw).name.split(/[()]/)[0]!
-  const all = words(name).filter((w) => !DESCRIPTORS.has(w) && !aliasToUnit.has(w))
-  return [...new Set(all)]
+/** A step's timer choices, one per length: the first is the one cook mode suggests. */
+export function suggestTimers(step: string): { label: string; seconds: number }[] {
+  const found = findTimers(step)
+  return found.filter((t, i) => found.findIndex((u) => u.seconds === t.seconds) === i)
 }
 
 /**
- * The ingredients a step uses, from the words it mentions.
- *
- * - When the step's section shares a word with an ingredient section ("Make the Crust" and
- *   "Pie Crust"), that section's ingredients are tried first, so "sugar" in the crust steps is
- *   the crust's sugar, not the filling's.
- * - Each word in the step goes to the ingredients it names most completely: "pumpkin" alone is
- *   the pumpkin puree, while "pumpkin pie spice" is the spice.
- * - Words are matched whole, so "salt" doesn't match "unsalted butter", and a stray word
- *   doesn't count: "pie crust" isn't the pumpkin pie spice.
+ * One tap longer or shorter: 15 seconds under a minute, a minute to half an hour, 5 minutes
+ * to two hours, then 15, landing on whole steps ("4 min 30 sec" goes to 5, then 6).
  */
-export function ingredientsForStep<T extends { raw: string; section: string | null }>(
-  step: { text: string; section: string | null },
-  ingredients: T[],
-): T[] {
-  const mentioned = new Set(words(step.text))
-  if (!mentioned.size) return []
-  const named = ingredients.map((ing) => {
-    const ws = nameWords(ing.raw)
-    const hits = ws.filter((w) => mentioned.has(w))
-    // A partial mention counts if it's the main word ("sugar" for brown sugar), or names what a
-    // form or cut is of ("pumpkin" for pumpkin puree); not a stray word ("pie" for pumpkin pie
-    // spice, "brown" for brown sugar)
-    const head = ws[ws.length - 1]!
-    const counts = hits.includes(head) || (FORMS.has(head) && hits.length * 2 >= ws.length)
-    return { ing, ws, hits: counts ? hits : [] }
-  })
+export function nudgeTimer(seconds: number, longer: boolean): number {
+  const from = longer ? seconds : seconds - 1
+  const step = from < 60 ? 15 : from < 1800 ? 60 : from < 7200 ? 300 : 900
+  const next = longer
+    ? Math.floor(seconds / step) * step + step
+    : Math.ceil(seconds / step) * step - step
+  return Math.min(TIMER_MAX, Math.max(TIMER_MIN, next))
+}
 
-  const stepSection = new Set(words(step.section ?? "").filter((w) => !SECTION_FILLER.has(w)))
-  const inSection = (section: string | null) =>
-    words(section ?? "").some((w) => !SECTION_FILLER.has(w) && stepSection.has(w))
-  const local = named.filter((n) => inSection(n.ing.section))
+/** A length the cook typed in minutes, kept within a timer's range; null if it isn't one. */
+export function timerFromMinutes(minutes: number): number | null {
+  if (!Number.isFinite(minutes) || minutes <= 0) return null
+  return Math.min(TIMER_MAX, Math.max(TIMER_MIN, Math.round(minutes * 60)))
+}
 
-  // Hand each mentioned word to the ingredients it covers best, section first
-  const chosen = new Set<T>()
-  const claimed = new Set<string>()
-  for (const pool of [local, named]) {
-    const best = new Map<string, { ratio: number; ings: T[] }>()
-    for (const { ing, ws, hits } of pool) {
-      for (const w of hits) {
-        if (claimed.has(w)) continue
-        const ratio = hits.length / ws.length
-        const cur = best.get(w)
-        if (!cur || ratio > cur.ratio) best.set(w, { ratio, ings: [ing] })
-        else if (ratio === cur.ratio) cur.ings.push(ing)
-      }
-    }
-    for (const [w, { ings }] of best) {
-      claimed.add(w)
-      for (const ing of ings) chosen.add(ing)
-    }
-  }
-  return ingredients.filter((ing) => chosen.has(ing))
+/** A timer's length in words: "1 hr 30 min", "45 sec". */
+export function timerWords(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  const parts = [h && `${h} hr`, m && `${m} min`, sec && `${sec} sec`].filter(Boolean)
+  return parts.length ? parts.join(" ") : "0 sec"
 }

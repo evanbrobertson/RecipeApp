@@ -21,7 +21,8 @@ pills, 3px spines) follow the web.
 - **`Store`** (`src/store.rs`) holds what the web keeps in `localStorage`
   (`Store.read(key, fallbackJson)` / `Store.write(key, json)`) and in `sessionStorage`
   (`readSession` / `writeSession`), with the web's own keys (`crumb:recent`, `crumb:timers`,
-  `crumb:scale:<id>`, `crumb:cook:<id>`, `crumb:prep:<id>`, …). `Store.changed(key)` fires on
+  `crumb:scale:<id>`, `crumb:cook:<id>`, `crumb:cook-timers:<id>`, `crumb:cook-checked:<id>`,
+  `crumb:cook-pinned`, `crumb:prep:<id>`, …). `Store.changed(key)` fires on
   every write.
 - **Errors** reach an error callback as `(message, {code, site})`: `code` is the server's
   machine-readable reason when it gives one (`site_blocked`, `site_terms`), which the Add
@@ -65,6 +66,21 @@ desktop/linux/tools/compare.sh recipe:9 /some/scratch/dir 1280x1000
 (offscreen, via `--route` and `--shot`). Offscreen uses Qt's software renderer, so shader
 effects don't show there. Qt logs go to the journal: `journalctl --user -t crumb-desktop`.
 
+## Cook mode
+
+- **Timers.** Every step has one adjustable timer, suggested and never trusted: `Core.cookSteps`
+  gives each step's `suggestTimers` choices (the first is the suggestion), and `StepTimer.qml`
+  nudges (`Core.nudgeTimer`), types minutes (`Core.timerFromMinutes`, -1 for "not a length") and
+  words the length (`Core.timerWords`) between `Core.timerMin()` and `Core.timerMax()`. A step
+  with no choices offers "Set a timer", starting at `Core.timerDefault()`. A changed length is
+  kept per step for the visit. There is no "You'll need" card: guessing a step's ingredients was
+  wrong too often.
+- **Ingredients.** From 768 px wide they dock on the right, with the scale control and the
+  tick list, and the header button pins or unpins them (`crumb:cook-pinned`, on by default).
+  Narrower, the button opens them in a modal. Running timers centre in what's left
+  (`ApplicationWindow.timerInset`).
+- The arrow keys and Space step through the recipe, except while the minutes field is open.
+
 ## Screens
 
 | Screen | Web source | Desktop files |
@@ -74,7 +90,7 @@ effects don't show there. Qt logs go to the journal: `journalctl --user -t crumb
 | Home, Shelf, Cookbook | `pages/index.astro`, `islands/HomeFeed.svelte`, `islands/ShelfPage.svelte`, `islands/CookbookPage.svelte`, `components/Bookshelf.svelte`, `components/OpenBook.svelte`, `components/CookbookSpine.svelte`, `components/BookColorPicker.svelte` | `HomePage.qml`, `ShelfPage.qml`, `CookbookPage.qml`, `Bookshelf.qml`, `Book*.qml` |
 | Recipes list | `islands/RecipesPage.svelte`, `pages/recipes/index.astro` | `RecipesPage.qml` |
 | Recipe | `islands/RecipePage.svelte`, `components/WeeChefCard.svelte`, `components/ShareSheet.svelte`, `components/ScaleControl.svelte`, `components/RecipeVideo.svelte` | `RecipePage.qml`, `ScaleControl.qml`, `WeeChefCard.qml`, `ShareSheet.qml` |
-| Cook, Prep, timers | `islands/CookPage.svelte`, `islands/PrepPage.svelte`, `components/PrepBowl.svelte`, `islands/TimerDock.svelte`, `lib/timers.svelte.ts` | `CookPage.qml`, `PrepPage.qml`, `PrepBowl.qml`, `TimerDock.qml` |
+| Cook, Prep, timers | `islands/CookPage.svelte`, `components/StepTimer.svelte`, `islands/PrepPage.svelte`, `components/PrepBowl.svelte`, `islands/TimerDock.svelte`, `lib/timers.svelte.ts` | `CookPage.qml`, `StepTimer.qml`, `CookIngredients.qml`, `PrepPage.qml`, `PrepBowl.qml`, `TimerDock.qml` |
 | Editor, New recipe | `components/RecipeEditor.svelte`, `islands/EditPage.svelte`, `islands/NewRecipePage.svelte` | `EditPage.qml`, `RecipeEditor.qml` |
 | Suggestions | `islands/SuggestionsPage.svelte`, `components/TryNext.svelte`, `components/WeeChefCard.svelte` | `SuggestionsPage.qml` |
 | More, Connect, Connections, Trash | `pages/more.astro`, `islands/MoreSettings.svelte`, `pages/connect.astro`, `islands/ConnectorUrl.svelte`, `pages/more/connections.astro`, `pages/more/trash.astro`, `islands/TrashPage.svelte` | `MorePage.qml`, `ConnectPage.qml`, `ConnectionsPage.qml`, `TrashPage.qml` |

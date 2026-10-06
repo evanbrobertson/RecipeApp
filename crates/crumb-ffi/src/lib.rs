@@ -157,12 +157,6 @@ pub struct StepTimer {
     pub seconds: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct IngredientLine {
-    pub raw: String,
-    pub section: Option<String>,
-}
-
 #[uniffi::export]
 pub fn parse_ingredient(raw: String) -> ParsedIngredient {
     ingredients::parse_ingredient(&raw).into()
@@ -198,10 +192,8 @@ pub fn mise_en_place(lines: Vec<String>) -> Vec<MiseItem> {
         .collect()
 }
 
-/// Durations in a step ("bake 25–30 minutes") for one-tap timers.
-#[uniffi::export]
-pub fn find_timers(step: String) -> Vec<StepTimer> {
-    ingredients::find_timers(&step)
+fn step_timers(timers: Vec<ingredients::Timer>) -> Vec<StepTimer> {
+    timers
         .into_iter()
         .map(|t| StepTimer {
             label: t.label,
@@ -210,25 +202,52 @@ pub fn find_timers(step: String) -> Vec<StepTimer> {
         .collect()
 }
 
-/// Indices into `ingredients` of the ones a step uses, preferring the step's own section.
+/// Durations in a step ("bake 25–30 minutes", "1 hour 40 minutes"), in order.
 #[uniffi::export]
-pub fn ingredients_for_step(
-    step: String,
-    step_section: Option<String>,
-    ingredients: Vec<IngredientLine>,
-) -> Vec<u32> {
-    let lines: Vec<ingredients::IngredientLine> = ingredients
-        .into_iter()
-        .map(|l| ingredients::IngredientLine {
-            raw: l.raw,
-            section: l.section,
-        })
-        .collect();
-    ingredients::ingredients_for_step_in(&step, step_section.as_deref(), &lines)
-        .into_iter()
-        .filter_map(|hit| lines.iter().position(|l| std::ptr::eq(l, hit)))
-        .map(|i| i as u32)
-        .collect()
+pub fn find_timers(step: String) -> Vec<StepTimer> {
+    step_timers(ingredients::find_timers(&step))
+}
+
+/// A step's timer choices, one per length; cook mode suggests the first.
+#[uniffi::export]
+pub fn suggest_timers(step: String) -> Vec<StepTimer> {
+    step_timers(ingredients::suggest_timers(&step))
+}
+
+/// One tap longer or shorter on a step's timer.
+#[uniffi::export]
+pub fn nudge_timer(seconds: u32, longer: bool) -> u32 {
+    ingredients::nudge_timer(seconds, longer)
+}
+
+/// A length typed in minutes, kept within a timer's range; null if it isn't one.
+#[uniffi::export]
+pub fn timer_from_minutes(minutes: f64) -> Option<u32> {
+    ingredients::timer_from_minutes(minutes)
+}
+
+/// A timer's length in words: "1 hr 30 min".
+#[uniffi::export]
+pub fn timer_words(seconds: u32) -> String {
+    ingredients::timer_words(seconds)
+}
+
+/// The shortest timer, in seconds.
+#[uniffi::export]
+pub fn timer_min() -> u32 {
+    ingredients::TIMER_MIN
+}
+
+/// The longest timer, in seconds.
+#[uniffi::export]
+pub fn timer_max() -> u32 {
+    ingredients::TIMER_MAX
+}
+
+/// The length "Set a timer" starts from, in seconds.
+#[uniffi::export]
+pub fn timer_default() -> u32 {
+    ingredients::TIMER_DEFAULT
 }
 
 #[uniffi::export]
@@ -1431,35 +1450,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn step_ingredients_come_back_as_indices() {
-        let lines = vec![
-            IngredientLine {
-                raw: "100g plain flour".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "2 large eggs".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "300ml milk".into(),
-                section: None,
-            },
-            IngredientLine {
-                raw: "caster sugar to serve".into(),
-                section: None,
-            },
-        ];
-        let hit = ingredients_for_step("Whisk the flour, eggs and milk".into(), None, lines);
-        assert_eq!(hit, vec![0, 1, 2]);
-    }
-
-    #[test]
     fn scales_and_finds_timers() {
         assert_eq!(scale_ingredient("2 cups flour".into(), 1.5), "3 cups flour");
         let t = find_timers("Bake for 25–30 minutes".into());
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].seconds, 1800);
+    }
+
+    #[test]
+    fn step_timers_are_suggestions_the_cook_adjusts() {
+        let t = suggest_timers("Roast 15 minutes, then about 1 hour 40 minutes".into());
+        assert_eq!(
+            t.iter().map(|t| t.seconds).collect::<Vec<_>>(),
+            vec![900, 6000]
+        );
+        assert_eq!(nudge_timer(300, true), 360);
+        assert_eq!(nudge_timer(timer_min(), false), timer_min());
+        assert_eq!(timer_from_minutes(42.0), Some(2520));
+        assert_eq!(timer_from_minutes(0.0), None);
+        assert_eq!(timer_words(timer_default()), "5 min");
+        assert_eq!(timer_from_minutes(10_000.0), Some(timer_max()));
     }
 
     #[test]
