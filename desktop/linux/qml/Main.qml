@@ -95,6 +95,8 @@ ApplicationWindow {
     // What the nav rail needs from the server: Wee Chef checks, and lines to review.
     property var connector: ({})
     property int reviewCount: 0
+    // Width the page covers at the right (cook mode's pinned ingredients), kept clear of the timers
+    property real timerInset: 0
 
     // Opens a page: go("recipe", {id: 7}). `replace` leaves no history entry.
     function go(name, params, replace) {
@@ -247,6 +249,7 @@ ApplicationWindow {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.margins: 24
+                    anchors.rightMargin: 24 + window.timerInset
                 }
             }
         }
