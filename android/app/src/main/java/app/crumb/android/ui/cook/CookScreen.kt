@@ -16,11 +16,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
@@ -62,7 +64,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.crumb.android.data.CrumbJson
@@ -74,7 +75,6 @@ import app.crumb.android.ui.UiState
 import app.crumb.android.ui.components.Btn
 import app.crumb.android.ui.components.BtnSize
 import app.crumb.android.ui.components.BtnStyle
-import app.crumb.android.ui.components.Card
 import app.crumb.android.ui.components.CardShape
 import app.crumb.android.ui.components.ControlShape
 import app.crumb.android.ui.components.CrumbText
@@ -92,12 +92,9 @@ import app.crumb.android.ui.theme.Crumb
 import app.crumb.android.ui.theme.DmSerif
 import app.crumb.android.ui.theme.NunitoSans
 import app.crumb.core.CookStep
-import app.crumb.core.IngredientLine
 import app.crumb.core.cookSteps
-import app.crumb.core.findTimers
-import app.crumb.core.ingredientsForStep
 import app.crumb.core.scaleIngredient
-import com.composables.icons.lucide.AlarmClock
+import app.crumb.core.suggestTimers
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ArrowRight
 import com.composables.icons.lucide.Check
@@ -111,7 +108,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Cook mode (web/src/islands/CookPage.svelte, spec §5): one big step per page on the tile
- * chrome, screen kept on, swipe or tap to move, one-tap timers, the ingredients at hand.
+ * chrome, screen kept on, swipe or tap to move, a timer on every step, the ingredients at hand
+ * (pinned beside the step on wide windows, a sheet on narrow ones).
  */
 @Composable
 fun CookScreen(id: Long, onClose: () -> Unit) {
@@ -148,7 +146,7 @@ private fun CookContent(recipe: Recipe, onClose: () -> Unit) {
         runCatching { cookSteps(CrumbJson.encodeToString(Recipe.serializer(), recipe)) }.getOrElse { emptyList() }
     }
     val ingredients = remember(recipe) {
-        recipe.ingredients.flatMap { section -> section.items.map { IngredientLine(it, section.name) } }
+        recipe.ingredients.flatMap { section -> section.items.map { IngredientItem(it, section.name) } }
     }
 
     var index by remember(recipe.id) { mutableIntStateOf(cookStartIndex(RecipeSession.cookStep(recipe.id), steps.size)) }
@@ -156,8 +154,14 @@ private fun CookContent(recipe: Recipe, onClose: () -> Unit) {
     var direction by remember(recipe.id) { mutableIntStateOf(1) }
     var logged by remember(recipe.id) { mutableStateOf(false) }
     var showIngredients by remember { mutableStateOf(false) }
-    val checked = remember(recipe.id) { mutableStateOf(emptySet<Int>()) }
+    val checked = RecipeSession.cookChecked(recipe.id)
+    val timers = RecipeSession.cookTimers(recipe.id)
     val scale = RecipeSession.scale(recipe.id)
+
+    // Wide windows keep the ingredients beside the step until unpinned; narrow ones open a sheet
+    val wide = canDockIngredients(LocalConfiguration.current.screenWidthDp)
+    val pinned by container.local.cookPinned.collectAsStateWithLifecycle()
+    val docked = wide && pinned
 
     LaunchedEffect(index) { RecipeSession.setCookStep(recipe.id, index) }
 
@@ -215,92 +219,114 @@ private fun CookContent(recipe: Recipe, onClose: () -> Unit) {
         else -> null
     }
 
-    Column(Modifier.fillMaxSize().background(c.canvas)) {
-        CookHeader(
-            title = recipe.title,
-            status = status,
-            steps = steps.size,
-            index = index,
-            finished = finished,
-            onExit = onClose,
-            onIngredients = { showIngredients = true },
-            onGo = ::go,
-        )
+    Row(Modifier.fillMaxSize().background(c.canvas)) {
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            CookHeader(
+                title = recipe.title,
+                status = status,
+                steps = steps.size,
+                index = index,
+                finished = finished,
+                onExit = onClose,
+                wide = wide,
+                pinned = pinned,
+                onIngredients = { if (wide) container.local.setCookPinned(!pinned) else showIngredients = true },
+                onGo = ::go,
+            )
 
-        val threshold = with(LocalDensity.current) { 60.dp.toPx() }
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .pointerInput(index, finished, steps.size) {
-                    var dx = 0f
-                    var dy = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { dx = 0f; dy = 0f },
-                        onDragEnd = {
-                            when (swipeDirection(dx, dy, threshold)) {
-                                1 -> next()
-                                -1 -> prev()
-                            }
-                        },
-                        onHorizontalDrag = { change, amount -> dx += amount; dy += change.positionChange().y },
-                    )
-                },
-        ) {
-            if (steps.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("This recipe has no steps yet.", style = CrumbText.body.copy(fontSize = 18.sp), color = c.inkMuted)
-                }
-            } else {
-                val shift = with(LocalDensity.current) { 40.dp.roundToPx() * direction }
-                AnimatedContent(
-                    targetState = finished to index,
-                    transitionSpec = {
-                        slideInHorizontally(tween(280)) { shift } togetherWith slideOutHorizontally(tween(180)) { -shift }
+            val threshold = with(LocalDensity.current) { 60.dp.toPx() }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(index, finished, steps.size) {
+                        var dx = 0f
+                        var dy = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { dx = 0f; dy = 0f },
+                            onDragEnd = {
+                                when (swipeDirection(dx, dy, threshold)) {
+                                    1 -> next()
+                                    -1 -> prev()
+                                }
+                            },
+                            onHorizontalDrag = { change, amount -> dx += amount; dy += change.positionChange().y },
+                        )
                     },
-                    label = "cook-step",
-                ) { (done, i) ->
-                    if (done) {
-                        FinishedPage(onBack = onClose, onStartOver = { go(0) })
-                    } else {
-                        steps.getOrNull(i)?.let { stepAt ->
-                            StepPage(
-                                step = stepAt,
-                                number = i + 1,
-                                scale = scale,
-                                ingredients = ingredients,
-                                startTimer = startTimer,
-                            )
+            ) {
+                if (steps.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("This recipe has no steps yet.", style = CrumbText.body.copy(fontSize = 18.sp), color = c.inkMuted)
+                    }
+                } else {
+                    val shift = with(LocalDensity.current) { 40.dp.roundToPx() * direction }
+                    AnimatedContent(
+                        targetState = finished to index,
+                        transitionSpec = {
+                            slideInHorizontally(tween(280)) { shift } togetherWith slideOutHorizontally(tween(180)) { -shift }
+                        },
+                        label = "cook-step",
+                    ) { (done, i) ->
+                        if (done) {
+                            FinishedPage(onBack = onClose, onStartOver = { go(0) })
+                        } else {
+                            steps.getOrNull(i)?.let { stepAt ->
+                                StepPage(
+                                    step = stepAt,
+                                    number = i + 1,
+                                    seconds = timers[i],
+                                    onSeconds = { RecipeSession.setCookTimer(recipe.id, i, it) },
+                                    startTimer = startTimer,
+                                )
+                            }
                         }
                     }
                 }
             }
+
+            CookFooter(
+                index = index,
+                finished = finished,
+                hasSteps = steps.isNotEmpty(),
+                isLast = steps.isNotEmpty() && index + 1 >= steps.size,
+                onPrev = ::prev,
+                onNext = ::next,
+                onClose = onClose,
+            )
         }
 
-        CookFooter(
-            index = index,
-            finished = finished,
-            hasSteps = steps.isNotEmpty(),
-            isLast = steps.isNotEmpty() && index + 1 >= steps.size,
-            onPrev = ::prev,
-            onNext = ::next,
-            onClose = onClose,
-        )
+        if (docked) {
+            IngredientsPane(
+                ingredients = ingredients,
+                scale = scale,
+                onScale = { RecipeSession.setScale(recipe.id, it) },
+                checked = checked,
+                onToggle = { toggleChecked(recipe.id, it) },
+            )
+        }
     }
 
-    if (showIngredients) {
+    if (showIngredients && !wide) {
         IngredientsSheet(
             ingredients = ingredients,
             scale = scale,
             onScale = { RecipeSession.setScale(recipe.id, it) },
-            checked = checked.value,
-            onToggle = { i -> checked.value = if (i in checked.value) checked.value - i else checked.value + i },
+            checked = checked,
+            onToggle = { toggleChecked(recipe.id, it) },
             onDismiss = { showIngredients = false },
         )
     }
 }
 
-/** The tile chrome: exit, title and status, the segment progress, and the ingredients button. */
+private fun toggleChecked(id: Long, index: Int) {
+    val ticked = RecipeSession.cookChecked(id)
+    RecipeSession.setCookChecked(id, if (index in ticked) ticked - index else ticked + index)
+}
+
+/**
+ * The tile chrome: exit, title and status, the segment progress, and the ingredients button,
+ * which pins and unpins the docked list on a [wide] window and opens the sheet on a narrow one.
+ */
 @Composable
 private fun CookHeader(
     title: String,
@@ -308,6 +334,8 @@ private fun CookHeader(
     steps: Int,
     index: Int,
     finished: Boolean,
+    wide: Boolean,
+    pinned: Boolean,
     onExit: () -> Unit,
     onIngredients: () -> Unit,
     onGo: (Int) -> Unit,
@@ -340,7 +368,16 @@ private fun CookHeader(
                     Text("Screen stays on", style = CrumbText.meta, color = c.onTile)
                 }
             }
-            TileIconButton(Lucide.List, "Ingredients", onIngredients)
+            if (wide) {
+                TileIconButton(
+                    Lucide.List,
+                    if (pinned) "Hide the ingredients" else "Pin the ingredients beside the steps",
+                    onIngredients,
+                    active = pinned,
+                )
+            } else {
+                TileIconButton(Lucide.List, "Ingredients", onIngredients)
+            }
         }
 
         Row(
@@ -367,9 +404,9 @@ private fun CookHeader(
     }
 }
 
-/** A 48dp square icon button drawn on the tile: paper icon, a darken when pressed. */
+/** A 48dp square icon button drawn on the tile: paper icon, a darken when pressed or [active]. */
 @Composable
-private fun TileIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+private fun TileIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit, active: Boolean = false) {
     val c = Crumb.colors
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -377,7 +414,7 @@ private fun TileIconButton(icon: ImageVector, contentDescription: String, onClic
         Modifier
             .size(48.dp)
             .clip(ControlShape)
-            .background(if (pressed) Color.Black.copy(alpha = 0.12f) else Color.Transparent)
+            .background(if (pressed || active) Color.Black.copy(alpha = 0.12f) else Color.Transparent)
             .clickable(interaction, indication = null, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -385,21 +422,17 @@ private fun TileIconButton(icon: ImageVector, contentDescription: String, onClic
     }
 }
 
-/** One step: its number in serif, the text sized to fit, its timers and "You'll need". */
-@OptIn(ExperimentalLayoutApi::class)
+/** One step: its number in serif, the text sized to fit, and its timer. */
 @Composable
 private fun StepPage(
     step: CookStep,
     number: Int,
-    scale: Double,
-    ingredients: List<IngredientLine>,
+    seconds: Int?,
+    onSeconds: (Int) -> Unit,
     startTimer: (String, Int) -> Unit,
 ) {
     val c = Crumb.colors
-    val stepIngredients = remember(step, ingredients) {
-        ingredientsForStep(step.text, step.section, ingredients).mapNotNull { ingredients.getOrNull(it.toInt()) }
-    }
-    val stepTimers = remember(step) { findTimers(step.text) }
+    val choices = remember(step) { suggestTimers(step.text) }
     val size = stepTextSizeSp(step.text.length)
 
     Column(
@@ -444,57 +477,13 @@ private fun StepPage(
                 )
             }
 
-            if (stepTimers.isNotEmpty()) {
-                FlowRow(
-                    Modifier.padding(top = 28.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    stepTimers.forEach { timer ->
-                        Btn(
-                            "Start ${timer.label} timer",
-                            { startTimer("Step $number: ${timer.label}", timer.seconds.toInt()) },
-                            style = BtnStyle.Tile,
-                            size = BtnSize.Lg,
-                            icon = Lucide.AlarmClock,
-                        )
-                    }
-                }
-            }
-
-            if (stepIngredients.isNotEmpty()) {
-                Card(Modifier.padding(top = 28.dp), padding = PaddingValues(16.dp)) {
-                    Text(
-                        "You'll need".uppercase(),
-                        style = CrumbText.meta.copy(letterSpacing = 0.08.em),
-                        color = c.inkMuted,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        stepIngredients.forEach { ing ->
-                            Box(
-                                Modifier
-                                    .clip(ControlShape)
-                                    .background(c.tint)
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                            ) {
-                                Text(
-                                    scaleIngredient(ing.raw, scale),
-                                    style = CrumbText.body.copy(
-                                        fontSize = 17.sp,
-                                        lineHeight = 23.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                    ),
-                                    color = c.ink,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            StepTimerControl(
+                choices = choices,
+                seconds = seconds,
+                onSeconds = onSeconds,
+                onStart = { startTimer("Step $number", it) },
+                modifier = Modifier.padding(top = 28.dp),
+            )
         }
     }
 }
@@ -591,11 +580,11 @@ private fun CookFooter(
     }
 }
 
-/** The ingredients as a paper sheet: scale, section headings, checkable lines (spec §5.8). */
+/** The ingredients as a paper sheet, on narrow windows: scale, headings, checkable lines (spec §5.8). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun IngredientsSheet(
-    ingredients: List<IngredientLine>,
+    ingredients: List<IngredientItem>,
     scale: Double,
     onScale: (Double) -> Unit,
     checked: Set<Int>,
@@ -603,60 +592,96 @@ private fun IngredientsSheet(
     onDismiss: () -> Unit,
 ) {
     val c = Crumb.colors
-    val rows = remember(ingredients) { ingredientRows(ingredients) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = c.paper) {
-        LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Ingredients", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.weight(1f))
-                    ScaleControl(scale, onScale)
-                }
+        IngredientList(
+            ingredients, scale, onScale, checked, onToggle,
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp),
+        )
+    }
+}
+
+/** The ingredients docked beside the step on wide windows: the same list on a paper pane. */
+@Composable
+private fun IngredientsPane(
+    ingredients: List<IngredientItem>,
+    scale: Double,
+    onScale: (Double) -> Unit,
+    checked: Set<Int>,
+    onToggle: (Int) -> Unit,
+) {
+    val c = Crumb.colors
+    Row(Modifier.fillMaxHeight().background(c.paper)) {
+        Box(Modifier.fillMaxHeight().width(1.dp).background(c.line))
+        IngredientList(
+            ingredients, scale, onScale, checked, onToggle,
+            Modifier.width(360.dp).fillMaxHeight().statusBarsPadding().navigationBarsPadding().padding(top = 20.dp, bottom = 20.dp),
+        )
+    }
+}
+
+/** "Ingredients" with the scale control, section headings and tick-off lines. */
+@Composable
+private fun IngredientList(
+    ingredients: List<IngredientItem>,
+    scale: Double,
+    onScale: (Double) -> Unit,
+    checked: Set<Int>,
+    onToggle: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = Crumb.colors
+    val rows = remember(ingredients) { ingredientRows(ingredients) }
+    LazyColumn(modifier) {
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Ingredients", style = CrumbText.sectionTitle, color = c.ink, modifier = Modifier.weight(1f))
+                ScaleControl(scale, onScale)
             }
-            item { Spacer(Modifier.height(8.dp)) }
-            items(rows.size) { i ->
-                when (val row = rows[i]) {
-                    is IngredientRow.Header -> Text(
-                        row.text.uppercase(),
-                        style = CrumbText.kicker,
-                        color = c.primary,
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
-                    )
-                    is IngredientRow.Line -> {
-                        val isChecked = row.index in checked
-                        Row(
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+        items(rows.size) { i ->
+            when (val row = rows[i]) {
+                is IngredientRow.Header -> Text(
+                    row.text.uppercase(),
+                    style = CrumbText.kicker,
+                    color = c.primary,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                )
+                is IngredientRow.Line -> {
+                    val isChecked = row.index in checked
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle(row.index) }
+                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Box(
                             Modifier
-                                .fillMaxWidth()
-                                .clickable { onToggle(row.index) }
-                                .padding(horizontal = 20.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                .padding(top = 2.dp)
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(if (isChecked) c.tile else Color.Transparent)
+                                .then(
+                                    if (isChecked) Modifier
+                                    else Modifier.border(2.dp, c.lineStrong, RoundedCornerShape(50)),
+                                ),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Box(
-                                Modifier
-                                    .padding(top = 2.dp)
-                                    .size(24.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(if (isChecked) c.tile else Color.Transparent)
-                                    .then(
-                                        if (isChecked) Modifier
-                                        else Modifier.border(2.dp, c.lineStrong, RoundedCornerShape(50)),
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                if (isChecked) Icon(Lucide.Check, null, tint = c.onTile, modifier = Modifier.size(16.dp))
-                            }
-                            Text(
-                                scaleIngredient(row.raw, scale),
-                                style = CrumbText.body.copy(fontSize = 18.sp),
-                                color = if (isChecked) c.inkMuted else c.ink,
-                                textDecoration = if (isChecked) TextDecoration.LineThrough else null,
-                                modifier = Modifier.weight(1f),
-                            )
+                            if (isChecked) Icon(Lucide.Check, null, tint = c.onTile, modifier = Modifier.size(16.dp))
                         }
+                        Text(
+                            scaleIngredient(row.raw, scale),
+                            style = CrumbText.body.copy(fontSize = 18.sp),
+                            color = if (isChecked) c.inkMuted else c.ink,
+                            textDecoration = if (isChecked) TextDecoration.LineThrough else null,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
