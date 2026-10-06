@@ -10,11 +10,14 @@ Button {
 
     property string iconName
     property string tip
+    // A toggle that's on: the darker wash stays
+    property bool active: false
 
     implicitWidth: 44
     implicitHeight: 44
     hoverEnabled: true
     Accessible.name: tip
+    Accessible.checked: active
 
     HoverHandler {
         cursorShape: Qt.PointingHandCursor
@@ -23,7 +26,7 @@ Button {
     background: Rectangle {
         radius: 12
         color: "black"
-        opacity: button.down ? 0.12 : button.hovered ? 0.08 : 0
+        opacity: button.down || button.active ? 0.12 : button.hovered ? 0.08 : 0
         border.width: button.visualFocus ? 2 : 0
         border.color: Palette.onTile
     }
