@@ -1,6 +1,5 @@
 package app.crumb.android.ui.cook
 
-import app.crumb.core.IngredientLine
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -36,10 +35,10 @@ class CookLogicTest {
     @Test
     fun ingredientRowsAddSectionHeadings() {
         val lines = listOf(
-            IngredientLine("2 eggs", null),
-            IngredientLine("100g flour", "For the batter"),
-            IngredientLine("1 tsp salt", "For the batter"),
-            IngredientLine("1 tbsp oil", "To fry"),
+            IngredientItem("2 eggs", null),
+            IngredientItem("100g flour", "For the batter"),
+            IngredientItem("1 tsp salt", "For the batter"),
+            IngredientItem("1 tbsp oil", "To fry"),
         )
         assertEquals(
             listOf(
@@ -56,10 +55,44 @@ class CookLogicTest {
 
     @Test
     fun emptySectionsAreNotHeadings() {
-        val lines = listOf(IngredientLine("2 eggs", ""), IngredientLine("1 tsp salt", null))
+        val lines = listOf(IngredientItem("2 eggs", ""), IngredientItem("1 tsp salt", null))
         assertEquals(
             listOf(IngredientRow.Line(0, "2 eggs"), IngredientRow.Line(1, "1 tsp salt")),
             ingredientRows(lines),
         )
+    }
+
+    @Test
+    fun ingredientsDockFromMediumWidths() {
+        assertEquals(false, canDockIngredients(411))
+        assertEquals(false, canDockIngredients(599))
+        assertEquals(true, canDockIngredients(600))
+        assertEquals(true, canDockIngredients(1280))
+    }
+
+    @Test
+    fun aStepTimerShowsTheCooksLengthThenTheSuggestion() {
+        assertEquals(600, timerLength(600, 1500))
+        assertEquals(1500, timerLength(null, 1500))
+        assertEquals(null, timerLength(null, null))
+    }
+
+    @Test
+    fun theMinutesFieldStartsAsPlainMinutes() {
+        assertEquals("5", minutesText(300))
+        assertEquals("1.5", minutesText(90))
+        assertEquals("0.25", minutesText(15))
+        assertEquals("100", minutesText(6_000))
+        assertEquals("1.33", minutesText(80))
+    }
+
+    @Test
+    fun typedMinutesAreANumberOrNothing() {
+        assertEquals(12.0, typedMinutes("12")!!, 0.0)
+        assertEquals(1.5, typedMinutes(" 1,5 ")!!, 0.0)
+        assertEquals(0.5, typedMinutes(".5")!!, 0.0)
+        assertEquals(null, typedMinutes(""))
+        assertEquals(null, typedMinutes("abc"))
+        assertEquals(null, typedMinutes("NaN"))
     }
 }
