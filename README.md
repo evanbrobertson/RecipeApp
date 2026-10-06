@@ -187,11 +187,15 @@ Cooking mode shows one step at a time in large text. Open it from the recipe pag
 - Swipe, or tap the arrows, to go to the next or the previous step.
 - On a keyboard, use the Right arrow, Space or Page Down for the next step. Use the Left arrow or Page Up for the previous step.
 - Tap a dot at the top to go directly to that step.
-- Tap **Ingredients** to show the full list. You can mark each ingredient and change the scale there.
+- On a tablet or a computer, the ingredients stay pinned beside the steps. Tap **Ingredients** to hide them or to pin them again. Crumb remembers your choice.
+- On a phone, tap **Ingredients** to show the full list.
+- You can mark each ingredient and change the scale in the list.
 
-The screen stays on in cooking mode. If the browser needs a tap first, Crumb shows "Tap to keep the screen on". When a step includes a time, for example "bake for 25 minutes", Crumb shows a button to start a timer. The "You'll need" card shows the ingredients that the step names, with the scaled amounts.
+The screen stays on in cooking mode. If the browser needs a tap first, Crumb shows "Tap to keep the screen on".
 
-Crumb remembers your step while the browser tab stays open. After the last step, Crumb shows "Bon appétit!" and adds a cook to the cook history.
+Each step can have a timer. When a step includes a time, for example "bake for 25 minutes", Crumb suggests that time. Crumb can read a time incorrectly, so check it before you start the timer. Tap − or + to change the time, or tap the time and type a number of minutes. When a step includes more than one time, tap the time that you want. On a step without a time, tap **Set a timer**.
+
+Crumb remembers your step, the ingredients that you marked and the timer times that you changed while the browser tab stays open. After the last step, Crumb shows "Bon appétit!" and adds a cook to the cook history.
 
 ### Timers
 
