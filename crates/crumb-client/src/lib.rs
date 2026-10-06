@@ -219,6 +219,35 @@ impl Client {
         self.expect_ok(res, false).await
     }
 
+    /// Any `/api/…` route, for what has no method yet: the status and the body as text. A
+    /// non-2xx answer is the status and body, not an [`Error`]; only a path outside `/api/`
+    /// or a failed connection is. `body` is sent as JSON.
+    pub async fn raw(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, String), Error> {
+        if !path.starts_with("/api/") || path.contains("..") {
+            return Err(Error::InvalidUrl);
+        }
+        let method = reqwest::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+            .map_err(|_| Error::InvalidUrl)?;
+        let mut req = self
+            .http
+            .request(method, self.endpoint(path.trim_start_matches('/')));
+        if let Some(body) = body {
+            req = req.json(body);
+        }
+        let res = self.send(req).await?;
+        let status = res.status().as_u16();
+        let text = res
+            .text()
+            .await
+            .map_err(|err| Error::Network(err.to_string()))?;
+        Ok((status, text))
+    }
+
     /// `GET /api/connector`: what this server can do (Wee Chef, photos, checks).
     pub async fn connector(&self) -> Result<Connector, Error> {
         self.fetch(self.http.get(self.endpoint("api/connector")))

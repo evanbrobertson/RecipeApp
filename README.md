@@ -263,6 +263,10 @@ You approve the connection with the app password. Refer to [Connect to Claude](#
 
 For scripts and agents that can't sign in through a browser (the planned `crumb` command line, for one), make a token on More → Account. Send it as `Authorization: Bearer crumb_pat_…`. It is shown once and kept hashed, works on one household, and is `read` (GET only) or `write`, with an optional expiry. Revoke it from the same page and it stops at once. No token can make tokens, sign in or out, touch the account, members or connected apps, or empty or purge the Trash. Works in every sign-in mode; a token stops working when its person leaves the household.
 
+### Command line
+
+`crumb` is a command line for agents and scripts (and a terminal): `crumb add <link>`, `crumb ls`, `crumb show`, `crumb set`, `crumb books`, `--json` and stable exit codes. It signs in with an [API token](#api-tokens) and ships an agent skill (`crumb skill install`, for Claude Code and other agents). Install it with `curl -fsSL https://raw.githubusercontent.com/evanbrobertson/RecipeApp/master/scripts/cli/install.sh | bash`. See [docs/CLI.md](docs/CLI.md).
+
 ### Backups
 
 On the More page, under Account, select **Download a backup**. Crumb downloads one JSON file with all your recipes, your cookbooks and your cook history. To restore a backup, drop the file in the Add box or on the Import page.

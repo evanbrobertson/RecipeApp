@@ -46,6 +46,8 @@ jobs:
       - run: scripts/release/version.test.sh
       # The desktop packaging scripts only run on a tag in promote.yml, so lint them here
       - run: shellcheck desktop/linux/packaging/*.sh
+      # The CLI's installer is what users pipe into bash, and its PKGBUILD renderer runs on a release
+      - run: shellcheck scripts/cli/install.sh crates/crumb-cli/packaging/*.sh
 
   desktop:
     name: Desktop (Linux)

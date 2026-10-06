@@ -13,6 +13,7 @@ in a clean UI. Also a remote MCP connector for Claude.
   `crumb-fetch` (the Firefox/Safari `wreq` profiles, shared by the server and the relay; plus the public-address guard the relay uses),
   `crumb-relay` (a small service on other networks that fetches pages the server's IP was blocked on; `docs/RELAY.md`;
   with Chromium or the video tools installed it also renders pages and watches videos for the server),
+  `crumb-cli` (the `crumb` command line for agents and scripts: `docs/CLI.md`; its own releases `cli-vX.Y.Z`, with an agent skill compiled in),
   `crumb-work` (the Chromium driver and the video tools' steps, shared by the server and the relay).
   Thin clients, fat server: the native apps call these instead of re-implementing logic
 - **Frontend:** Astro 7 static build + Svelte 5 islands, in `web/`
@@ -75,6 +76,7 @@ crates/
   crumb-ffi/      # UniFFI bindings (uniffi.toml: Kotlin package app.crumb.core, Swift module CrumbCore)
   crumb-fetch/    # Browser-profile fetching (wreq) + the SSRF guard (guard.rs) and Chromium's guarded proxy (proxy.rs); the server re-exports it in scraper.rs
   crumb-relay/    # Relay binary (axum): POST /fetch behind a bearer token, rate limits, and /render, /video/* as a worker; Dockerfile, systemd unit
+  crumb-cli/      # `crumb` binary + lib: token sign-in, --json, exit codes, `crumb skill`; skill/SKILL.md must track the commands
   crumb-work/     # Headless Chromium (browser.rs) and the video tools (video.rs) for the server and the relay; wire.rs
 src/
   main.rs         # Boot: config, DB, browser, listen
