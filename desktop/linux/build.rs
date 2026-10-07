@@ -97,10 +97,19 @@ fn resources() -> QResources {
     }
     println!("cargo::rerun-if-changed=assets/icons");
 
+    // The shelf's grain tile and props
+    let mut shelf_resource = QResource::new().prefix("/shelf");
+    for name in ["grain.png", "pot.svg", "crock.svg"] {
+        shelf_resource = shelf_resource
+            .file(QResourceFile::new(manifest.join("assets/shelf").join(name)).alias(name));
+    }
+    println!("cargo::rerun-if-changed=assets/shelf");
+
     let fixture = manifest.join("assets/fixture.png");
     let mut resources = QResources::new()
         .resource(font_resource)
-        .resource(icon_resource);
+        .resource(icon_resource)
+        .resource(shelf_resource);
     if fixture.is_file() {
         let image_resource = QResource::new()
             .prefix("/img")

@@ -14,7 +14,7 @@ pills, 3px spines) follow the web.
   `file://` URL is fine), and exports are saved into a folder (`dir`).
 - **`Core`** (`src/core_bridge.rs`) is `crumb-core`: every piece of wording and arithmetic
   the web works out in the browser. That includes greetings, day labels, the Add box's
-  `detect`, book shapes, prep groups, editor drafts and fixes, cook steps and timers, check
+  `detect`, the shelf's layout, prep groups, editor drafts and fixes, cook steps and timers, check
   wording, `kicker` and `displayDuration`. **Never re-implement one of these in JavaScript.**
   If something's missing, add it to `crumb-core` (a PR against master first), then expose it
   in `core_bridge.rs`.
@@ -66,6 +66,32 @@ desktop/linux/tools/compare.sh recipe:9 /some/scratch/dir 1280x1000
 (offscreen, via `--route` and `--shot`). Offscreen uses Qt's software renderer, so shader
 effects don't show there. Qt logs go to the journal: `journalctl --user -t crumb-desktop`.
 
+For motion, `--smoke-page shelf --shot <dir>` films the shelf (fixture books, the test
+server's) in a 1280-wide window, where the web's shelf page puts it: hover, the pot riding, a
+stack settling and the open and close flights, as `<dir>/<scene>-<ms>.png`. With
+`CRUMB_SERVER` set and signed in, the open book shows that server's contents.
+
+## The shelf
+
+- **Layout** is core's: `Core.shelfLayout(booksJson, width, single, addable)` gives each row's
+  books, pot, crock and new-book outline (`x`, `y` up from the plank, `w`, `h`, `z`, a book's
+  spine, `tilt` and `pivot`, `stack`, `on`), with `Core.shelfMetrics()` for the plank and row
+  sizes and `Core.spineFor(book)` for a spine off the shelf. `Bookshelf.qml` only draws and
+  moves what it's given; keep it that way.
+- **Paint.** Spines, the wall, planks, brackets and the open book's cloth are `Canvas`
+  paintings: the cloth grain is `assets/shelf/grain.png`, the web's `--cloth-grain` noise
+  rendered once, blended `qt-soft-light`. Soft shadows are Canvas shadows (or layered boxes
+  for the open book), not shader effects, so they look the same with and without a GPU. The
+  pot and crock are the web's SVGs (`assets/shelf/`). Book cloth comes from `Core.bookLook`;
+  the wall (`tint`, grout towards `text`) and the plank (`tile`) from `Palette`.
+- **The open book** (`BookOpenModal.qml`) is OpenBook.svelte's 3D flight without a 3D scene:
+  the page, the spine, and the cover's two faces are flat items, each with its own 4×4 matrix
+  (perspective × flight × stage × face, depth flattened), and faces turned away are hidden.
+  When shut, the cover's inside face is drawn as the back cover. The flight starts once its
+  first frame is on screen.
+- **Differs from the web:** no blur behind the scrim (`backdrop-filter` needs shaders), and
+  no reduced-motion setting to follow (Qt doesn't report one).
+
 ## Cook mode
 
 - **Timers.** Every step has one adjustable timer, suggested and never trusted: `Core.cookSteps`
@@ -87,7 +113,7 @@ effects don't show there. Qt logs go to the journal: `journalctl --user -t crumb
 |---|---|---|
 | Add box, Add, Import | `islands/TopBox.svelte`, `pages/add.astro`, `islands/PopularLinks.svelte`, `components/BlockedNudge.svelte`, `islands/ImportTools.svelte`, `pages/import.astro` | `TopBox.qml`, `AddPage.qml`, `BlockedNudge.qml`, `ImportPage.qml` |
 | Preview (a Popular link) | `pages/shell/preview/index.astro`, `islands/PreviewActions.svelte`, `src/preview.rs` | `PreviewPage.qml` |
-| Home, Shelf, Cookbook | `pages/index.astro`, `islands/HomeFeed.svelte`, `islands/ShelfPage.svelte`, `islands/CookbookPage.svelte`, `components/Bookshelf.svelte`, `components/OpenBook.svelte`, `components/CookbookSpine.svelte`, `components/BookColorPicker.svelte` | `HomePage.qml`, `ShelfPage.qml`, `CookbookPage.qml`, `Bookshelf.qml`, `Book*.qml` |
+| Home, Shelf, Cookbook | `pages/index.astro`, `islands/HomeFeed.svelte`, `islands/ShelfPage.svelte`, `islands/CookbookPage.svelte`, `components/Bookshelf.svelte`, `components/OpenBook.svelte`, `components/BookSpine.svelte`, `components/BookColorPicker.svelte` | `HomePage.qml`, `ShelfPage.qml`, `CookbookPage.qml`, `ShelfCard.qml`, `Bookshelf.qml`, `BookSpine.qml`, `BookOpenModal.qml`, `BookColorPicker.qml` |
 | Recipes list | `islands/RecipesPage.svelte`, `pages/recipes/index.astro` | `RecipesPage.qml` |
 | Recipe | `islands/RecipePage.svelte`, `components/WeeChefCard.svelte`, `components/ShareSheet.svelte`, `components/ScaleControl.svelte`, `components/RecipeVideo.svelte` | `RecipePage.qml`, `ScaleControl.qml`, `WeeChefCard.qml`, `ShareSheet.qml` |
 | Cook, Prep, timers | `islands/CookPage.svelte`, `components/StepTimer.svelte`, `islands/PrepPage.svelte`, `components/PrepBowl.svelte`, `islands/TimerDock.svelte`, `lib/timers.svelte.ts` | `CookPage.qml`, `StepTimer.qml`, `CookIngredients.qml`, `PrepPage.qml`, `PrepBowl.qml`, `TimerDock.qml` |

@@ -2,8 +2,8 @@ import QtQuick
 
 import app.crumb.desktop 1.0
 
-// The tint backdrop a Bookshelf stands on (web: `bg-tint rounded-ui overflow-hidden`): rounded
-// corners, the plank running to the edges, so the bottom corners are cut back to the page.
+// The card a Bookshelf hangs in (web: `bg-tint rounded-ui overflow-hidden`): the wall and its
+// planks run to the edges, so the four corners are cut back to the page.
 Rectangle {
     id: card
 
@@ -11,41 +11,36 @@ Rectangle {
 
     color: Palette.tint
     radius: 16
-    implicitHeight: inner.childrenRect.height + 20
+    implicitHeight: inner.childrenRect.height
 
     Item {
         id: inner
         anchors.fill: parent
-        anchors.topMargin: 20
+        clip: true
     }
 
     Repeater {
-        model: 2
+        model: 4
 
         delegate: Canvas {
             id: corner
 
             required property int index
+            readonly property bool atRight: index % 2 === 1
+            readonly property bool atBottom: index > 1
 
-            x: index === 0 ? 0 : card.width - 16
-            y: card.height - 16
+            x: atRight ? card.width - 16 : 0
+            y: atBottom ? card.height - 16 : 0
             width: 16
             height: 16
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.reset()
                 ctx.fillStyle = Palette.bg
+                // The square, less a circle about the card's side of it
                 ctx.beginPath()
-                if (index === 0) {
-                    ctx.moveTo(0, 16)
-                    ctx.lineTo(0, 0)
-                    ctx.arc(16, 0, 16, Math.PI, Math.PI / 2, true)
-                } else {
-                    ctx.moveTo(16, 16)
-                    ctx.lineTo(16, 0)
-                    ctx.arc(0, 0, 16, 0, Math.PI / 2, false)
-                }
-                ctx.closePath()
+                ctx.rect(0, 0, 16, 16)
+                ctx.arc(atRight ? 0 : 16, atBottom ? 0 : 16, 16, 0, Math.PI * 2, true)
                 ctx.fill()
             }
             Connections {
