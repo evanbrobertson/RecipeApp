@@ -5,7 +5,7 @@
 
 use crumb_core::{
     add, books, categories, checks, client, duration, editor, format, fractions, home, ingredients,
-    model, prep, recipe_page, source, sun,
+    model, prep, recipe_page, shelf, source, sun,
 };
 
 uniffi::setup_scaffolding!();
@@ -822,6 +822,206 @@ pub fn stack_books(books: Vec<ShelfBook>, towers: u32) -> Vec<Vec<u32>> {
         .collect()
 }
 
+/// The shelf's fixed sizes, px (dp): see core's `shelf::METRICS`.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct ShelfMetrics {
+    /// Inside height of one shelf.
+    pub clearance: f64,
+    /// The plank's top face, then its front edge.
+    pub plank_top: f64,
+    pub plank_front: f64,
+    /// Space under a plank for its brackets.
+    pub under: f64,
+    /// A book's top edge, seen from a little above.
+    pub top_face: f64,
+    /// Space at the shelf's two ends.
+    pub inset: f64,
+    /// Rows are this far apart, plank included.
+    pub row_height: f64,
+}
+
+/// What a placed thing on the shelf is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ShelfItemKind {
+    Book,
+    /// A pot of basil, on the plank or on a stack.
+    Pot,
+    /// A stoneware crock of spoons.
+    Crock,
+    /// The dashed outline of a new book.
+    Add,
+}
+
+/// How a spine is dressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SpineStyle {
+    Plain,
+    /// Gilt rules at each end.
+    Rules,
+    /// A paper label holding the title.
+    Label,
+    /// Contrasting cloth at head and foot.
+    Ends,
+}
+
+/// The point a book turns about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SpinePivot {
+    /// Bottom-left corner.
+    Left,
+    /// Bottom-right corner.
+    Right,
+    /// The middle.
+    Center,
+}
+
+/// A book's spine: standing (`w` thick, `h` tall) or lying (`w` long, `h` thick).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ShelfSpine {
+    pub id: i64,
+    pub standing: bool,
+    pub w: f64,
+    pub h: f64,
+    pub style: SpineStyle,
+    /// The title as it breaks: one line, or two on a lying book.
+    pub lines: Vec<String>,
+    /// Px (dp).
+    pub font: f64,
+}
+
+/// Where one thing sits on its shelf.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ShelfItem {
+    pub kind: ShelfItemKind,
+    /// Left of the unturned box, from the shelf's left edge, and its foot, up from the plank.
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    /// Draw order within its shelf.
+    pub z: u32,
+    /// Books only: index into the books passed to `shelf_layout`, and the spine.
+    pub book_index: Option<u32>,
+    pub spine: Option<ShelfSpine>,
+    /// Degrees clockwise about `pivot` (books only; 0 otherwise).
+    pub tilt: f64,
+    pub pivot: SpinePivot,
+    /// The book's top edge shows (any standing book, a stack's top book).
+    pub top: bool,
+    /// The stack a lying book is in, or a pot sits on (unique within its shelf).
+    pub stack: Option<u32>,
+    /// The id of the book a pot sits on.
+    pub on: Option<i64>,
+}
+
+/// One shelf, things left to right and a stack's books top to bottom.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ShelfRow {
+    pub items: Vec<ShelfItem>,
+    /// The row's width, at least the shelf's.
+    pub width: f64,
+}
+
+impl From<shelf::Spine> for ShelfSpine {
+    fn from(s: shelf::Spine) -> Self {
+        Self {
+            id: s.id,
+            standing: s.standing,
+            w: s.w,
+            h: s.h,
+            style: match s.style {
+                shelf::SpineStyle::Plain => SpineStyle::Plain,
+                shelf::SpineStyle::Rules => SpineStyle::Rules,
+                shelf::SpineStyle::Label => SpineStyle::Label,
+                shelf::SpineStyle::Ends => SpineStyle::Ends,
+            },
+            lines: s.lines,
+            font: s.font,
+        }
+    }
+}
+
+/// The shelf's fixed sizes.
+#[uniffi::export]
+pub fn shelf_metrics() -> ShelfMetrics {
+    let m = shelf::METRICS;
+    ShelfMetrics {
+        clearance: m.clearance,
+        plank_top: m.plank_top,
+        plank_front: m.plank_front,
+        under: m.under,
+        top_face: m.top_face,
+        inset: m.inset,
+        row_height: m.row_height,
+    }
+}
+
+/// Whether a book stands or lies, and its spine's size and dressing.
+#[uniffi::export]
+pub fn spine_for(book: ShelfBook) -> ShelfSpine {
+    shelf::spine_for(&book.into()).into()
+}
+
+/// Lays the books out on shelves `width` wide (or one row as long as it needs when `single`),
+/// ending with a new-book outline when `addable`.
+#[uniffi::export]
+pub fn shelf_layout(
+    books: Vec<ShelfBook>,
+    width: f64,
+    single: bool,
+    addable: bool,
+) -> Vec<ShelfRow> {
+    let core: Vec<books::ShelfBook> = books.into_iter().map(Into::into).collect();
+    let opts = shelf::ShelfOptions {
+        width,
+        single,
+        addable,
+    };
+    shelf::layout_shelf(&core, opts)
+        .into_iter()
+        .map(|row| ShelfRow {
+            width: row.width,
+            items: row
+                .items
+                .into_iter()
+                .map(|it| {
+                    let (tilt, pivot, top) =
+                        it.book
+                            .as_ref()
+                            .map_or((0.0, SpinePivot::Center, false), |b| {
+                                let pivot = match b.pivot {
+                                    shelf::Pivot::Left => SpinePivot::Left,
+                                    shelf::Pivot::Right => SpinePivot::Right,
+                                    shelf::Pivot::Center => SpinePivot::Center,
+                                };
+                                (b.tilt, pivot, b.top)
+                            });
+                    ShelfItem {
+                        kind: match it.kind {
+                            shelf::ItemKind::Book => ShelfItemKind::Book,
+                            shelf::ItemKind::Pot => ShelfItemKind::Pot,
+                            shelf::ItemKind::Crock => ShelfItemKind::Crock,
+                            shelf::ItemKind::Add => ShelfItemKind::Add,
+                        },
+                        x: it.x,
+                        y: it.y,
+                        w: it.w,
+                        h: it.h,
+                        z: it.z,
+                        book_index: it.book.as_ref().map(|b| b.index as u32),
+                        spine: it.book.map(|b| b.spine.into()),
+                        tilt,
+                        pivot,
+                        top,
+                        stack: it.stack,
+                        on: it.on,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 // ─── Home ──────────────────────────────────────────────────────────────────
 
 /// The handwritten greeting for a local hour (0–23).
@@ -1531,6 +1731,14 @@ mod tests {
         assert_eq!(book_size(books[0].clone()).thickness, 40);
         assert_eq!(book_cover_color(Some("purple".into())), "tile");
         assert_eq!(book_look(Some("cream".into())).bands.len(), 2);
+        let rows = shelf_layout(books.clone(), 600.0, false, true);
+        let placed = rows
+            .iter()
+            .flat_map(|r| &r.items)
+            .filter(|i| i.book_index.is_some());
+        assert_eq!(placed.count(), 5);
+        assert!(spine_for(books[0].clone()).standing);
+        assert!(shelf_metrics().row_height > shelf_metrics().clearance);
 
         assert_eq!(date_label(0, 0), "Jan 1, 1970");
         assert_eq!(

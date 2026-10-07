@@ -123,7 +123,7 @@ export function spineFor(book: ShelfBook): Spine {
 
 /** Two lines with the longer one as short as it can be, broken between words. */
 export function splitTitle(name: string, size: number): string[] {
-  const words = name.split(/\s+/)
+  const words = name.trim().split(/\s+/)
   if (words.length < 2) return [name]
   let best = [name]
   let bestWidth = Infinity

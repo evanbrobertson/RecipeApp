@@ -20,6 +20,7 @@ pub mod model;
 pub mod photo;
 pub mod prep;
 pub mod recipe_page;
+pub mod shelf;
 pub mod source;
 pub mod staples;
 pub mod suggest;
