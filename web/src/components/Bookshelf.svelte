@@ -2,7 +2,14 @@
   import Plus from "@lucide/svelte/icons/plus"
   import BookSpine from "./BookSpine.svelte"
   import { bookPalette, type ShelfBook } from "../lib/books"
-  import { layoutShelf, ROW_HEIGHT, SHELF, type BookOrigin, type PlacedBook } from "../lib/shelf"
+  import {
+    layoutShelf,
+    ROW_HEIGHT,
+    SHELF,
+    type BookOrigin,
+    type Placed,
+    type PlacedBook,
+  } from "../lib/shelf"
 
   interface Props {
     books: ShelfBook[]
@@ -55,9 +62,41 @@
     last = now
   })
 
+  /**
+   * The book whose place in a stack is empty: what lay on it settles onto the book below once it
+   * has gone, and lifts again as it comes back (OpenBook calls `back`).
+   */
+  let gap = $state<number | null>(null)
+  $effect(() => {
+    const id = pulledId
+    if (id === null) {
+      gap = null
+      return
+    }
+    const t = setTimeout(() => (gap = id), 180)
+    return () => clearTimeout(t)
+  })
+  const drops = $derived.by(() => {
+    const out = new Map<string, number>()
+    for (const [ri, row] of rows.entries()) {
+      const g = row.items.find((it) => it.kind === "book" && it.book.id === gap)
+      if (g?.kind !== "book" || g.stack === null) continue
+      for (const it of row.items) {
+        if (it.stack === g.stack && it.y > g.y) out.set(itemKey(it, ri), g.h)
+      }
+    }
+    return out
+  })
+  const itemKey = (it: Placed, ri: number) =>
+    it.kind === "book" ? `${it.book.id}` : `${it.kind}-${ri}`
+
+  /** The lying book under the pointer: a pot on it slides out with it */
+  let hovered = $state<number | null>(null)
+  const hover = (id: number | null) => () => (hovered = id)
+
   function open(e: MouseEvent, spine: PlacedBook) {
     const el = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(".spine")
-    onopen(spine.book, el ? { el, spine } : undefined)
+    onopen(spine.book, el ? { el, spine, back: () => (gap = null) } : undefined)
   }
 </script>
 
@@ -122,7 +161,7 @@
     </div>
   {/each}
   {#each rows as row, ri (ri)}
-    {#each row.items as item (item.kind === "book" ? item.book.id : `${item.kind}-${ri}`)}
+    {#each row.items as item (itemKey(item, ri))}
       {#if item.kind === "book"}
         <button
           type="button"
@@ -139,9 +178,16 @@
           style:--cloth={bookPalette(item.book.color).cloth}
           aria-label={`Open ${item.book.name}, ${item.book.recipeCount} recipes`}
           onclick={(e) => open(e, item)}
+          onpointerenter={hover(item.book.id)}
+          onpointerleave={hover(null)}
+          onfocus={hover(item.book.id)}
+          onblur={hover(null)}
         >
           <span
             class="lean"
+            style:translate={drops.has(itemKey(item, ri))
+              ? `0 ${drops.get(itemKey(item, ri))}px`
+              : undefined}
             style:rotate={item.tilt ? `${item.tilt}deg` : undefined}
             style:transform-origin={item.pivot === "center" ? "50% 50%" : `${item.pivot} bottom`}
           >
@@ -171,7 +217,16 @@
           style:height={`${item.h}px`}
           style:z-index={item.z + 1}
         >
-          {#if item.kind === "pot"}{@render pot()}{:else}{@render crock()}{/if}
+          {#if item.kind === "pot"}
+            {@const ride = item.on === hovered && item.on !== pulledId}
+            {@const drop = drops.get(itemKey(item, ri)) ?? 0}
+            <!-- Sits on its book: slides out with it, and drops when it's taken -->
+            <span class="ride" style:translate={`${ride ? 16 : 0}px ${drop - (ride ? 1 : 0)}px`}>
+              {#key `${ride}-${drop}`}
+                <span class={["wobble", (ride || drop) && "go"]}>{@render pot()}</span>
+              {/key}
+            </span>
+          {:else}{@render crock()}{/if}
         </div>
       {/if}
     {/each}
@@ -364,6 +419,37 @@
   .prop {
     pointer-events: none;
     filter: drop-shadow(3px 3px 3px rgb(20 32 25 / 0.22));
+  }
+  .ride,
+  .wobble {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .ride {
+    transition: translate 0.5s cubic-bezier(0.3, 1.4, 0.5, 1);
+  }
+  .wobble {
+    transform-origin: 50% 100%;
+  }
+  /* A pot that's been moved rocks on its base before it settles */
+  .wobble.go {
+    animation: wobble 0.8s ease-out;
+  }
+  @keyframes wobble {
+    25% {
+      rotate: -5deg;
+    }
+    50% {
+      rotate: 3deg;
+    }
+    75% {
+      rotate: -1.2deg;
+    }
+  }
+  /* Settles onto the book below when the one under it is taken */
+  .lean {
+    transition: translate 0.45s cubic-bezier(0.5, 0, 0.55, 1.35);
   }
   .prop svg {
     width: 100%;

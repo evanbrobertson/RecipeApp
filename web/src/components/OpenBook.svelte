@@ -168,7 +168,12 @@
       await wait(reduced() ? 0 : 500)
     }
     shown = false
+    // What sat on the book lifts as it nears its place
+    const back = origin?.back
+    const lift = setTimeout(() => back?.(), reduced() ? 0 : 260)
     await fly("out")
+    clearTimeout(lift)
+    back?.()
     flight?.getAnimations().forEach((a) => a.cancel())
     visible = false
     closing = false

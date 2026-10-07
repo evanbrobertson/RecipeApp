@@ -153,6 +153,8 @@ export interface PlacedBook extends Spine {
   z: number
   /** The top book of a stack, or any standing book: its top edge shows */
   top: boolean
+  /** The stack it lies in (unique within its shelf), or null when it stands */
+  stack: number | null
 }
 
 export interface PlacedThing {
@@ -162,6 +164,9 @@ export interface PlacedThing {
   w: number
   h: number
   z: number
+  /** For a pot on a stack: the stack, and the book it sits on */
+  stack?: number
+  on?: number
 }
 
 export type Placed = PlacedBook | PlacedThing
@@ -171,6 +176,8 @@ export interface BookOrigin {
   /** Its spine on the shelf */
   el: HTMLElement
   spine: PlacedBook
+  /** Called as it starts back, so whatever sat on it can make room */
+  back?: () => void
 }
 
 export interface ShelfRow {
@@ -278,7 +285,7 @@ function placeRun(plan: RunPlan, x0: number, z0: number): PlacedBook[] {
   let x = x0
   const n = plan.spines.length
   plan.spines.forEach((s, i) => {
-    const base = { ...s, kind: "book" as const, y: 0, z: z0 + i, top: true }
+    const base = { ...s, kind: "book" as const, y: 0, z: z0 + i, top: true, stack: null }
     if (i === 0 && plan.start) {
       // Pivots on its right foot, its top resting on the next book's side
       const right = x + plan.start.span - plan.start.gap
@@ -348,6 +355,7 @@ function placeStack(plan: StackPlan, x0: number, z0: number): PlacedBook[] {
       pivot: "center",
       z: z0 + i,
       top: i === plan.spines.length - 1,
+      stack: z0,
     }
     y += s.h
     return book
@@ -488,7 +496,16 @@ function placeRow(pieces: Piece[], ri: number, opts: ShelfOptions, inner: number
       if (i === potOn) {
         const topBook = placed[0]!
         const at = topBook.x + topBook.w / 2 - SHELF.pot.w / 2 + (seeded(ri + i, 59) * 2 - 1) * 20
-        items.push({ kind: "pot", x: at, y: p.plan.height, w: SHELF.pot.w, h: SHELF.pot.h, z: z++ })
+        items.push({
+          kind: "pot",
+          x: at,
+          y: p.plan.height,
+          w: SHELF.pot.w,
+          h: SHELF.pot.h,
+          z: z++,
+          stack: topBook.stack!,
+          on: topBook.book.id,
+        })
       }
     } else {
       const size = SHELF[p.kind]
