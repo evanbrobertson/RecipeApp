@@ -424,6 +424,7 @@ pub mod qobject {
         fn logout(self: Pin<&mut Session>);
 
         #[qinvokable]
+        #[cxx_name = "requireLogin"]
         fn require_login(self: Pin<&mut Session>);
     }
 
