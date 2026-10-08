@@ -59,6 +59,7 @@ import app.crumb.android.data.Suggestions
 import app.crumb.android.data.Viewed
 import app.crumb.android.ui.AppContainerProvider
 import app.crumb.android.ui.LocalNav
+import app.crumb.android.ui.books.BookOrigin
 import app.crumb.android.ui.books.Bookshelf
 import app.crumb.android.ui.books.OpenBook
 import app.crumb.android.ui.components.Btn
@@ -190,7 +191,7 @@ fun HomeScreen(shared: String? = null, onSharedUsed: () -> Unit = {}) {
     val c = Crumb.colors
     val recent by container.local.recentlyViewed.collectAsStateWithLifecycle()
     val nextOpen by container.local.tryNextOpen.collectAsStateWithLifecycle()
-    var opened by remember { mutableStateOf<CookbookListItem?>(null) }
+    var opened by remember { mutableStateOf<Pair<CookbookListItem, BookOrigin?>?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.signedOut) {
@@ -284,13 +285,13 @@ fun HomeScreen(shared: String? = null, onSharedUsed: () -> Unit = {}) {
                 if (state.cookbooks.isNotEmpty()) {
                     Column {
                         SectionHeader("The shelf", Modifier.padding(bottom = 14.dp), action = "See all", onAction = { nav.shelf() })
-                        // The plank runs to the card's edges and sits on its bottom
-                        Box(Modifier.fillMaxWidth().clip(CardShape).background(c.tint).padding(top = 20.dp)) {
+                        // The wall and planks run to the card's edges; the row scrolls sideways
+                        Box(Modifier.fillMaxWidth().clip(CardShape)) {
                             Bookshelf(
                                 books = state.cookbooks.take(14),
                                 single = true,
-                                pulledId = opened?.id,
-                                onOpen = { opened = it },
+                                pulledId = opened?.first?.id,
+                                onOpen = { book, from -> opened = book to from },
                             )
                         }
                     }
@@ -311,9 +312,10 @@ fun HomeScreen(shared: String? = null, onSharedUsed: () -> Unit = {}) {
                 }
             }
         }
-        opened?.let { book ->
+        opened?.let { (book, from) ->
             OpenBook(
                 book = book,
+                from = from,
                 load = { id -> container.recipes.cookbook(id).value },
                 onOpenRecipe = { opened = null; nav.recipe(it) },
                 onOpenCookbook = { opened = null; nav.cookbook(it) },

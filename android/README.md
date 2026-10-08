@@ -64,7 +64,8 @@ adb reverse tcp:3000 tcp:3000
 ```
 
 Then sign in to `http://localhost:3000`. Debug builds also accept plain HTTP on the local
-network (`http://192.168.x.x:3000`).
+network (`http://192.168.x.x:3000`). On an emulator the computer is `http://10.0.2.2:3000`; on a
+machine without a GPU, start it with `-gpu swangle_indirect` (`swiftshader_indirect` can crash).
 
 ### Google, Apple and invite links
 
@@ -123,7 +124,7 @@ app/src/main/java/app/crumb/android/
     components/         The web's shared classes as Compose: buttons, cards, rows, chips,
                         modal, menu, input, toasts, tile surface, empty states
     theme/              Green Tile tokens, fonts, light/dark/system/sunrise & sunset
-    books/              The 3D bookshelf and open book, ported from books.ts
+    books/              The bookshelf and the open book (Bookshelf.svelte, OpenBook.svelte)
     …                   One package per screen
 ```
 
@@ -146,6 +147,14 @@ app/src/main/java/app/crumb/android/
   an alarm-clock alarm, so it rings on time in Doze and with the app closed, with a live countdown notification. Android 13+ asks to
   post notifications the first time; if exact alarms aren't allowed, the app offers the
   setting (they still ring, a little late). Timers come back after a reboot.
+- **Shelf:** where every book stands or lies, the pot and the new-book outline come from core's
+  `shelfLayout` (the web's `layoutShelf`); `ShelfPaint.kt` draws the cloth, the wall, the planks and
+  the props, as the web's CSS and SVG do. A tap opens a book: it flies off the shelf turning to show
+  its cover (the spine and the cover are two faces placed by hand, since Compose has no shared 3D
+  space), and the shelf keeps it in its place until the flight is on screen over it, and again as
+  it lands, so it's never missing or doubled for a frame. A long press (or a pointer) lifts it.
+  Waits between animations follow the system's animation speed; "Remove animations" opens it in
+  place.
 - **Shared logic:** anything the web and desktop apps also compute comes from `crumb-core`
   through `app.crumb.core`, never a Kotlin rewrite.
 
