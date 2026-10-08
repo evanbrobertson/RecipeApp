@@ -375,7 +375,7 @@ Item {
 
                         ShelfCard {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: shelf.implicitHeight + 20
+                            Layout.preferredHeight: shelf.implicitHeight
 
                             Bookshelf {
                                 id: shelf
@@ -383,9 +383,9 @@ Item {
                                 books: page.cookbooks.slice(0, 14)
                                 single: true
                                 pulledId: page.opened ? page.opened.id : 0
-                                onOpenBook: (book) => {
+                                onOpenBook: (book, origin) => {
                                     page.opened = book
-                                    openBook.show(book)
+                                    openBook.show(book, origin)
                                 }
                             }
                         }

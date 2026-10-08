@@ -81,7 +81,8 @@ pub fn run() {
         engine.load(&QUrl::from(MAIN_QML));
     }
 
-    if smoke_mode {
+    // A smoke page with `--shot` saves frames over a few seconds, then quits from QML
+    if smoke_mode && smoke::shot().is_none() {
         // Pump the loop briefly so the engine can build the scene and flush bindings.
         let deadline = Instant::now() + Duration::from_millis(1000);
         while Instant::now() < deadline {
@@ -94,6 +95,10 @@ pub fn run() {
             || !ROOT_PRESENT.load(Ordering::SeqCst)
             || !fonts_ok
             || smoke::failed();
+        // Engine first, then the app: exiting with them alive leaves Qt's exit handlers to
+        // deliver pending deletions to half-destroyed delegates (a double free now and then)
+        drop(engine);
+        drop(app);
         if failed {
             eprintln!("crumb-desktop: smoke test failed");
             std::process::exit(1);
@@ -103,5 +108,9 @@ pub fn run() {
 
     if let Some(app) = app.as_mut() {
         app.exec();
+    }
+    if smoke_mode && smoke::failed() {
+        eprintln!("crumb-desktop: smoke test failed");
+        std::process::exit(1);
     }
 }

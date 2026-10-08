@@ -4,8 +4,8 @@ import QtQuick.Layouts
 
 import app.crumb.desktop 1.0
 
-// Your shelf, as the web's islands/ShelfPage.svelte: every cookbook as a stack of books, a
-// pulled-out book that opens, and New book. Sizes and colours come from Core.
+// Your shelf, as the web's islands/ShelfPage.svelte: every cookbook on the shelf, a book that
+// flies off it and opens, and New book. The layout and colours come from Core.
 Item {
     id: page
 
@@ -141,7 +141,7 @@ Item {
         ShelfCard {
             visible: !page.loading && page.cookbooks.length > 0
             width: parent.width
-            height: visible ? shelf.implicitHeight + 20 : 0
+            height: visible ? shelf.implicitHeight : 0
 
             Bookshelf {
                 id: shelf
@@ -149,9 +149,9 @@ Item {
                 books: page.cookbooks
                 addable: true
                 pulledId: page.opened ? page.opened.id : 0
-                onOpenBook: (book) => {
+                onOpenBook: (book, origin) => {
                     page.opened = book
-                    openBook.show(book)
+                    openBook.show(book, origin)
                 }
                 onAdd: page.startCreate()
             }

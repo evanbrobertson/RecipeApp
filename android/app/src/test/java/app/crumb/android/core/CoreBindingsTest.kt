@@ -6,7 +6,6 @@ import app.crumb.core.PrepGroupKind
 import app.crumb.core.ShelfBook
 import app.crumb.core.Vessel
 import app.crumb.core.bookCoverColor
-import app.crumb.core.bookSize
 import app.crumb.core.cookProgress
 import app.crumb.core.dateLabel
 import app.crumb.core.findTimers
@@ -27,7 +26,9 @@ import app.crumb.core.prepGroupTitle
 import app.crumb.core.prepGroups
 import app.crumb.core.reviewSummary
 import app.crumb.core.scaleIngredient
-import app.crumb.core.stackBooks
+import app.crumb.core.shelfLayout
+import app.crumb.core.shelfMetrics
+import app.crumb.core.spineFor
 import app.crumb.core.suggestTimers
 import app.crumb.core.tidiedTitle
 import app.crumb.core.timerDefault
@@ -111,9 +112,11 @@ class CoreBindingsTest {
 
     @Test fun shelfGeometryComesFromCore() {
         val book = ShelfBook(1, "Book 1", null, 3)
-        assertEquals(40u, bookSize(book).thickness)
+        assertTrue(spineFor(book).standing)
         assertEquals("tile", bookCoverColor("purple"))
-        assertEquals(listOf(listOf(0u, 1u), listOf(2u)), stackBooks(listOf(book, book.copy(id = 2), book.copy(id = 3)), 2u))
+        val rows = shelfLayout(listOf(book, book.copy(id = 2), book.copy(id = 3)), 600.0, false, true)
+        assertEquals(listOf(0u, 1u, 2u), rows.flatMap { r -> r.items.mapNotNull { it.bookIndex } }.sorted())
+        assertEquals(254.0, shelfMetrics().rowHeight, 0.0)
     }
 
     @Test fun homeAndRecipePageWording() {
