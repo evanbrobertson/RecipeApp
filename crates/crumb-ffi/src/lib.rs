@@ -732,26 +732,6 @@ pub struct BookLook {
     pub bands: Vec<String>,
 }
 
-/// A book lying flat.
-#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
-pub struct BookSize {
-    /// Px: thicker books hold more recipes.
-    pub thickness: u32,
-    /// A fraction of the tower's length.
-    pub length: f64,
-    /// Px the spine needs for the whole title.
-    pub title: u32,
-}
-
-/// How untidily a book sits in its stack.
-#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
-pub struct BookLean {
-    /// Degrees, one decimal.
-    pub tilt: f64,
-    /// Px sideways.
-    pub nudge: i32,
-}
-
 /// Any stored colour name as one of the six current ones (unknown names are `tile`), unlike
 /// `book_color`, which returns null for a name it doesn't know. Core's `books::book_color`.
 #[uniffi::export]
@@ -782,44 +762,6 @@ pub fn book_edge_alpha() -> f64 {
 #[uniffi::export]
 pub fn seeded(id: i64, salt: i64) -> f64 {
     books::seeded(id, salt)
-}
-
-/// How thick, long and wide a book's spine is lying flat on the shelf.
-#[uniffi::export]
-pub fn book_size(book: ShelfBook) -> BookSize {
-    let s = books::book_size(&book.into());
-    BookSize {
-        thickness: s.thickness,
-        length: s.length,
-        title: s.title,
-    }
-}
-
-/// Books at the foot of a tower sit flatter.
-#[uniffi::export]
-pub fn book_lean(book: ShelfBook, at_foot: bool) -> BookLean {
-    let l = books::book_lean(&book.into(), at_foot);
-    BookLean {
-        tilt: l.tilt,
-        nudge: l.nudge,
-    }
-}
-
-/// The spine's two bands' colour, or null: about half the books get them.
-#[uniffi::export]
-pub fn spine_band(book: ShelfBook) -> Option<String> {
-    books::spine_band(&book.into()).map(str::to_string)
-}
-
-/// Splits books into `towers` stacks of roughly equal height, keeping their order. Each
-/// tower lists indexes into `books`, top to bottom.
-#[uniffi::export]
-pub fn stack_books(books: Vec<ShelfBook>, towers: u32) -> Vec<Vec<u32>> {
-    let core: Vec<books::ShelfBook> = books.into_iter().map(Into::into).collect();
-    books::stack_books(&core, towers as usize)
-        .into_iter()
-        .map(|tower| tower.into_iter().map(|i| i as u32).collect())
-        .collect()
 }
 
 /// The shelf's fixed sizes, px (dp): see core's `shelf::METRICS`.
@@ -1726,9 +1668,6 @@ mod tests {
                 recipe_count: id * 3,
             })
             .collect();
-        let towers = stack_books(books.clone(), 3);
-        assert_eq!(towers.iter().flatten().count(), 5);
-        assert_eq!(book_size(books[0].clone()).thickness, 40);
         assert_eq!(book_cover_color(Some("purple".into())), "tile");
         assert_eq!(book_look(Some("cream".into())).bands.len(), 2);
         let rows = shelf_layout(books.clone(), 600.0, false, true);
