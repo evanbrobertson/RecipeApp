@@ -1,6 +1,6 @@
 /**
  * Generates app.json, the parity fixtures for the app-screen helpers in crumb-core:
- * books.rs (cover colours, old shelf geometry), shelf.rs (the shelf's layout), prep.rs (bowl
+ * books.rs (cover colours, the seeded random number), shelf.rs (the shelf's layout), prep.rs (bowl
  * colours) and add.rs (the video queue wording).
  *
  * Regenerate from the repo root with:
@@ -14,12 +14,8 @@
 import {
   BOOK_COLORS,
   bookColor,
-  bookLean,
   bookPalette,
-  bookSize,
   seeded,
-  spineBands,
-  stackBooks,
 } from "../../../../web/src/lib/books.ts"
 import { layoutShelf, spineFor, splitTitle, titleWidth } from "../../../../web/src/lib/shelf.ts"
 import { ingredientColor } from "../../../../web/src/lib/ingredientColor.ts"
@@ -30,10 +26,6 @@ const out = {
   bookColor: [] as Entry[],
   bookPalette: [] as Entry[],
   seeded: [] as Entry[],
-  bookSize: [] as Entry[],
-  bookLean: [] as Entry[],
-  spineBands: [] as Entry[],
-  stackBooks: [] as Entry[],
   titleWidth: [] as Entry[],
   splitTitle: [] as Entry[],
   spineFor: [] as Entry[],
@@ -53,27 +45,6 @@ for (const c of [...BOOK_COLORS, "Forest", "tomato", "olive", "purple", "", null
 // ── Geometry ───────────────────────────────────────────────────────────────
 for (const id of [1, 2, 3, 7, 42, 99, 1234, 98765]) {
   for (const salt of [0, 3, 7, 11]) add("seeded", { id, salt }, seeded(id, salt))
-}
-const NAMES = ["Weeknights", "Nan's", "Baking Bible of Sunday Afternoons", "Crème brûlée & co", "🍝"]
-const books = [1, 2, 3, 7, 42, 99, 1234, 98765].flatMap((id, i) =>
-  [0, 1, 9, 40].map((recipeCount, j) => ({
-    id: id * 10 + j,
-    name: NAMES[(i + j) % NAMES.length]!,
-    color: BOOK_COLORS[(i + j) % BOOK_COLORS.length]!,
-    recipeCount,
-  })),
-)
-for (const b of books) {
-  add("bookSize", b, bookSize(b))
-  add("spineBands", b, spineBands(b) ?? null)
-  for (const atFoot of [false, true]) add("bookLean", { book: b, atFoot }, bookLean(b, atFoot))
-}
-for (const n of [0, 1, 2, 5, 12, 32]) {
-  for (const towers of [1, 2, 3, 4]) {
-    const list = books.slice(0, n)
-    const stacks = stackBooks(list, towers).map((t) => t.map((b) => list.indexOf(b)))
-    add("stackBooks", { books: list, towers }, stacks)
-  }
 }
 
 // ── Shelf layout ───────────────────────────────────────────────────────────

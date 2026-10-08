@@ -106,110 +106,9 @@ pub struct ShelfBook {
     pub recipe_count: i64,
 }
 
-/// A book lying flat (`bookSize`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BookSize {
-    /// Px: thicker books hold more recipes, never thinner than a comfortable tap.
-    pub thickness: u32,
-    /// A fraction of the tower's length, a little different from its neighbours'.
-    pub length: f64,
-    /// Px the spine needs for the whole title, so a short book can stretch to fit.
-    pub title: u32,
-}
-
-/// JavaScript's `Math.round`: halves go up, also for negatives.
-fn js_round(n: f64) -> f64 {
-    (n + 0.5).floor()
-}
-
-pub fn book_size(book: &ShelfBook) -> BookSize {
-    let thickness = js_round(50f64.min(38.0 + book.recipe_count as f64 * 0.8)) as u32;
-    let length = 0.84 + seeded(book.id, 0) * 0.16;
-    let bands = if spine_band(book).is_some() {
-        52.0
-    } else {
-        28.0
-    };
-    // `name.length` counts UTF-16 units in the web
-    let title = js_round(book.name.encode_utf16().count() as f64 * 7.6 + bands) as u32;
-    BookSize {
-        thickness,
-        length,
-        title,
-    }
-}
-
-/// How untidily a book sits in its stack (`bookLean`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub struct BookLean {
-    /// Degrees, one decimal.
-    pub tilt: f64,
-    /// Px sideways.
-    pub nudge: i32,
-}
-
-/// Books at the foot of a tower sit flatter, so the stack looks like it rests on the plank.
-pub fn book_lean(book: &ShelfBook, at_foot: bool) -> BookLean {
-    let range = if at_foot { 0.6 } else { 2.5 };
-    let tilt = (seeded(book.id, 7) * 2.0 - 1.0) * range;
-    let nudge = (seeded(book.id, 11) * 2.0 - 1.0) * 7.0;
-    BookLean {
-        tilt: js_round(tilt * 10.0) / 10.0,
-        nudge: js_round(nudge) as i32,
-    }
-}
-
-/// The spine's two bands' colour, or None (`spineBands`): about half the books get them.
-pub fn spine_band(book: &ShelfBook) -> Option<&'static str> {
-    let r = seeded(book.id, 3);
-    if r < 0.45 {
-        return None;
-    }
-    let bands = book_look(book.color.as_deref()).bands;
-    Some(if r < 0.75 { bands[0] } else { bands[1] })
-}
-
-/// Splits books into `towers` stacks of roughly equal height, keeping their order
-/// (`stackBooks`). Each tower lists indexes into `books`, top to bottom.
-pub fn stack_books(books: &[ShelfBook], towers: usize) -> Vec<Vec<usize>> {
-    let n = towers.min(books.len()).max(1);
-    let thickness: Vec<f64> = books
-        .iter()
-        .map(|b| f64::from(book_size(b).thickness))
-        .collect();
-    let total: f64 = thickness.iter().sum();
-    let mut out: Vec<Vec<usize>> = vec![Vec::new()];
-    let mut height = 0.0;
-    for (i, t) in thickness.iter().enumerate() {
-        let left = books.len() - i;
-        let towers_left = n - out.len();
-        let current = out.last().expect("one tower");
-        // Start the next tower once this one reaches its share, but leave a book for every tower
-        if !current.is_empty()
-            && towers_left > 0
-            && (height >= total * out.len() as f64 / n as f64 || left <= towers_left)
-        {
-            out.push(Vec::new());
-        }
-        out.last_mut().expect("one tower").push(i);
-        height += t;
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn book(id: i64, name: &str, count: i64) -> ShelfBook {
-        ShelfBook {
-            id,
-            name: name.into(),
-            color: None,
-            recipe_count: count,
-        }
-    }
 
     #[test]
     fn colours_fall_back_to_tile() {
@@ -218,24 +117,5 @@ mod tests {
         assert_eq!(book_color(Some("purple")), "tile");
         assert_eq!(book_color(None), "tile");
         assert_eq!(book_look(Some("cream")).edge, Some(FOREST));
-    }
-
-    #[test]
-    fn thickness_grows_with_recipes_up_to_a_cap() {
-        assert_eq!(book_size(&book(1, "A", 0)).thickness, 38);
-        assert_eq!(book_size(&book(1, "A", 10)).thickness, 46);
-        assert_eq!(book_size(&book(1, "A", 100)).thickness, 50);
-    }
-
-    #[test]
-    fn every_tower_gets_a_book() {
-        let books: Vec<_> = (1..=5).map(|i| book(i, "Book", i * 3)).collect();
-        let towers = stack_books(&books, 3);
-        assert_eq!(towers.len(), 3);
-        assert!(towers.iter().all(|t| !t.is_empty()));
-        let flat: Vec<usize> = towers.concat();
-        assert_eq!(flat, vec![0, 1, 2, 3, 4]);
-        assert_eq!(stack_books(&books[..1], 3), vec![vec![0]]);
-        assert_eq!(stack_books(&[], 2), vec![Vec::<usize>::new()]);
     }
 }
