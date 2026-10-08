@@ -60,3 +60,16 @@ fn the_recipe_page_loads_offscreen() {
     let output = smoke(&["--smoke-page", "recipe"], None, config.path());
     assert_smoke_passes(&output);
 }
+
+/// `--smoke-page shelf` lays out fixture books with core, hovers one and opens it with real
+/// pointer events, no network.
+#[test]
+fn the_shelf_hovers_and_opens_a_book_offscreen() {
+    let config = tempfile::tempdir().unwrap();
+    let output = smoke(
+        &["--smoke-page", "shelf", "--size", "1280x1000"],
+        None,
+        config.path(),
+    );
+    assert_smoke_passes(&output);
+}

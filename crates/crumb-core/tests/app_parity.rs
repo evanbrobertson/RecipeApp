@@ -2,9 +2,7 @@
 //! by `fixtures/gen-app.ts`) must produce the same output from the Rust port.
 
 use crumb_core::add::job_progress;
-use crumb_core::books::{
-    ShelfBook, book_color, book_lean, book_look, book_size, seeded, spine_band, stack_books,
-};
+use crumb_core::books::{ShelfBook, book_color, book_look, seeded};
 use crumb_core::prep::ingredient_color;
 use serde_json::Value;
 
@@ -61,50 +59,6 @@ fn geometry() {
         assert!(
             close(got, output.as_f64().unwrap()),
             "seeded({input}) = {got}"
-        );
-    }
-    for (input, output) in cases(&root, "bookSize") {
-        let size = book_size(&book(input));
-        assert_eq!(
-            u64::from(size.thickness),
-            output["thickness"],
-            "thickness {input}"
-        );
-        assert_eq!(u64::from(size.title), output["title"], "title {input}");
-        assert!(
-            close(size.length, output["length"].as_f64().unwrap()),
-            "length {input}"
-        );
-    }
-    for (input, output) in cases(&root, "spineBands") {
-        assert_eq!(
-            spine_band(&book(input)),
-            output.as_str(),
-            "spineBands({input})"
-        );
-    }
-    for (input, output) in cases(&root, "bookLean") {
-        let lean = book_lean(&book(&input["book"]), input["atFoot"].as_bool().unwrap());
-        assert!(
-            close(lean.tilt, output["tilt"].as_f64().unwrap()),
-            "tilt {input}"
-        );
-        assert_eq!(i64::from(lean.nudge), output["nudge"], "nudge {input}");
-    }
-    for (input, output) in cases(&root, "stackBooks") {
-        let books: Vec<ShelfBook> = input["books"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(book)
-            .collect();
-        let towers = input["towers"].as_u64().unwrap() as usize;
-        let want: Vec<Vec<usize>> = serde_json::from_value(output.clone()).unwrap();
-        assert_eq!(
-            stack_books(&books, towers),
-            want,
-            "stackBooks({towers} towers, {} books)",
-            books.len()
         );
     }
 }

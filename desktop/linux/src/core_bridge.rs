@@ -7,7 +7,7 @@
 
 use crumb_core::model::Recipe;
 use crumb_core::{add, books, checks, client, editor, embed, format, home, ingredients, prep};
-use crumb_core::{categories, recipe_page, trash};
+use crumb_core::{categories, recipe_page, shelf, trash};
 use cxx_qt_lib::QString;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -50,26 +50,25 @@ pub fn book_json(color: &str) -> String {
     }))
 }
 
-/// A book's size, lean and spine band together: `{thickness, length, title, tilt, nudge, band}`.
-pub fn book_shape(book: &str, at_foot: bool) -> String {
-    let Some(book) = shelf_book(book) else {
-        return "null".into();
-    };
-    let size = books::book_size(&book);
-    let lean = books::book_lean(&book, at_foot);
-    out(json!({
-        "thickness": size.thickness,
-        "length": size.length,
-        "title": size.title,
-        "tilt": lean.tilt,
-        "nudge": lean.nudge,
-        "band": books::spine_band(&book),
-    }))
+/// The shelf's rows for `[{id, name, color, recipeCount}]` (core's `ShelfRow`s).
+pub fn shelf_layout(books_json: &str, width: f64, single: bool, addable: bool) -> String {
+    let list: Vec<books::ShelfBook> = parse(books_json).unwrap_or_default();
+    out(shelf::layout_shelf(
+        &list,
+        shelf::ShelfOptions {
+            width,
+            single,
+            addable,
+        },
+    ))
 }
 
-pub fn stack_books(books_json: &str, towers: i32) -> String {
-    let list: Vec<books::ShelfBook> = parse(books_json).unwrap_or_default();
-    out(books::stack_books(&list, towers.max(1) as usize))
+/// A book's spine as the shelf would draw it, or "null".
+pub fn spine_for(book: &str) -> String {
+    match shelf_book(book) {
+        Some(book) => out(shelf::spine_for(&book)),
+        None => "null".into(),
+    }
 }
 
 pub fn prep_groups(lines_json: &str, scale: f64) -> String {
@@ -285,13 +284,24 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "bookLook"]
         fn book_look(self: &Core, color: QString) -> QString;
+        /// `[{items: [{kind, x, y, w, h, z, book, stack, on}], width}]`: core's shelf layout.
         #[qinvokable]
-        #[cxx_name = "bookShape"]
-        fn book_shape(self: &Core, book: QString, at_foot: bool) -> QString;
-        /// Towers of indexes into `books`, top to bottom.
+        #[cxx_name = "shelfLayout"]
+        fn shelf_layout(
+            self: &Core,
+            books: QString,
+            width: f64,
+            single: bool,
+            addable: bool,
+        ) -> QString;
+        /// `{clearance, plankTop, plankFront, under, topFace, inset, rowHeight}`.
         #[qinvokable]
-        #[cxx_name = "stackBooks"]
-        fn stack_books(self: &Core, books: QString, towers: i32) -> QString;
+        #[cxx_name = "shelfMetrics"]
+        fn shelf_metrics(self: &Core) -> QString;
+        /// `{id, standing, w, h, style, lines, font}`, or "null".
+        #[qinvokable]
+        #[cxx_name = "spineFor"]
+        fn spine_for(self: &Core, book: QString) -> QString;
 
         // ─── Recipe ───
         #[qinvokable]
@@ -547,11 +557,14 @@ impl qobject::Core {
     pub fn book_look(&self, color: QString) -> QString {
         q(book_json(&color.to_string()))
     }
-    pub fn book_shape(&self, book: QString, at_foot: bool) -> QString {
-        q(book_shape(&book.to_string(), at_foot))
+    pub fn shelf_layout(&self, books: QString, width: f64, single: bool, addable: bool) -> QString {
+        q(shelf_layout(&books.to_string(), width, single, addable))
     }
-    pub fn stack_books(&self, books: QString, towers: i32) -> QString {
-        q(stack_books(&books.to_string(), towers))
+    pub fn shelf_metrics(&self) -> QString {
+        q(out(shelf::METRICS))
+    }
+    pub fn spine_for(&self, book: QString) -> QString {
+        q(spine_for(&book.to_string()))
     }
 
     pub fn kicker(&self, category: QString, cuisine: QString) -> QString {
@@ -770,19 +783,34 @@ mod tests {
         let look: Value = serde_json::from_str(&book_json("cream")).unwrap();
         assert_eq!(look["name"], "cream");
         assert!(look["edge"].is_string());
-        let shape: Value = serde_json::from_str(&book_shape(
+        let spine: Value = serde_json::from_str(&spine_for(
             r#"{"id": 3, "name": "Weeknights", "color": "sage", "recipeCount": 5}"#,
-            false,
         ))
         .unwrap();
-        assert_eq!(shape["thickness"], 42);
-        assert_eq!(
-            stack_books(
-                r#"[{"id":1,"name":"a","recipeCount":1},{"id":2,"name":"b"}]"#,
-                2
-            ),
-            "[[0],[1]]"
-        );
+        assert_eq!(spine["id"], 3);
+        assert!(spine["standing"].is_boolean());
+        assert!(spine["lines"].is_array());
+        assert_eq!(spine_for("not json"), "null");
+    }
+
+    #[test]
+    fn the_shelf_crosses_as_json() {
+        let books = r#"[{"id":1,"name":"Soups","color":"clay","recipeCount":3},
+            {"id":2,"name":"Grandma's Sunday roasts and other family favourites"}]"#;
+        let rows: Value = serde_json::from_str(&shelf_layout(books, 1000.0, false, true)).unwrap();
+        let items = rows[0]["items"].as_array().unwrap();
+        let kinds: Vec<&str> = items.iter().map(|i| i["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"book") && kinds.contains(&"add"));
+        let book = items.iter().find(|i| i["kind"] == "book").unwrap();
+        // camelCase, the spine flattened into `book`
+        for key in [
+            "index", "id", "standing", "style", "lines", "font", "tilt", "pivot", "top",
+        ] {
+            assert!(!book["book"][key].is_null(), "{key}");
+        }
+        assert_eq!(rows[0]["width"], 1000.0);
+        let metrics: Value = serde_json::from_str(&out(shelf::METRICS)).unwrap();
+        assert_eq!(metrics["rowHeight"], 254.0);
     }
 
     #[test]

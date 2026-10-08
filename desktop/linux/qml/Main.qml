@@ -182,7 +182,7 @@ ApplicationWindow {
     Loader {
         id: rootLoader
         anchors.fill: parent
-        visible: Smoke.page !== "recipe"
+        visible: Smoke.page !== "recipe" && Smoke.page !== "shelf"
         sourceComponent: {
             if (appSession.state === "ready")
                 return shell
@@ -262,6 +262,19 @@ ApplicationWindow {
         sourceComponent: Smoke.page === "recipe" ? smokeRecipePage : null
     }
 
+    // `--smoke-page shelf` hovers and opens a book on a fixture shelf (and films it with `--shot`).
+    Loader {
+        anchors.fill: parent
+        visible: Smoke.page === "shelf"
+        sourceComponent: Smoke.page === "shelf" ? smokeShelfPage : null
+    }
+
+    Component {
+        id: smokeShelfPage
+
+        SmokeShelf {}
+    }
+
     Component {
         id: smokeRecipePage
 
@@ -330,7 +343,7 @@ ApplicationWindow {
     Timer {
         interval: 250
         repeat: true
-        running: Smoke.shot !== "" && (appSession.state === "ready" || appSession.state === "login"
+        running: Smoke.shot !== "" && Smoke.page === "" && (appSession.state === "ready" || appSession.state === "login"
                                          || appSession.state === "setup")
         onTriggered: {
             window.quietTicks = Api.pending === 0 ? window.quietTicks + 1 : 0

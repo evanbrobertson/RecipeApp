@@ -6,6 +6,10 @@
 #include <QtCore/QByteArray>
 #include <QtCore/QString>
 #include <QtCore/qlogging.h>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QMouseEvent>
+#include <QtGui/QWindow>
+#include <QtQuick/QQuickWindow>
 
 #include <cstdio>
 #include <cstring>
@@ -40,4 +44,37 @@ void crumbSmokeInstallHandler() {
 
 bool crumbSmokeFailed() {
     return g_failed;
+}
+
+namespace {
+
+QWindow *crumbSmokeWindow() {
+    for (QWindow *candidate : QGuiApplication::topLevelWindows()) {
+        if (candidate->isVisible()) {
+            return candidate;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void crumbSmokePointer(double x, double y, int kind) {
+    QWindow *window = crumbSmokeWindow();
+    if (window == nullptr) {
+        return;
+    }
+    const QPointF at(x, y);
+    const QEvent::Type type = kind == 1   ? QEvent::MouseButtonPress
+                              : kind == 2 ? QEvent::MouseButtonRelease
+                                          : QEvent::MouseMove;
+    const Qt::MouseButton button = kind == 0 ? Qt::NoButton : Qt::LeftButton;
+    const Qt::MouseButtons buttons = kind == 1 ? Qt::LeftButton : Qt::NoButton;
+    QMouseEvent event(type, at, window->mapToGlobal(at), button, buttons, Qt::NoModifier);
+    QGuiApplication::sendEvent(window, &event);
+}
+
+bool crumbSmokeGrab(const QString &path) {
+    auto *window = qobject_cast<QQuickWindow *>(crumbSmokeWindow());
+    return window != nullptr && window->grabWindow().save(path);
 }

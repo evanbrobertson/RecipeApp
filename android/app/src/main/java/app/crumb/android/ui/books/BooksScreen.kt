@@ -86,7 +86,7 @@ fun ShelfScreen(onOpenRecipe: (Long) -> Unit, onOpenCookbook: (Long) -> Unit, on
     val container = AppContainerProvider
     val scope = rememberCoroutineScope()
     val c = Crumb.colors
-    var opened by remember { mutableStateOf<CookbookListItem?>(null) }
+    var opened by remember { mutableStateOf<Pair<CookbookListItem, BookOrigin?>?>(null) }
     var creating by remember { mutableStateOf(false) }
     LaunchedEffect(state) {
         if ((state as? UiState.Failed)?.signedOut == true) onSignedOut()
@@ -129,11 +129,11 @@ fun ShelfScreen(onOpenRecipe: (Long) -> Unit, onOpenCookbook: (Long) -> Unit, on
                         Btn("Make your first cookbook", { creating = true }, style = BtnStyle.Primary)
                     }
                 } else {
-                    Box(Modifier.fillMaxWidth().clip(CardShape).background(c.tint).padding(top = 20.dp)) {
+                    Box(Modifier.fillMaxWidth().clip(CardShape)) {
                         Bookshelf(
                             books = s.value,
-                            pulledId = opened?.id,
-                            onOpen = { opened = it },
+                            pulledId = opened?.first?.id,
+                            onOpen = { book, from -> opened = book to from },
                             onAdd = { creating = true },
                         )
                     }
@@ -142,9 +142,10 @@ fun ShelfScreen(onOpenRecipe: (Long) -> Unit, onOpenCookbook: (Long) -> Unit, on
         }
     }
 
-    opened?.let { book ->
+    opened?.let { (book, from) ->
         OpenBook(
             book = book,
+            from = from,
             load = { container.recipes.cookbook(it).value },
             onOpenRecipe = { opened = null; onOpenRecipe(it) },
             onOpenCookbook = { opened = null; onOpenCookbook(it) },

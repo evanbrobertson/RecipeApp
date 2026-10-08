@@ -3,13 +3,18 @@ package app.crumb.android.ui.books
 import androidx.compose.ui.graphics.Color
 import app.crumb.android.data.CookbookListItem
 import app.crumb.core.ShelfBook
+import app.crumb.core.ShelfMetrics
+import app.crumb.core.ShelfRow
+import app.crumb.core.ShelfSpine
+import app.crumb.core.shelfLayout
+import app.crumb.core.shelfMetrics
+import app.crumb.core.spineFor
 import app.crumb.core.bookEdgeAlpha
 import app.crumb.core.bookColors
 
-// The shelf's arithmetic and cover colours are crumb-core's (`bookSize`, `bookLean`,
-// `spineBand`, `stackBooks`, `bookLook`), so every book has the same size, lean and bands on
-// the phone as in the browser. These turn its hex strings and unsigned numbers into Compose
-// colours and Ints.
+// The shelf's layout and cover colours are crumb-core's (`shelfLayout`, `spineFor`, `bookLook`),
+// so every book stands or lies, and sits, where it does in the browser. These turn its hex
+// strings into Compose colours.
 
 /** Cover cloth, the darker board edge, the title foil, and the two spine-band colours. */
 data class BookLook(
@@ -42,31 +47,20 @@ fun bookLook(color: String?): BookLook {
 
 fun randomBookColor(): String = BookColors.random()
 
+/** Dark type on light cloth: its title catches the light below instead of being stamped in. */
+fun bookIsPale(color: String?): Boolean = bookColor(color) in setOf("sage", "butter", "cream")
+
 private fun CookbookListItem.shelf() = ShelfBook(id, name, color, recipeCount)
 
-/**
- * A book lying flat: [thickness] in dp grows with its recipes (never thinner than a comfortable
- * tap), [length] is a fraction of the tower's length, and [title] estimates the dp its spine
- * needs for the whole title, so a short book can stretch to fit.
- */
-data class BookSize(val thickness: Int, val length: Double, val title: Int)
-
-fun bookSize(book: CookbookListItem): BookSize =
-    app.crumb.core.bookSize(book.shelf()).let { BookSize(it.thickness.toInt(), it.length, it.title.toInt()) }
-
-/** How untidily a book sits: a small tilt (degrees) and a sideways nudge (dp). Feet sit flatter. */
-data class BookLean(val tilt: Float, val nudge: Int)
-
-fun bookLean(book: CookbookListItem, atFoot: Boolean = false): BookLean =
-    app.crumb.core.bookLean(book.shelf(), atFoot).let { BookLean(it.tilt.toFloat(), it.nudge) }
-
-/** About half the books get two spine bands, in one of their two contrasting colours. */
-fun spineBand(book: CookbookListItem): Color? = app.crumb.core.spineBand(book.shelf())?.let(::hex)
+/** The shelf's fixed sizes, dp (core's `shelf::METRICS`). */
+val Shelf: ShelfMetrics by lazy { shelfMetrics() }
 
 /**
- * Split books into [towers] stacks of roughly equal height, keeping their order. Each tower is
- * listed top to bottom in cookbook order, so the stack reads the way it looks.
+ * Where every book, prop and the new-book outline sits, shelf by shelf, for a shelf [width] dp
+ * wide; [single] is one row as long as it needs. Items name their book by index into [books].
  */
-fun stackBooks(books: List<CookbookListItem>, towers: Int): List<List<CookbookListItem>> =
-    app.crumb.core.stackBooks(books.map { it.shelf() }, towers.toUInt())
-        .map { tower -> tower.map { books[it.toInt()] } }
+fun layoutShelf(books: List<CookbookListItem>, width: Float, single: Boolean, addable: Boolean): List<ShelfRow> =
+    shelfLayout(books.map { it.shelf() }, width.toDouble(), single, addable)
+
+/** The spine a book gets on the shelf, for drawing it where the shelf didn't (the open book). */
+fun spineOf(book: CookbookListItem): ShelfSpine = spineFor(book.shelf())

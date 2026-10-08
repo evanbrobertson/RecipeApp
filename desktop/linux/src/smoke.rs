@@ -1,13 +1,16 @@
 //! The `--smoke` support shim: a thin Rust binding to `src/smoke.cpp`, plus a tiny QML
 //! singleton so a page can report its own failure and know which smoke scenario it is in.
 //!
-//! Two scenarios ride on `--smoke`:
+//! Three scenarios ride on `--smoke`:
 //!
 //! * the login page check: with no configured server (state "setup"), QML verifies the
 //!   page's `session` is bound and its submit button enables once a URL is typed. This is
 //!   the regression guard for the page binding its own `session` property to itself.
 //! * `--smoke-page recipe` (or `CRUMB_SMOKE_PAGE=recipe`): loads `RecipePage` with a
 //!   built-in fixture, no network, so the detail page's QML is exercised headless.
+//! * `--smoke-page shelf`: the shelf with fixture books and the open book; it hovers and opens
+//!   a book with real pointer events. With `--shot <dir>` it runs longer instead, saving frames
+//!   of the hover, the pot riding and the open and close flights into `<dir>`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -145,6 +148,12 @@ pub mod qobject {
 
         #[rust_name = "native_failed"]
         fn crumbSmokeFailed() -> bool;
+
+        #[rust_name = "native_pointer"]
+        fn crumbSmokePointer(x: f64, y: f64, kind: i32);
+
+        #[rust_name = "native_grab"]
+        fn crumbSmokeGrab(path: &QString) -> bool;
     }
 
     unsafe extern "C++" {
@@ -169,6 +178,15 @@ pub mod qobject {
         /// Fails the smoke run with a reason; a no-op outside a smoke run.
         #[qinvokable]
         fn fail(self: Pin<&mut Smoke>, reason: QString);
+
+        /// Moves (0), presses (1) or releases (2) the mouse at window coordinates, so a
+        /// scenario can hover and click; a no-op outside a smoke run.
+        #[qinvokable]
+        fn pointer(self: &Smoke, x: f64, y: f64, kind: i32);
+
+        /// Saves the whole window (popups included) to `path`; false outside a smoke run.
+        #[qinvokable]
+        fn grab(self: &Smoke, path: QString) -> bool;
     }
 }
 
@@ -198,6 +216,18 @@ impl qobject::Smoke {
         if self.rust().enabled {
             crate::smoke::fail(&reason.to_string());
         }
+    }
+}
+
+impl qobject::Smoke {
+    pub fn pointer(&self, x: f64, y: f64, kind: i32) {
+        if self.rust().enabled {
+            qobject::native_pointer(x, y, kind);
+        }
+    }
+
+    pub fn grab(&self, path: QString) -> bool {
+        self.rust().enabled && qobject::native_grab(&path)
     }
 }
 
