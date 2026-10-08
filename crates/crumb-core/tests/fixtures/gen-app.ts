@@ -72,6 +72,8 @@ const TITLES = [
   "  ",
   "Supercalifragilisticexpialidociouslylongsingleword",
   "A very long cookbook title that keeps going and going well past two lines",
+  "\uFEFFSunday  roast\u0085pie",
+  ...Array<string>(10).fill("Pasta"),
 ]
 for (const t of TITLES) {
   add("titleWidth", { text: t, size: 15 }, titleWidth(t, 15))
@@ -103,9 +105,9 @@ function rowsAsCore(list: typeof shelfBooks, rows: ReturnType<typeof layoutShelf
   }))
 }
 // Cases name their books as a slice of the `spineFor` inputs, to keep the file small
-for (const [start, n] of [[0, 0], [0, 1], [0, 3], [5, 8], [0, 14], [0, TITLES.length]] as const) {
+for (const [start, n] of [[0, 0], [0, 1], [0, 3], [5, 8], [0, 14], [TITLES.length - 10, 10], [0, TITLES.length]] as const) {
   const list = shelfBooks.slice(start, start + n)
-  for (const [width, addable] of [[343, true], [700, true], [1000, false], [1100, true]] as const) {
+  for (const [width, addable] of [[320, true], [343, true], [375, true], [700, true], [1000, false], [1100, true]] as const) {
     const opts = { width, single: false, addable }
     add("layoutShelf", { start, n, ...opts }, rowsAsCore(list, layoutShelf(list, opts)))
   }

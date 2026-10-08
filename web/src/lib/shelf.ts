@@ -409,10 +409,10 @@ function fill(groups: Group[], inner: number, opts: ShelfOptions): Piece[][] {
   const rows: Piece[][] = [[]]
   const fits = (p: Piece) => {
     const row = rows[rows.length - 1]!
-    return !row.length || rowContent(row) + gapBefore(p, row.length) + pieceWidth(p) <= inner
+    return rowContent(row) + (row.length ? gapBefore(p, row.length) : 0) + pieceWidth(p) <= inner
   }
   const push = (p: Piece) => {
-    if (!fits(p)) rows.push([])
+    if (!fits(p) && rows[rows.length - 1]!.length) rows.push([])
     rows[rows.length - 1]!.push(p)
   }
   for (const g of groups) {
@@ -465,10 +465,10 @@ function placeRow(pieces: Piece[], ri: number, opts: ShelfOptions, inner: number
     if (best >= 0) potOn = best
     else if (spare >= SHELF.pot.w + 24 || opts.single) potAlone = true
   }
-  if (potAlone) spare -= SHELF.pot.w + 24
+  if (potAlone) spare = Math.max(0, spare - (SHELF.pot.w + 24))
   // A crock of spoons where a lower shelf has room to spare
   const crock = ri > 0 && spare >= SHELF.crock.w + 60 && seeded(ri, 47) < 0.6
-  if (crock) spare -= SHELF.crock.w + 24
+  if (crock) spare = Math.max(0, spare - (SHELF.crock.w + 24))
 
   // Loosen the gaps a little, then centre what's left
   const slack = Math.min(spare, Math.max(0, pieces.length - 1) * 14)

@@ -157,7 +157,7 @@ fn js_round(n: f64) -> f64 {
 pub fn spine_for(book: &ShelfBook) -> Spine {
     let style = spine_style(book);
     let room = style.end_room();
-    let trimmed = book.name.trim();
+    let trimmed = book.name.trim_matches(js_space);
     let name = if trimmed.is_empty() {
         "Untitled"
     } else {
@@ -208,9 +208,14 @@ pub fn spine_for(book: &ShelfBook) -> Spine {
     }
 }
 
+/// JavaScript's whitespace, which differs from Rust's by U+FEFF (in) and U+0085 (out).
+fn js_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
+}
+
 /// Two lines with the longer one as short as it can be, broken between words (`splitTitle`).
 pub fn split_title(name: &str, size: f64) -> Vec<String> {
-    let words: Vec<&str> = name.split_whitespace().collect();
+    let words: Vec<&str> = name.split(js_space).filter(|w| !w.is_empty()).collect();
     if words.len() < 2 {
         return vec![name.to_string()];
     }
@@ -519,7 +524,7 @@ fn plan_stack(spines: &[Indexed]) -> StackPlan {
     // A near tie swaps now and then, so it isn't too tidy
     for i in 0..sorted.len().saturating_sub(1) {
         let (a, b) = (&sorted[i].spine, &sorted[i + 1].spine);
-        if a.w - b.w < 18.0 && seeded(a.id + b.id, 31) < 0.5 {
+        if a.w - b.w < 18.0 && seeded(a.id.wrapping_add(b.id), 31) < 0.5 {
             sorted.swap(i, i + 1);
         }
     }
@@ -685,10 +690,15 @@ fn fill(groups: &[Group], inner: f64, opts: ShelfOptions) -> Vec<Vec<Piece>> {
     let mut rows: Vec<Vec<Piece>> = vec![Vec::new()];
     let fits = |rows: &[Vec<Piece>], p: &Piece| {
         let row = rows.last().expect("a row");
-        row.is_empty() || row_content(row) + p.gap_before(row.len()) + p.width() <= inner
+        let gap = if row.is_empty() {
+            0.0
+        } else {
+            p.gap_before(row.len())
+        };
+        row_content(row) + gap + p.width() <= inner
     };
     let push = |rows: &mut Vec<Vec<Piece>>, p: Piece| {
-        if !fits(rows, &p) {
+        if !fits(rows, &p) && !rows.last().expect("a row").is_empty() {
             rows.push(Vec::new());
         }
         rows.last_mut().expect("a row").push(p);
@@ -779,12 +789,12 @@ fn place_row(pieces: &[Piece], ri: usize, opts: ShelfOptions, inner: f64) -> She
         }
     }
     if pot_alone {
-        spare -= POT.0 + 24.0;
+        spare = (spare - (POT.0 + 24.0)).max(0.0);
     }
     // A crock of spoons where a lower shelf has room to spare
     let crock = ri > 0 && spare >= CROCK.0 + 60.0 && seeded(ri as i64, 47) < 0.6;
     if crock {
-        spare -= CROCK.0 + 24.0;
+        spare = (spare - (CROCK.0 + 24.0)).max(0.0);
     }
 
     // Loosen the gaps a little, then centre what's left
@@ -933,5 +943,92 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].items.iter().any(|it| it.kind == ItemKind::Add));
+    }
+
+    /// Each thing standing on the plank as an x-range: a stack counts as one, a pot on a stack
+    /// not at all.
+    fn footprints(row: &ShelfRow) -> Vec<(f64, f64)> {
+        let mut out: Vec<(f64, f64)> = Vec::new();
+        let mut stacks: std::collections::HashMap<u32, (f64, f64)> = Default::default();
+        for it in &row.items {
+            match (it.stack, it.on) {
+                (_, Some(_)) => {}
+                (Some(s), None) => {
+                    let e = stacks.entry(s).or_insert((it.x, it.x + it.w));
+                    e.0 = e.0.min(it.x);
+                    e.1 = e.1.max(it.x + it.w);
+                }
+                (None, None) => out.push((it.x, it.x + it.w)),
+            }
+        }
+        out.extend(stacks.into_values());
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    #[test]
+    fn nothing_runs_off_a_shelf_or_overlaps() {
+        for n in [0, 1, 2, 3, 5, 8, 13, 30, 60] {
+            for (names, count) in [
+                (&["Pasta"][..], 60),
+                (&["Pasta", "Soups", "Bread"][..], 3),
+                (
+                    &[
+                        "Pasta",
+                        "Grandma's Sunday roasts and other family favourites",
+                    ][..],
+                    12,
+                ),
+            ] {
+                let books: Vec<_> = (0..n)
+                    .map(|i| book(100 + i as i64 * 7, names[i % names.len()], count))
+                    .collect();
+                for width in [280.0, 320.0, 375.0, 414.0, 700.0, 1100.0, 1600.0] {
+                    let opts = ShelfOptions {
+                        width,
+                        single: false,
+                        addable: true,
+                    };
+                    for row in layout_shelf(&books, opts) {
+                        let fp = footprints(&row);
+                        let alone = fp.len() == 1;
+                        for it in &row.items {
+                            assert!(it.x >= 0.0, "{n} books at {width}: x {}", it.x);
+                            assert!(
+                                alone || it.x + it.w <= row.width + 0.5,
+                                "{n} books at {width}: item ends at {} on a {} row",
+                                it.x + it.w,
+                                row.width
+                            );
+                        }
+                        for pair in fp.windows(2) {
+                            assert!(
+                                pair[1].0 >= pair[0].1 - 0.5,
+                                "{n} books at {width}: {pair:?} overlap"
+                            );
+                        }
+                    }
+                }
+                let single = ShelfOptions {
+                    width: 0.0,
+                    single: true,
+                    addable: false,
+                };
+                for row in layout_shelf(&books, single) {
+                    for pair in footprints(&row).windows(2) {
+                        assert!(
+                            pair[1].0 >= pair[0].1 - 0.5,
+                            "{n} books in one row: {pair:?} overlap"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn titles_split_on_javascripts_whitespace() {
+        assert_eq!(split_title("\u{feff}Sunday  roast\u{85}pie", 14.0).len(), 2);
+        assert_eq!(spine_for(&book(1, "\u{feff}", 0)).lines, vec!["Untitled"]);
     }
 }
