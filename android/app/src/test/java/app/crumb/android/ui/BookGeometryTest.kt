@@ -1,20 +1,26 @@
 package app.crumb.android.ui
 
 import app.crumb.android.data.CookbookListItem
-import app.crumb.android.ui.books.BookLean
+import app.crumb.android.ui.books.Shelf
 import app.crumb.android.ui.books.bookColor
-import app.crumb.android.ui.books.bookLean
-import app.crumb.android.ui.books.bookSize
+import app.crumb.android.ui.books.bookIsPale
+import app.crumb.android.ui.books.layoutShelf
+import app.crumb.android.ui.books.spineOf
+import app.crumb.core.ShelfItemKind
 import app.crumb.core.seeded
-import app.crumb.android.ui.books.spineBand
-import app.crumb.android.ui.books.stackBooks
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Expected values come from running web/src/lib/books.ts on the same books; core is pinned to them too. */
+/** The layout is core's (parity-tested against the web there); these pin what the shelf relies on. */
 class BookGeometryTest {
-    private val books = (1L..7L).map { CookbookListItem(id = it, name = "Book $it", recipeCount = it * 3) }
+    private val names = listOf(
+        "Weeknight dinners", "Christmas baking", "Soups", "Things to make when it's raining",
+        "Ottolenghi-ish vegetable mains", "Grandma's Sunday roasts and other family favourites", "Bread",
+        "Curries", "Summer salads", "Breakfast", "Pasta", "Meal prep for busy weeks", "Cakes",
+    )
+    private val books = names.mapIndexed { i, name -> CookbookListItem(id = i + 1L, name = name, recipeCount = (i * 7L) % 30) }
 
     @Test fun seededMatchesTheWeb() {
         assertEquals(0.461531434383, seeded(1, 0), 1e-9)
@@ -22,24 +28,41 @@ class BookGeometryTest {
         assertEquals(0.001548065542, seeded(3, 0), 1e-9)
     }
 
-    @Test fun sizesAndLeansMatchTheWeb() {
-        assertEquals(40, bookSize(books[0]).thickness)
-        assertEquals(0.9138450295012444, bookSize(books[0]).length, 1e-9)
-        assertEquals(74, bookSize(books[0]).title)
-        assertEquals(45, bookSize(books[2]).thickness)
-        assertEquals(BookLean(-2.2f, -6), bookLean(books[0]))
-        assertEquals(BookLean(-0.5f, -6), bookLean(books[0], atFoot = true))
-        assertEquals(BookLean(1.5f, 1), bookLean(books[1]))
-        assertNull(spineBand(books[0]))
+    @Test fun everyBookIsPlacedOnceWithTheOutlineLast() {
+        for (width in listOf(360f, 411f, 600f, 1000f)) {
+            val rows = layoutShelf(books, width, single = false, addable = true)
+            val placed = rows.flatMap { r -> r.items.mapNotNull { it.bookIndex?.toInt() } }
+            assertEquals(books.indices.toList(), placed.sorted())
+            // The outline comes after the last book (only a prop may follow it)
+            val last = rows.last().items
+            assertTrue(last.indexOfFirst { it.kind == ShelfItemKind.ADD } > last.indexOfLast { it.kind == ShelfItemKind.BOOK })
+            assertEquals(1, rows.sumOf { r -> r.items.count { it.kind == ShelfItemKind.ADD } })
+            // Nothing runs off a shelf
+            rows.forEach { r -> r.items.forEach { assertTrue(it.x >= 0 && it.x + it.w <= width + 0.5) } }
+        }
     }
 
-    @Test fun stacksTowersLikeTheWeb() {
-        assertEquals(listOf(listOf(1L, 2, 3, 4), listOf(5L, 6, 7)), stackBooks(books, 2).map { t -> t.map { it.id } })
-        assertEquals(listOf(listOf(1L, 2, 3), listOf(4L, 5), listOf(6L, 7)), stackBooks(books, 3).map { t -> t.map { it.id } })
+    @Test fun homeIsOneRowThatScrolls() {
+        val rows = layoutShelf(books, 360f, single = true, addable = false)
+        assertEquals(1, rows.size)
+        assertTrue(rows[0].width > 360)
+        assertTrue(rows[0].items.none { it.kind == ShelfItemKind.ADD })
+    }
+
+    @Test fun longTitlesLieDownAndShortOnesStand() {
+        assertTrue(spineOf(books[2]).standing)
+        val long = spineOf(books[5])
+        assertFalse(long.standing)
+        assertEquals(2, long.lines.size)
+        // Everything fits under the next shelf
+        layoutShelf(books, 411f, single = false, addable = true).flatMap { it.items }
+            .forEach { assertTrue(it.y + it.h <= Shelf.clearance) }
     }
 
     @Test fun legacyColoursMapToTheSix() {
         assertEquals("clay", bookColor("Tomato"))
         assertEquals("tile", bookColor(null))
+        assertTrue(bookIsPale("butter"))
+        assertFalse(bookIsPale("forest"))
     }
 }
