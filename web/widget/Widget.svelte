@@ -111,7 +111,7 @@
       </button>
     </div>
     {#if current.books.length}
-      <div class:opacity-60={busy} class="rounded-ui bg-tint p-3">
+      <div class:opacity-60={busy} class="rounded-ui bg-tint overflow-hidden">
         <Bookshelf books={current.books} onopen={openBook} />
       </div>
     {:else}

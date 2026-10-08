@@ -8,6 +8,7 @@
   import OpenBook from "../components/OpenBook.svelte"
   import { api, errorMessage } from "../lib/api"
   import { randomBookColor, type ShelfBook } from "../lib/books"
+  import type { BookOrigin } from "../lib/shelf"
   import { autosize } from "../lib/autosize"
   import { pageState } from "../lib/page.svelte"
   import type { Cookbook } from "../lib/recipe"
@@ -18,6 +19,7 @@
   }))
 
   let opened = $state<ShelfBook | null>(null)
+  let from = $state<BookOrigin | null>(null)
   let showCreate = $state(false)
   let form = $state({ name: "", description: "", color: "tile" as string })
   let creating = $state(false)
@@ -71,18 +73,18 @@
       </button>
     </EmptyState>
   {:else}
-    <div class="bg-tint rounded-ui overflow-hidden pt-5">
+    <div class="bg-tint rounded-ui overflow-hidden">
       <Bookshelf
         books={page.data.cookbooks}
         pulledId={opened?.id}
         addable
-        onopen={(b) => (opened = b)}
+        onopen={(b, o) => ((from = o ?? null), (opened = b))}
         onadd={startCreate}
       />
     </div>
   {/if}
 
-  <OpenBook book={opened} onclose={() => (opened = null)} />
+  <OpenBook book={opened} {from} onclose={() => (opened = null)} />
 
   <Modal bind:open={showCreate} title="New book">
     <form id="create-cookbook" class="space-y-4" onsubmit={create}>

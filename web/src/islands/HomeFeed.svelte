@@ -14,6 +14,7 @@
   import { pageState } from "../lib/page.svelte"
   import { randomHref, wireRandomLinks } from "../lib/random"
   import type { ShelfBook } from "../lib/books"
+  import type { BookOrigin } from "../lib/shelf"
   import type { Cookbook, RecipeSource, RecipeSummary, Suggestions } from "../lib/recipe"
   import { cookStep, read, recentlyViewed, write, type Viewed } from "../lib/storage"
 
@@ -33,6 +34,7 @@
   const data = $derived(page.data)
   const loading = $derived(page.loading)
   let opened = $state<ShelfBook | null>(null)
+  let from = $state<BookOrigin | null>(null)
   const recent = recentlyViewed().slice(0, 3)
 
   // "What should I cook next?" opens in place; remember that across visits
@@ -167,16 +169,16 @@
       </div>
       <!-- The plank runs to the card's edges and sits on its bottom -->
       <div class="bg-tint rounded-ui overflow-hidden">
-        <div class="no-scrollbar overflow-x-auto pt-5">
+        <div class="no-scrollbar overflow-x-auto">
           <Bookshelf
             books={data.cookbooks.slice(0, 14)}
             single
             pulledId={opened?.id}
-            onopen={(b) => (opened = b)}
+            onopen={(b, o) => ((from = o ?? null), (opened = b))}
           />
         </div>
       </div>
-      <OpenBook book={opened} onclose={() => (opened = null)} />
+      <OpenBook book={opened} {from} onclose={() => (opened = null)} />
     </section>
   {/if}
 

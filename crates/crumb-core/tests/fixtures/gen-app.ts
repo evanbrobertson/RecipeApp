@@ -1,6 +1,7 @@
 /**
  * Generates app.json, the parity fixtures for the app-screen helpers in crumb-core:
- * books.rs (shelf geometry), prep.rs (bowl colours) and add.rs (the video queue wording).
+ * books.rs (cover colours, old shelf geometry), shelf.rs (the shelf's layout), prep.rs (bowl
+ * colours) and add.rs (the video queue wording).
  *
  * Regenerate from the repo root with:
  *
@@ -20,6 +21,7 @@ import {
   spineBands,
   stackBooks,
 } from "../../../../web/src/lib/books.ts"
+import { layoutShelf, spineFor, splitTitle, titleWidth } from "../../../../web/src/lib/shelf.ts"
 import { ingredientColor } from "../../../../web/src/lib/ingredientColor.ts"
 import { jobProgress } from "../../../../web/src/lib/importLink.ts"
 
@@ -32,6 +34,10 @@ const out = {
   bookLean: [] as Entry[],
   spineBands: [] as Entry[],
   stackBooks: [] as Entry[],
+  titleWidth: [] as Entry[],
+  splitTitle: [] as Entry[],
+  spineFor: [] as Entry[],
+  layoutShelf: [] as Entry[],
   ingredientColor: [] as Entry[],
   jobProgress: [] as Entry[],
 }
@@ -68,6 +74,74 @@ for (const n of [0, 1, 2, 5, 12, 32]) {
     const stacks = stackBooks(list, towers).map((t) => t.map((b) => list.indexOf(b)))
     add("stackBooks", { books: list, towers }, stacks)
   }
+}
+
+// ── Shelf layout ───────────────────────────────────────────────────────────
+const TITLES = [
+  "Weeknight dinners",
+  "Christmas baking",
+  "Soups",
+  "Grandma's Sunday roasts and other family favourites",
+  "Bread",
+  "Things to make when it's raining",
+  "Curries",
+  "Summer salads",
+  "Ottolenghi-ish vegetable mains",
+  "Breakfast",
+  "Pasta",
+  "Recipes from the trip to Lisbon",
+  "Cakes",
+  "Pickles & preserves",
+  "Meal prep for busy weeks",
+  "Desserts",
+  "Dinner party showstoppers",
+  "Mum's",
+  "Crème brûlée & co",
+  "🍝",
+  "  ",
+  "Supercalifragilisticexpialidociouslylongsingleword",
+  "A very long cookbook title that keeps going and going well past two lines",
+  "\uFEFFSunday  roast\u0085pie",
+  ...Array<string>(10).fill("Pasta"),
+]
+for (const t of TITLES) {
+  add("titleWidth", { text: t, size: 15 }, titleWidth(t, 15))
+  add("splitTitle", { text: t, size: 14 }, splitTitle(t, 14))
+}
+const shelfBooks = TITLES.map((name, i) => ({
+  id: 101 + i * 7,
+  name,
+  color: BOOK_COLORS[i % BOOK_COLORS.length]!,
+  recipeCount: [0, 3, 12, 24, 40][i % 5]!,
+}))
+for (const b of shelfBooks) {
+  const { book: _, ...spine } = spineFor(b)
+  add("spineFor", b, { id: b.id, ...spine })
+}
+/** The TypeScript shapes as crumb-core's `ShelfRow`/`ShelfItem` serialise them. */
+function rowsAsCore(list: typeof shelfBooks, rows: ReturnType<typeof layoutShelf>) {
+  return rows.map((row) => ({
+    width: row.width,
+    items: row.items.map((it) => {
+      if (it.kind !== "book") {
+        const { kind, x, y, w, h, z } = it
+        return { kind, x, y, w, h, z, book: null, stack: it.stack ?? null, on: it.on ?? null }
+      }
+      const { kind, x, y, w, h, z, stack, book, tilt, pivot, top, standing, style, lines, font } = it
+      const spine = { index: list.indexOf(book as never), id: book.id, standing, w, h, style, lines, font, tilt, pivot, top }
+      return { kind, x, y, w, h, z, book: spine, stack, on: null }
+    }),
+  }))
+}
+// Cases name their books as a slice of the `spineFor` inputs, to keep the file small
+for (const [start, n] of [[0, 0], [0, 1], [0, 3], [5, 8], [0, 14], [TITLES.length - 10, 10], [0, TITLES.length]] as const) {
+  const list = shelfBooks.slice(start, start + n)
+  for (const [width, addable] of [[320, true], [343, true], [375, true], [700, true], [1000, false], [1100, true]] as const) {
+    const opts = { width, single: false, addable }
+    add("layoutShelf", { start, n, ...opts }, rowsAsCore(list, layoutShelf(list, opts)))
+  }
+  const single = { width: 0, single: true, addable: false }
+  add("layoutShelf", { start, n, ...single }, rowsAsCore(list, layoutShelf(list, single)))
 }
 
 // ── Prep ───────────────────────────────────────────────────────────────────
