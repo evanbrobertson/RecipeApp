@@ -128,3 +128,71 @@ fn prep_and_add() {
         );
     }
 }
+
+/// Two JSON values equal but for floating-point noise in their numbers.
+fn same(path: &str, got: &Value, want: &Value) {
+    match (got, want) {
+        (Value::Number(a), Value::Number(b)) => {
+            let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+            assert!((a - b).abs() < 1e-6, "{path}: {a} != {b}");
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            assert_eq!(a.len(), b.len(), "{path}: length");
+            for (i, (x, y)) in a.iter().zip(b).enumerate() {
+                same(&format!("{path}[{i}]"), x, y);
+            }
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            for (k, y) in b {
+                same(&format!("{path}.{k}"), a.get(k).unwrap_or(&Value::Null), y);
+            }
+            for k in a.keys() {
+                assert!(b.contains_key(k), "{path}.{k}: not in the web's answer");
+            }
+        }
+        _ => assert_eq!(got, want, "{path}"),
+    }
+}
+
+#[test]
+fn shelf_layout() {
+    use crumb_core::shelf::{ShelfOptions, layout_shelf, spine_for, split_title, title_width};
+    let root = fixture();
+    for (input, output) in cases(&root, "titleWidth") {
+        let got = title_width(
+            input["text"].as_str().unwrap(),
+            input["size"].as_f64().unwrap(),
+        );
+        assert!(close(got, output.as_f64().unwrap()), "titleWidth({input})");
+    }
+    for (input, output) in cases(&root, "splitTitle") {
+        let got = split_title(
+            input["text"].as_str().unwrap(),
+            input["size"].as_f64().unwrap(),
+        );
+        same(
+            &format!("splitTitle({input})"),
+            &serde_json::to_value(got).unwrap(),
+            output,
+        );
+    }
+    let books: Vec<ShelfBook> = cases(&root, "spineFor")
+        .map(|(input, _)| book(input))
+        .collect();
+    for (input, output) in cases(&root, "spineFor") {
+        let got = serde_json::to_value(spine_for(&book(input))).unwrap();
+        same(&format!("spineFor({})", input["name"]), &got, output);
+    }
+    for (input, output) in cases(&root, "layoutShelf") {
+        let start = input["start"].as_u64().unwrap() as usize;
+        let n = input["n"].as_u64().unwrap() as usize;
+        let list = &books[start..(start + n).min(books.len())];
+        let opts = ShelfOptions {
+            width: input["width"].as_f64().unwrap(),
+            single: input["single"].as_bool().unwrap(),
+            addable: input["addable"].as_bool().unwrap(),
+        };
+        let got = serde_json::to_value(layout_shelf(list, opts)).unwrap();
+        same(&format!("layoutShelf({input})"), &got, output);
+    }
+}

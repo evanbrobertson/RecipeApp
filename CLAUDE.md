@@ -137,7 +137,7 @@ web/src/
 - **Islands:** `client:load` for data-independent UI (SSR'd at build), `client:only="svelte"` for anything
   reading page data, with a skeleton `slot="fallback"`.
 - **Four radii only:** `rounded-ui` (16px) cards/containers/menus, `rounded-ctl` (12px) controls and photos,
-  `rounded-full` pills and circles, `3px 3px 0 0` book spines. Flat: 1px `border-line`, shadows only on menus.
+  `rounded-full` pills and circles, `3px 3px 2px 2px` standing book spines (`3px` lying flat). Flat: 1px `border-line`, shadows only on menus.
 - **Colour roles:** `text-primary` is text-weight green; fills behind text use `bg-tile text-on-tile`. Butter
   (`.btn-primary`) is only the one main action and the active nav item. Nothing under 13px.
 - **Theme:** `web/src/lib/theme-boot.js` is inlined in every head: light, dark, system, or sun (dark from sunset to
