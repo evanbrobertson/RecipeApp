@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Amp orb setup: https://ampcode.com/docs/orbs
+# Prepares a fresh orb to build, test and run Crumb. Must stay idempotent: on a warm
+# filesystem every step is a no-op or a cheap freshness check, so the whole script
+# finishes in well under a minute when nothing changed.
+set -euo pipefail
+
+step() { printf '\n=== %s (%ss elapsed) ===\n' "$1" "$SECONDS"; }
+
+# --- System build dependencies -------------------------------------------------
+# Mirror the Dockerfile's build stage: wreq builds BoringSSL from source, which
+# needs cmake, make and a C++ compiler, and its bindgen step needs libclang.
+step "system packages"
+missing=()
+for pkg in cmake g++ libclang-dev make pkg-config; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+done
+if ((${#missing[@]})); then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq --no-install-recommends "${missing[@]}"
+else
+  echo "all present"
+fi
+
+# --- Rust toolchain -------------------------------------------------------------
+# CI (checks.yml) builds with stable plus the rustfmt and clippy components.
+step "rust toolchain"
+if ! command -v rustup >/dev/null 2>&1 && ! command -v cargo >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+    sh -s -- -y --default-toolchain stable --profile minimal --component rustfmt,clippy
+fi
+if [[ -f "$HOME/.cargo/env" ]]; then
+  # The installer cannot update this running script's environment.
+  # shellcheck disable=SC1091
+  source "$HOME/.cargo/env"
+fi
+export PATH="$HOME/.cargo/bin:$PATH"
+rustup component add rustfmt clippy
+rustc --version
+cargo --version
+
+# --- Cargo dependencies ---------------------------------------------------------
+step "cargo fetch"
+cargo fetch --locked
+
+# --- Warm build -----------------------------------------------------------------
+# Compile the workspace once so the first cargo run/test in an orb is incremental.
+# crumb-desktop-linux is excluded here and everywhere else: it needs Qt 6.5+, and
+# Debian 12 (the orb base) ships Qt 6.4 — same exclusion as CI's checks job.
+step "cargo build"
+cargo build --workspace --exclude crumb-desktop-linux --locked
+
+# --- Bun dependencies -------------------------------------------------------------
+step "bun install"
+for dir in web extension auth site; do
+  if [[ -f "$dir/package.json" ]]; then
+    (cd "$dir" && bun install --frozen-lockfile)
+  fi
+done
+
+# --- Local environment -------------------------------------------------------------
+# .env.schema holds the documented defaults; the server runs fine with them locally.
+[ -f .env.local ] || cp -- .env.schema .env.local
+
+# --- Notes for agents in this orb ---------------------------------------------------
+notes_marker="# crumb orb setup notes"
+if ! grep -Fqx "$notes_marker" "$HOME/.config/amp/AGENTS.md" 2>/dev/null; then
+  mkdir -p "$HOME/.config/amp"
+  cat >> "$HOME/.config/amp/AGENTS.md" <<'EOF'
+
+# crumb orb setup notes
+- The `crumb-desktop-linux` crate is excluded from builds here: it needs Qt 6.5+, and
+  Debian 12 ships Qt 6.4. Run checks the way CI does: `cargo clippy --workspace
+  --exclude crumb-desktop-linux --all-targets -- -D warnings`.
+- Optional video tools (yt-dlp, whisper.cpp, headless Chromium) are not installed; they
+  only matter for `src/video.rs` work and otherwise come from the Docker `video` stage.
+- `bun run dev` in web/ proxies /api and /mcp to the Rust server on port 3000; both are
+  declared in .amp/services.yaml (`amp orb services ensure`).
+EOF
+fi
+
+printf '\n=== setup complete in %ss ===\n' "$SECONDS"

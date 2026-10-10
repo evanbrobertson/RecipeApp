@@ -1,0 +1,13 @@
+# Long-running development services for Amp orbs: https://ampcode.com/docs/orbs/portals
+# Started with `amp orb services ensure`.
+services:
+  # The Rust server. Fixed on 3000 because web/'s Astro dev proxy targets 127.0.0.1:3000.
+  api:
+    command: cargo run --locked
+    port: 3000
+    health: /api/health
+  # Astro dev server: serves the pages with hot reload and proxies /api and /mcp to api.
+  web:
+    command: bun run dev -- --host 0.0.0.0 --port "$PORT"
+    cwd: web
+    portal: true
