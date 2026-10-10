@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 # Amp orb setup: https://ampcode.com/docs/orbs
-# Prepares a fresh orb to build, test and run Crumb. Must stay idempotent: on a warm
-# filesystem every step is a no-op or a cheap freshness check, so the whole script
-# finishes in well under a minute when nothing changed.
+# Prepares a fresh orb to build, test and run Crumb: the server, the web app, the
+# browser extension, the Android app and the Linux desktop app. Must stay idempotent:
+# on a warm filesystem every step is a no-op or a cheap freshness check, so the whole
+# script finishes in well under a minute when nothing changed.
 set -euo pipefail
 
 step() { printf '\n=== %s (%ss elapsed) ===\n' "$1" "$SECONDS"; }
 
-# --- System build dependencies -------------------------------------------------
+# --- System packages ------------------------------------------------------------
 # Mirror the Dockerfile's build stage: wreq builds BoringSSL from source, which
 # needs cmake, make and a C++ compiler, and its bindgen step needs libclang.
+# The desktop app adds the GL/dbus dev headers and mold, the linker cxx-qt's
+# static initializers need on Debian's older gcc (lld/gold fail to resolve them).
 step "system packages"
 missing=()
-for pkg in cmake g++ libclang-dev make pkg-config; do
+for pkg in cmake g++ libclang-dev make pkg-config mold libgl-dev libegl1 \
+  libxkbcommon0 libfontconfig1 libdbus-1-dev libglib2.0-0 openjdk-17-jdk-headless; do
   dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
 done
 if ((${#missing[@]})); then
@@ -39,18 +43,104 @@ rustup component add rustfmt clippy
 rustc --version
 cargo --version
 
-# --- Cargo dependencies ---------------------------------------------------------
+# mold, chosen in ~/.cargo/config.toml below, must stay on the default PATH
+if [[ -f "$HOME/.cargo/config.toml" ]] && ! grep -Fq "fuse-ld=mold" "$HOME/.cargo/config.toml"; then
+  cat >> "$HOME/.cargo/config.toml" <<'EOF'
+
+# cxx-qt's static initializers (cxx_qt_init_*) need a modern linker; Debian 12's
+# gcc 12 driver with the default lld/gold fails to resolve them. mold is the
+# linker KDAB recommends and is also the fastest here.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+EOF
+fi
+
+# --- Android SDK and NDK ----------------------------------------------------------
+# Same packages as .github/actions/android-setup. No emulator: orbs have no KVM,
+# so run the app on a real device over adb.
+step "android sdk"
+ANDROID_HOME="$HOME/android-sdk"
+if [[ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]]; then
+  mkdir -p "$ANDROID_HOME/cmdline-tools"
+  curl -fsSL -o /tmp/cmdtools.zip \
+    https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+  unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+  mv /tmp/cmdtools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+  rm /tmp/cmdtools.zip
+fi
+if [[ ! -d "$ANDROID_HOME/ndk/28.2.13676358" ]]; then
+  # `yes` dies of SIGPIPE once the licences are accepted, which pipefail would count
+  (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+  "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+    "platforms;android-37.0" "build-tools;36.1.0" "ndk;28.2.13676358" "platform-tools" |
+    grep -v '^\[' || true
+fi
+export ANDROID_HOME ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}"
+
+# Android targets of crumb-ffi and cargo-ndk, as in the CI setup action
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+if ! cargo ndk -V 2>/dev/null | grep -Fq 4.1.2; then
+  cargo install cargo-ndk --version 4.1.2 --locked
+fi
+
+# --- Qt 6 for the desktop app -------------------------------------------------------
+# Debian 12 ships Qt 6.4, but cxx-qt needs 6.5+ (and 6.8's qmlcachegen still rejects
+# the QML), so install the official binaries with aqtinstall. 6.12 matches what CI's
+# Arch build uses closely enough to compile and pass the tests.
+step "qt 6"
+QT_ROOT="$HOME/Qt/6.12.0/gcc_64"
+if [[ ! -x "$QT_ROOT/bin/qmake6" ]]; then
+  uvx --from aqtinstall aqt install-qt linux desktop 6.12.0 linux_gcc_64 --outputdir "$HOME/Qt"
+fi
+export PATH="$QT_ROOT/bin:$PATH"
+
+# --- Environment for login shells ----------------------------------------------------
+# Amp, its agent shells and supervised services start from a login shell, and the
+# installer above cannot update this running script's environment.
+step "login shell env"
+hook_marker="# crumb orb development environment"
+hook_block="$hook_marker
+# Each addition is checked, so this is safe to run from bashrc as well as a
+# login shell's profile.
+export ANDROID_HOME=\"\$HOME/android-sdk\"
+export ANDROID_NDK_HOME=\"\$ANDROID_HOME/ndk/28.2.13676358\"
+export JAVA_HOME=\"\${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}\"
+export QT_ROOT=\"\$HOME/Qt/6.12.0/gcc_64\"
+for dir in \"\$HOME/.cargo/bin\" \"\$QT_ROOT/bin\" \"\$ANDROID_HOME/platform-tools\"; do
+  case \":\$PATH:\" in
+    *\":\$dir:\"*) ;;
+    *) export PATH=\"\$dir:\$PATH\" ;;
+  esac
+done"
+for rc in "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bashrc"; do
+  if [[ -f "$rc" ]] && ! grep -Fqx "$hook_marker" "$rc"; then
+    printf '\n%s\n' "$hook_block" >> "$rc"
+  elif [[ ! -f "$rc" ]]; then
+    printf '%s\n' "$hook_block" > "$rc"
+  fi
+done
+
+# --- Cargo dependencies ---------------------------------------------------------------
 step "cargo fetch"
 cargo fetch --locked
 
 # --- Warm build -----------------------------------------------------------------
 # Compile the workspace once so the first cargo run/test in an orb is incremental.
-# crumb-desktop-linux is excluded here and everywhere else: it needs Qt 6.5+, and
-# Debian 12 (the orb base) ships Qt 6.4 — same exclusion as CI's checks job.
+# crumb-desktop-linux stays out to keep setup well inside Amp's 20-minute limit:
+# its toolchain (Qt 6.12, mold, the GL/dbus headers) is installed above and the
+# crate compiles and passes its tests here, so build it on demand instead —
+# `QT_QPA_PLATFORM=offscreen cargo build -p crumb-desktop-linux`.
 step "cargo build"
 cargo build --workspace --exclude crumb-desktop-linux --locked
 
-# --- Bun dependencies -------------------------------------------------------------
+# --- Gradle and Android JVM tests warm-up ---------------------------------------------
+# Downloads the Gradle distribution, AGP and Kotlin dependencies and stores the
+# configuration cache, so an agent's first android build only compiles.
+step "gradle warm-up"
+(cd android && ./gradlew --console=plain help >/dev/null)
+
+# --- Bun dependencies -------------------------------------------------------------------
 step "bun install"
 for dir in web extension auth site; do
   if [[ -f "$dir/package.json" ]]; then
@@ -58,20 +148,27 @@ for dir in web extension auth site; do
   fi
 done
 
-# --- Local environment -------------------------------------------------------------
+# --- Local environment -------------------------------------------------------------------
 # .env.schema holds the documented defaults; the server runs fine with them locally.
 [ -f .env.local ] || cp -- .env.schema .env.local
 
-# --- Notes for agents in this orb ---------------------------------------------------
+# --- Notes for agents in this orb ---------------------------------------------------------
 notes_marker="# crumb orb setup notes"
 if ! grep -Fqx "$notes_marker" "$HOME/.config/amp/AGENTS.md" 2>/dev/null; then
   mkdir -p "$HOME/.config/amp"
   cat >> "$HOME/.config/amp/AGENTS.md" <<'EOF'
 
 # crumb orb setup notes
-- The `crumb-desktop-linux` crate is excluded from builds here: it needs Qt 6.5+, and
-  Debian 12 ships Qt 6.4. Run checks the way CI does: `cargo clippy --workspace
-  --exclude crumb-desktop-linux --all-targets -- -D warnings`.
+- All three apps are ready: the server (Rust), the Android app (JDK 17, Android SDK
+  in ~/android-sdk, NDK 28, cargo-ndk) and the Linux desktop app (Qt 6.12 in
+  $QT_ROOT, linked with mold). Login shells export ANDROID_HOME, ANDROID_NDK_HOME,
+  JAVA_HOME and QT_ROOT; qmake6 and cargo are on PATH. The desktop crate itself is
+  compiled on demand (kept out of the warm build for setup speed).
+- The desktop app's tests render offscreen like CI: `QT_QPA_PLATFORM=offscreen cargo
+  test -p crumb-desktop-linux`. There is no emulator (orbs have no KVM); run the
+  Android app on a real device over adb (`adb install app-debug.apk`).
+- Run checks the way CI does: `cargo clippy --workspace --all-targets --locked -- -D
+  warnings` and, for Android, `./gradlew :app:testDebugUnitTest` in android/.
 - Optional video tools (yt-dlp, whisper.cpp, headless Chromium) are not installed; they
   only matter for `src/video.rs` work and otherwise come from the Docker `video` stage.
 - `bun run dev` in web/ proxies /api and /mcp to the Rust server on port 3000; both are
